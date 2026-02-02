@@ -2,9 +2,10 @@ package service
 
 import (
 	"cloudque/internal/model/dto/request"
-	"cloudque/internal/model/dto/response"
+	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
+	"cloudque/pkg/response"
 	bizerrors "cloudque/pkg/errors"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -116,8 +117,8 @@ func (s *userService) ChangePassword(id uint, req *request.ChangePasswordRequest
 }
 
 // GetUserResponse 获取用户响应
-func (s *userService) GetUserResponse(user *entity.User) *response.UserResponse {
-	return &response.UserResponse{
+func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
+	return &dto.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
 		Email:     user.Email,
@@ -127,4 +128,37 @@ func (s *userService) GetUserResponse(user *entity.User) *response.UserResponse 
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}
+}
+
+// ListUsers 分页获取用户列表
+func (s *userService) ListUsers(req *request.UserListRequest) (*response.PageResponse, error) {
+	// 参数标准化
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	size := req.Size
+	if size < 1 {
+		size = 10
+	}
+	if size > 100 {
+		size = 100
+	}
+
+	// 计算偏移量
+	offset := (page - 1) * size
+
+	// 查询数据
+	users, total, err := s.userRepo.List(offset, size)
+	if err != nil {
+		return nil, err
+	}
+
+	// 转换为响应 DTO
+	list := make([]*dto.UserResponse, 0, len(users))
+	for _, user := range users {
+		list = append(list, s.GetUserResponse(user))
+	}
+
+	return response.NewPageResponse(list, total, page, size), nil
 }

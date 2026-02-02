@@ -18,6 +18,7 @@ import (
 	"cloudque/pkg/logger"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -26,6 +27,7 @@ import (
 type App struct {
 	cfg     *config.Config
 	mysqlDB *gorm.DB
+	redis   *redis.Client
 	router  *api.Router
 	server  *http.Server
 }
@@ -111,9 +113,11 @@ func (a *App) initDatabase() error {
 	}
 
 	// 初始化 Redis（可选）
-	if _, err := database.InitRedis(&a.cfg.Database.Redis); err != nil {
+	rs, err := database.InitRedis(&a.cfg.Database.Redis)
+	if err != nil {
 		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
 	}
+	a.redis = rs
 
 	return nil
 }

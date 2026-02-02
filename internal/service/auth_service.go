@@ -2,7 +2,7 @@ package service
 
 import (
 	"cloudque/internal/model/dto/request"
-	"cloudque/internal/model/dto/response"
+	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/repository"
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/jwt"
@@ -24,7 +24,7 @@ func NewAuthService(userRepo repository.UserRepository, userService UserService)
 }
 
 // Login 用户登录
-func (s *authService) Login(req *request.LoginRequest) (*response.LoginResponse, error) {
+func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, error) {
 	// 查找用户
 	user, err := s.userRepo.FindByUsername(req.Username)
 	if err != nil {
@@ -52,7 +52,7 @@ func (s *authService) Login(req *request.LoginRequest) (*response.LoginResponse,
 
 	// 构建响应
 	userResp := s.userService.GetUserResponse(user)
-	return &response.LoginResponse{
+	return &dto.LoginResponse{
 		Token: token,
 		User:  *userResp,
 	}, nil

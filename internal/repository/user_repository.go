@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"cloudque/internal/model/entity"
+
 	"gorm.io/gorm"
 )
 
@@ -82,7 +83,7 @@ func (r *userRepository) List(offset, limit int) ([]*entity.User, int64, error) 
 	}
 
 	// 分页查询
-	err := r.db.Offset(offset).Limit(limit).Find(&users).Error
+	err := r.db.Order("created_at DESC").Offset(offset).Limit(limit).Find(&users).Error
 	if err != nil {
 		return nil, 0, err
 	}

@@ -108,3 +108,30 @@ func (ctrl *Controller) ChangePassword(c *gin.Context) {
 
 	response.Success(c, nil)
 }
+
+// ListUsers 获取用户列表（分页）
+// @Summary 获取用户列表
+// @Description 分页获取用户列表
+// @Tags 用户
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param page query int true "页码" minimum(1)
+// @Param size query int true "每页大小" minimum(1) maximum(100)
+// @Success 200 {object} response.Response
+// @Router /api/v1/user/list [get]
+func (ctrl *Controller) ListUsers(c *gin.Context) {
+	var req request.UserListRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	pageResp, err := ctrl.userService.ListUsers(&req)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, pageResp)
+}
