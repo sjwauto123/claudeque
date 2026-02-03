@@ -41,6 +41,13 @@ func (r *Router) Setup(engine *gin.Engine) {
 		})
 	})
 
+	engine.GET("/api/v1/buildtest", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":  "ok",
+			"message": "/api/v1/buildtest",
+		})
+	})
+
 	// API v1 路由组
 	v1 := engine.Group("/api/v1")
 	{
