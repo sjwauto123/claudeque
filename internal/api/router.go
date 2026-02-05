@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cloudque/internal/api/v1/admin"
 	"cloudque/internal/api/v1/auth"
 	"cloudque/internal/api/v1/user"
 	"cloudque/internal/middleware"
@@ -11,8 +12,9 @@ import (
 
 // Router 路由
 type Router struct {
-	userCtrl *user.Controller
-	authCtrl *auth.Controller
+	userCtrl  *user.Controller
+	authCtrl  *auth.Controller
+	adminCtrl *admin.Controller
 }
 
 // NewRouter 创建路由
@@ -21,8 +23,9 @@ func NewRouter(
 	authService service.AuthService,
 ) *Router {
 	return &Router{
-		userCtrl: user.NewController(userService),
-		authCtrl: auth.NewController(authService, userService),
+		userCtrl:  user.NewController(userService),
+		authCtrl:  auth.NewController(authService, userService),
+		adminCtrl: admin.NewController(userService, userService),
 	}
 }
 
@@ -56,5 +59,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// 用户路由
 		r.userCtrl.RegisterRoutes(v1)
+
+		// 管理员路由
+		r.adminCtrl.RegisterRoutes(v1)
 	}
 }

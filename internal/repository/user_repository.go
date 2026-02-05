@@ -4,7 +4,6 @@ import (
 	"errors"
 
 	"cloudque/internal/model/entity"
-
 	"gorm.io/gorm"
 )
 

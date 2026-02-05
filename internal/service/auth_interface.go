@@ -11,4 +11,6 @@ type AuthService interface {
 	Login(req *request.LoginRequest) (*dto.LoginResponse, error)
 	// RefreshToken 刷新 Token
 	RefreshToken(token string) (string, error)
+	// SendEmailCode 发送邮箱验证码
+	SendEmailCode(email string) error
 }

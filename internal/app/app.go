@@ -126,10 +126,11 @@ func (a *App) initDatabase() error {
 func (a *App) initDependencies() {
 	// 创建 Repository
 	userRepo := repository.NewUserRepository(a.mysqlDB)
+	redisRepo := repository.NewRedisRepository()
 
 	// 创建 Service
 	userSvc := service.NewUserService(userRepo)
-	authSvc := service.NewAuthService(userRepo, userSvc)
+	authSvc := service.NewAuthService(userRepo, redisRepo, userSvc)
 
 	// 创建 Router
 	a.router = api.NewRouter(userSvc, authSvc)

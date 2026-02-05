@@ -100,6 +100,9 @@ func (ctrl *Controller) ChangePassword(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
+	if req.NewPassword != req.ConfirmPassword {
+		response.BadRequest(c, "两次输入的密码不一致")
+	}
 
 	if err := ctrl.userService.ChangePassword(userID, &req); err != nil {
 		response.BizError(c, err)

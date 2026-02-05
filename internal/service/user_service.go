@@ -5,14 +5,20 @@ import (
 	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
-	"cloudque/pkg/response"
 	bizerrors "cloudque/pkg/errors"
+	"cloudque/pkg/logger"
+	"cloudque/pkg/response"
+	"context"
+	"errors"
+	"fmt"
+	"github.com/redis/go-redis/v9"
 	"golang.org/x/crypto/bcrypt"
 )
 
 // userService 用户服务实现
 type userService struct {
-	userRepo repository.UserRepository
+	userRepo  repository.UserRepository
+	redisRepo repository.RedisRepository
 }
 
 // NewUserService 创建用户服务
@@ -42,6 +48,24 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 		return bizerrors.New(bizerrors.CodeUserAlreadyExists, "邮箱已被注册")
 	}
 
+	//验证邮箱验证码
+	ctx := context.Background()
+	codeKey := fmt.Sprintf("email_code:%s", req.Email)
+	cacheCode, err := s.redisRepo.Get(ctx, codeKey)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			return bizerrors.New(bizerrors.CodeInvalidParam, "验证码已过期或未发送，请重新获取")
+		}
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取验证码缓存失败", err)
+	}
+
+	if req.EmailCaptcha != cacheCode {
+		return bizerrors.New(bizerrors.CodeInvalidParam, "验证码输入错误，请重新核对")
+	}
+	if delErr := s.redisRepo.Del(ctx, codeKey); delErr != nil {
+		logger.Info("删除验证码失败")
+	}
+
 	// 加密密码
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
@@ -53,7 +77,6 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 		Username: req.Username,
 		Password: string(hashedPassword),
 		Email:    req.Email,
-		Nickname: req.Nickname,
 		Status:   1, // 默认正常
 	}
 
@@ -83,10 +106,6 @@ func (s *userService) UpdateUser(id uint, req *request.UpdateUserRequest) error 
 		return err
 	}
 
-	// 更新字段
-	if req.Nickname != "" {
-		user.Nickname = req.Nickname
-	}
 	if req.Avatar != "" {
 		user.Avatar = req.Avatar
 	}
@@ -119,14 +138,16 @@ func (s *userService) ChangePassword(id uint, req *request.ChangePasswordRequest
 // GetUserResponse 获取用户响应
 func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
 	return &dto.UserResponse{
-		ID:        user.ID,
-		Username:  user.Username,
-		Email:     user.Email,
-		Nickname:  user.Nickname,
-		Avatar:    user.Avatar,
-		Status:    user.Status,
-		CreatedAt: user.CreatedAt,
-		UpdatedAt: user.UpdatedAt,
+		ID:            user.ID,
+		Username:      user.Username,
+		Email:         user.Email,
+		Avatar:        user.Avatar,
+		Status:        user.Status,
+		Priority:      user.Priority,
+		MultiTraining: user.MultiTraining,
+		CrossServer:   user.CrossServer,
+		CreatedAt:     user.CreatedAt,
+		UpdatedAt:     user.UpdatedAt,
 	}
 }
 

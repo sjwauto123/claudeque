@@ -10,6 +10,7 @@ import (
 
 // UserService 用户服务接口
 type UserService interface {
+	AdminService // 嵌入管理员服务接口
 	// Register 用户注册
 	Register(req *request.RegisterRequest) error
 	// GetUserByID 根据 ID 获取用户

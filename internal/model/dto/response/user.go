@@ -4,14 +4,16 @@ import "time"
 
 // UserResponse 用户响应
 type UserResponse struct {
-	ID        uint      `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	Nickname  string    `json:"nickname"`
-	Avatar    string    `json:"avatar"`
-	Status    int       `json:"status"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID            uint      `json:"id"`
+	Username      string    `json:"username"`
+	Email         string    `json:"email"`
+	Avatar        string    `json:"avatar"`
+	Status        int       `json:"status"`
+	Priority      int       `json:"priority"`
+	MultiTraining int       `json:"multi_training"`
+	CrossServer   int       `json:"cross_server"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // LoginResponse 登录响应

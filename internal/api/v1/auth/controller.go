@@ -3,7 +3,9 @@ package auth
 import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
+	"cloudque/pkg/captcha"
 	"cloudque/pkg/response"
+	"regexp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +31,23 @@ func (ctrl *Controller) Register(c *gin.Context) {
 		return
 	}
 
+	if req.Password != req.ConfirmPassword {
+		response.BadRequest(c, "两次输入的密码不一致")
+		return
+	}
+
+	qqEmailRegex := regexp.MustCompile(`^[a-zA-Z0-9_\.]+@qq\.com$`)
+	if qqEmailRegex.MatchString(req.Email) == false {
+		response.BadRequest(c, "目前仅支持qq邮箱")
+		return
+	}
+
+	var regexpLetterOnly = regexp.MustCompile(`^[a-zA-Z]+$`)
+	if regexpLetterOnly.MatchString(req.Username) == false {
+		response.BadRequest(c, "用户名只能包含大小写英文字母，不能有数字、符号或中文")
+		return
+	}
+
 	if err := ctrl.userService.Register(&req); err != nil {
 		response.BizError(c, err)
 		return
@@ -50,6 +69,12 @@ func (ctrl *Controller) Login(c *gin.Context) {
 	var req request.LoginRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, err.Error())
+		return
+	}
+
+	var regexpLetterOnly = regexp.MustCompile(`^[a-zA-Z]+$`)
+	if regexpLetterOnly.MatchString(req.Username) == false {
+		response.BadRequest(c, "用户名只能包含大小写英文字母，不能有数字、符号或中文")
 		return
 	}
 
@@ -86,5 +111,48 @@ func (ctrl *Controller) RefreshToken(c *gin.Context) {
 
 	response.Success(c, map[string]string{
 		"token": newToken,
+	})
+}
+
+// SendEmailCode 发送邮箱验证码
+// @Summary 发送邮箱验证码
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Param request body request.SendEmailCodeRequest true "邮箱信息"
+// @Success 200 {object} response.Response
+// @Router /api/v1/auth/email/code [post]
+func (ctrl *Controller) SendEmailCode(c *gin.Context) {
+	var req request.SendEmailCodeRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	if err := ctrl.authService.SendEmailCode(req.Email); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, nil)
+}
+
+// GetCaptcha 获取图形验证码
+// @Summary 获取图形验证码
+// @Description 获取图形验证码 ID 和 Base64 图片
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Success 200 {object} response.Response{data=map[string]string}
+// @Router /api/v1/auth/captcha [get]
+func (ctrl *Controller) GetCaptcha(c *gin.Context) {
+	id, b64s, err := captcha.Generate()
+	if err != nil {
+		response.InternalError(c, "生成图形验证码失败，请刷新重试")
+		return
+	}
+	response.Success(c, map[string]string{
+		"captcha_id":  id,
+		"captcha_val": b64s,
 	})
 }
