@@ -1,8 +1,8 @@
 package api
 
 import (
-	"cloudque/internal/api/v1/auth"
-	"cloudque/internal/api/v1/user"
+	"cloudque/internal/api/permissionManage/permission"
+	"cloudque/internal/api/permissionManage/role"
 	"cloudque/internal/middleware"
 	"cloudque/internal/service"
 
@@ -11,18 +11,18 @@ import (
 
 // Router 路由
 type Router struct {
-	userCtrl *user.Controller
-	authCtrl *auth.Controller
+	roleCtrl *role.RoleController
+	apiCtrl  *permission.APIController
 }
 
 // NewRouter 创建路由
 func NewRouter(
-	userService service.UserService,
-	authService service.AuthService,
+	roleService service.RoleService,
+	apiService service.APIService,
 ) *Router {
 	return &Router{
-		userCtrl: user.NewController(userService),
-		authCtrl: auth.NewController(authService, userService),
+		roleCtrl: role.NewRoleController(roleService),
+		apiCtrl:  permission.NewAPIController(apiService),
 	}
 }
 
@@ -34,7 +34,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 	engine.Use(middleware.CORS())
 
 	// 健康检查
-	engine.GET("/api/v1/health", func(c *gin.Context) {
+	engine.GET("/api/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":  "ok",
 			"message": "CloudQue API is running",
@@ -42,12 +42,12 @@ func (r *Router) Setup(engine *gin.Engine) {
 	})
 
 	// API v1 路由组
-	v1 := engine.Group("/api/v1")
+	v1 := engine.Group("/api")
 	{
-		// 认证路由
-		r.authCtrl.RegisterRoutes(v1)
+		// 角色路由
+		r.roleCtrl.RegisterRoutes(v1)
 
-		// 用户路由
-		r.userCtrl.RegisterRoutes(v1)
+		// API管理路由
+		r.apiCtrl.RegisterRoutes(v1)
 	}
 }

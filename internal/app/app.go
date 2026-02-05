@@ -105,19 +105,14 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
-		&entity.User{},
+		&entity.Role{},
+		&entity.Permission{},
+		&entity.Menu{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
 		logger.Info("数据库迁移完成")
 	}
-
-	// 初始化 Redis（可选）
-	rs, err := database.InitRedis(&a.cfg.Database.Redis)
-	if err != nil {
-		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
-	}
-	a.redis = rs
 
 	return nil
 }
@@ -125,20 +120,22 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
-	userRepo := repository.NewUserRepository(a.mysqlDB)
+	roleRepo := repository.NewRoleRepository(a.mysqlDB)
+	apiRepo := repository.NewAPIRepository(a.mysqlDB)
 
 	// 创建 Service
-	userSvc := service.NewUserService(userRepo)
-	authSvc := service.NewAuthService(userRepo, userSvc)
+	roleSvc := service.NewRoleService(roleRepo)
+	apiSvc := service.NewAPIService(apiRepo)
 
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc)
+	a.router = api.NewRouter(roleSvc, apiSvc)
 }
 
 // initRouter 初始化路由
 func (a *App) initRouter() {
 	// 设置 Gin 模式
 	gin.SetMode(a.cfg.App.Mode)
+	gin.SetMode("release")
 }
 
 // initServer 初始化 HTTP 服务器
