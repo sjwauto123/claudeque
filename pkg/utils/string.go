@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"strconv"
 	"strings"
 )
 
@@ -33,4 +34,17 @@ func TrimSpace(s string) string {
 // IsEmpty 检查字符串是否为空
 func IsEmpty(s string) bool {
 	return TrimSpace(s) == ""
+}
+
+// StringToUint 将字符串转换为int
+func StringToUint(s string, result *uint) (bool, error) {
+	if s == "" {
+		return false, nil
+	}
+	val, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return false, err
+	}
+	*result = uint(val)
+	return true, nil
 }

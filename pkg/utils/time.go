@@ -19,5 +19,8 @@ func FormatTime(t time.Time) string {
 
 // ParseTime 解析时间字符串
 func ParseTime(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
 	return time.Parse("2006-01-02 15:04:05", s)
 }

@@ -2,8 +2,11 @@ package api
 
 import (
 	"cloudque/internal/api/v1/auth"
+	"cloudque/internal/api/v1/job"
+	"cloudque/internal/api/v1/queue"
 	"cloudque/internal/api/v1/user"
 	"cloudque/internal/middleware"
+	"cloudque/internal/repository"
 	"cloudque/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -11,18 +14,25 @@ import (
 
 // Router 路由
 type Router struct {
-	userCtrl *user.Controller
-	authCtrl *auth.Controller
+	userCtrl  *user.Controller
+	authCtrl  *auth.Controller
+	jobCtrl   *job.Controller
+	queueCtrl *queue.Controller
 }
 
 // NewRouter 创建路由
 func NewRouter(
 	userService service.UserService,
 	authService service.AuthService,
+	jobService service.JobService,
+	queueService service.QueueService,
+	repository repository.JobRepository,
 ) *Router {
 	return &Router{
-		userCtrl: user.NewController(userService),
-		authCtrl: auth.NewController(authService, userService),
+		userCtrl:  user.NewController(userService),
+		authCtrl:  auth.NewController(authService, userService),
+		jobCtrl:   job.NewController(jobService),
+		queueCtrl: queue.NewController(queueService, repository),
 	}
 }
 
@@ -40,13 +50,19 @@ func (r *Router) Setup(engine *gin.Engine) {
 			"message": "CloudQue API is running",
 		})
 	})
-
+	// api 路由
+	task := engine.Group("/api")
+	{
+		// 任务路由
+		r.jobCtrl.JobsRoutes(task)
+		// 排队队列路由
+		r.queueCtrl.QueueRoutes(task)
+	}
 	// API v1 路由组
 	v1 := engine.Group("/api/v1")
 	{
 		// 认证路由
 		r.authCtrl.RegisterRoutes(v1)
-
 		// 用户路由
 		r.userCtrl.RegisterRoutes(v1)
 	}

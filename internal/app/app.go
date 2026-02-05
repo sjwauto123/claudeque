@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"github.com/redis/go-redis/v9"
 	"net/http"
 	"os"
 	"os/signal"
@@ -26,6 +27,7 @@ import (
 type App struct {
 	cfg     *config.Config
 	mysqlDB *gorm.DB
+	redis   *redis.Client
 	router  *api.Router
 	server  *http.Server
 }
@@ -104,6 +106,8 @@ func (a *App) initDatabase() error {
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
 		&entity.User{},
+		&entity.Job{},
+		&entity.GpuCard{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
@@ -111,9 +115,11 @@ func (a *App) initDatabase() error {
 	}
 
 	// 初始化 Redis（可选）
-	if _, err := database.InitRedis(&a.cfg.Database.Redis); err != nil {
+	rs, err := database.InitRedis(&a.cfg.Database.Redis)
+	if err != nil {
 		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
 	}
+	a.redis = rs
 
 	return nil
 }
@@ -122,13 +128,21 @@ func (a *App) initDatabase() error {
 func (a *App) initDependencies() {
 	// 创建 Repository
 	userRepo := repository.NewUserRepository(a.mysqlDB)
+	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
 
-	// 创建 Service
+	// 创建基础服务
 	userSvc := service.NewUserService(userRepo)
 	authSvc := service.NewAuthService(userRepo, userSvc)
 
+	// 创建队列服务和GPU服务
+	queueSvc := service.NewQueueService(a.redis, jobRepo)
+	gpuSvc := service.NewGpuService(a.mysqlDB, a.redis)
+
+	// 创建任务服务
+	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
+
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc)
+	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, jobRepo)
 }
 
 // initRouter 初始化路由
@@ -156,6 +170,7 @@ func (a *App) initServer() {
 
 // Run 运行应用
 func (a *App) Run() {
+
 	// 启动 HTTP 服务器
 	go func() {
 		logger.Info("HTTP 服务器启动",

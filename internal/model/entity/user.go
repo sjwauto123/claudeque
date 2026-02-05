@@ -9,6 +9,7 @@ type User struct {
 	Nickname string `gorm:"type:varchar(50);comment:昵称" json:"nickname"`
 	Avatar   string `gorm:"type:varchar(255);comment:头像" json:"avatar"`
 	Status   int    `gorm:"type:tinyint;default:1;comment:状态:1正常,2禁用" json:"status"`
+	Priority int    `gorm:"type:tinyint;default:2;comment:优先级:1高,2低" json:"priority"` // 用户优先级
 }
 
 // TableName 指定表名
