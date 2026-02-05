@@ -5,8 +5,9 @@ import (
 	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
-	"cloudque/pkg/response"
 	bizerrors "cloudque/pkg/errors"
+	"cloudque/pkg/response"
+
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -52,8 +53,7 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 	user := &entity.User{
 		Username: req.Username,
 		Password: string(hashedPassword),
-		Email:    req.Email,
-		Nickname: req.Nickname,
+		Email:    &req.Email,
 		Status:   1, // 默认正常
 	}
 
@@ -84,11 +84,8 @@ func (s *userService) UpdateUser(id uint, req *request.UpdateUserRequest) error 
 	}
 
 	// 更新字段
-	if req.Nickname != "" {
-		user.Nickname = req.Nickname
-	}
 	if req.Avatar != "" {
-		user.Avatar = req.Avatar
+		user.Avatar = &req.Avatar
 	}
 
 	return s.userRepo.Update(user)
@@ -118,13 +115,23 @@ func (s *userService) ChangePassword(id uint, req *request.ChangePasswordRequest
 
 // GetUserResponse 获取用户响应
 func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
+	email := ""
+	if user.Email != nil {
+		email = *user.Email
+	}
+
+	avatar := ""
+	if user.Avatar != nil {
+		avatar = *user.Avatar
+	}
+
 	return &dto.UserResponse{
 		ID:        user.ID,
 		Username:  user.Username,
-		Email:     user.Email,
-		Nickname:  user.Nickname,
-		Avatar:    user.Avatar,
-		Status:    user.Status,
+		Email:     email,
+		Avatar:    avatar,
+		Status:    int(user.Status),
+		Role:      int(user.Role),
 		CreatedAt: user.CreatedAt,
 		UpdatedAt: user.UpdatedAt,
 	}

@@ -9,6 +9,7 @@ type Config struct {
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	Log      LogConfig      `mapstructure:"log"`
 	CORS     CORSConfig     `mapstructure:"cors"`
+	Server   ServerConfig   `mapstructure:"server"`
 }
 
 // AppConfig 应用配置
@@ -70,4 +71,16 @@ type CORSConfig struct {
 	ExposeHeaders    []string `mapstructure:"expose_headers"`
 	AllowCredentials bool     `mapstructure:"allow_credentials"`
 	MaxAge           int      `mapstructure:"max_age"`
+}
+
+// ServerConfig 训练服务器配置
+type ServerConfig struct {
+	Host           string        `mapstructure:"host"`             // 服务器地址，如 "192.168.1.100:22"
+	RootUsername   string        `mapstructure:"root_username"`    // 管理员SSH用户名（默认root）
+	Username       string        `mapstructure:"username"`         // 用户名（已废弃，保留兼容性）
+	Password       string        `mapstructure:"password"`         // 密码（已废弃，保留兼容性）
+	BasePath       string        `mapstructure:"base_path"`        // 服务器上的基础文件路径
+	Timeout        time.Duration `mapstructure:"timeout"`          // 连接超时
+	SessionTimeout time.Duration `mapstructure:"session_timeout"`   // 会话超时时间，0表示永不超时
+	Enabled        bool          `mapstructure:"enabled"`          // 是否启用训练服务器
 }

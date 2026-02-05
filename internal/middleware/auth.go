@@ -3,8 +3,10 @@ package middleware
 import (
 	"strings"
 
+	"cloudque/internal/repository"
 	"cloudque/pkg/jwt"
 	"cloudque/pkg/response"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -85,6 +87,32 @@ func OptionalAuth() gin.HandlerFunc {
 		if err == nil {
 			c.Set(ContextUserID, claims.GetUserID())
 			c.Set(ContextUsername, claims.GetUsername())
+		}
+
+		c.Next()
+	}
+}
+
+// RequireAdmin 要求管理员权限的中间件
+func RequireAdmin(userRepo repository.UserRepository) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		userID := GetUserID(c)
+		if userID == 0 {
+			response.Unauthorized(c, "用户未登录")
+			c.Abort()
+			return
+		}
+
+		user, err := userRepo.FindByID(userID)
+		if err != nil {
+			response.BizError(c, err)
+			c.Abort()
+			return
+		}
+		if user == nil || user.Role != 2 {
+			response.Forbidden(c, "需要管理员权限")
+			c.Abort()
+			return
 		}
 
 		c.Next()

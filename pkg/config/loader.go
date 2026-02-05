@@ -33,12 +33,17 @@ func Load(configPath string) (*Config, error) {
 	if err := v.ReadInConfig(); err != nil {
 		return nil, fmt.Errorf("读取配置文件失败: %w", err)
 	}
+	fmt.Println("Using config file:", v.ConfigFileUsed())
+	fmt.Printf("All settings: %+v\n", v.AllSettings())
 
 	// 解析配置
 	config := &Config{}
 	if err := v.Unmarshal(config); err != nil {
 		return nil, fmt.Errorf("解析配置文件失败: %w", err)
 	}
+
+	// Debug unmarshal
+	// fmt.Printf("Unmarshaled config: %+v\n", config)
 
 	// 从环境变量覆盖敏感配置
 	if val := os.Getenv("MYSQL_PASSWORD"); val != "" {

@@ -12,13 +12,15 @@ import (
 type Controller struct {
 	authService service.AuthService
 	userService service.UserService
+	logService  service.LogService
 }
 
 // NewController 创建认证控制器
-func NewController(authService service.AuthService, userService service.UserService) *Controller {
+func NewController(authService service.AuthService, userService service.UserService, logService service.LogService) *Controller {
 	return &Controller{
 		authService: authService,
 		userService: userService,
+		logService:  logService,
 	}
 }
 
@@ -59,6 +61,7 @@ func (ctrl *Controller) Login(c *gin.Context) {
 		return
 	}
 
+	ctrl.logService.CreateLog(resp.User.ID, "Login", "User logged in", c.ClientIP())
 	response.Success(c, resp)
 }
 
@@ -87,4 +90,40 @@ func (ctrl *Controller) RefreshToken(c *gin.Context) {
 	response.Success(c, map[string]string{
 		"token": newToken,
 	})
+}
+
+// Logout 用户登出
+// @Summary 用户登出
+// @Description 用户登出并关闭SSH会话
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Success 200 {object} response.Response
+// @Router /api/v1/auth/logout [post]
+func (ctrl *Controller) Logout(c *gin.Context) {
+	// 从上下文获取用户ID
+	userID := getUserIDFromContext(c)
+	if userID == 0 {
+		response.Unauthorized(c, "获取用户信息失败")
+		return
+	}
+
+	if err := ctrl.authService.Logout(userID); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	ctrl.logService.CreateLog(userID, "Logout", "User logged out", c.ClientIP())
+	response.Success(c, nil)
+}
+
+// getUserIDFromContext 从上下文获取用户ID
+func getUserIDFromContext(c *gin.Context) uint {
+	if userID, exists := c.Get("user_id"); exists {
+		if id, ok := userID.(uint); ok {
+			return id
+		}
+	}
+	return 0
 }
