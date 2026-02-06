@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cloudque/pkg/ws"
 	"context"
 	"fmt"
 	"net/http"
@@ -30,6 +31,7 @@ type App struct {
 	redis   *redis.Client
 	router  *api.Router
 	server  *http.Server
+	hub     *ws.Hub
 }
 
 // NewApp 创建应用实例
@@ -54,6 +56,9 @@ func (a *App) Initialize() error {
 		return err
 	}
 
+	a.hub = ws.NewHub()
+	go a.hub.Run()
+
 	// 4. 初始化依赖
 	a.initDependencies()
 
@@ -62,8 +67,8 @@ func (a *App) Initialize() error {
 
 	// 6. 初始化服务器
 	a.initServer()
-
 	return nil
+
 }
 
 // initConfig 加载配置
@@ -105,19 +110,21 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
-		&entity.User{},
+		&entity.UserLog{},
+		&entity.BaseEntity{},
+		&entity.Process{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
 		logger.Info("数据库迁移完成")
 	}
 
-	// 初始化 Redis（可选）
-	rs, err := database.InitRedis(&a.cfg.Database.Redis)
-	if err != nil {
-		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
-	}
-	a.redis = rs
+	//// 初始化 Redis（可选）
+	//rs, err := database.InitRedis(&a.cfg.Database.Redis)
+	//if err != nil {
+	//	logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
+	//}
+	//a.redis = rs
 
 	return nil
 }
@@ -125,14 +132,23 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
-	userRepo := repository.NewUserRepository(a.mysqlDB)
+	userLogRepo := repository.NewUserLogRepository(a.mysqlDB)
+	processRepo := repository.NewProcessRepository(a.mysqlDB)
 
 	// 创建 Service
-	userSvc := service.NewUserService(userRepo)
-	authSvc := service.NewAuthService(userRepo, userSvc)
+	userLogSvc := service.NewUserLogService(userLogRepo)
+	infoService := service.NewSystemInfoService(a.hub, processRepo)
 
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc)
+	a.router = api.NewRouter(userLogSvc, infoService)
+}
+
+// Shutdown 关闭应用
+func (a *App) Shutdown() {
+	// 关闭 Hub
+	if a.hub != nil {
+		close(a.hub.Done)
+	}
 }
 
 // initRouter 初始化路由
