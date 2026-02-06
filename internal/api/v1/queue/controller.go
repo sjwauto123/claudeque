@@ -1,26 +1,31 @@
 package queue
 
 import (
+	"cloudque/internal/middleware"
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
+	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"cloudque/pkg/utils"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // Controller 队列控制器
 type Controller struct {
-	queueService service.QueueService
-	jobRepo      repository.JobRepository
+	queueService    service.QueueService
+	jobRepo         repository.JobRepository
+	operationLogSvc service.OperationLogService
 }
 
 // NewController 创建队列控制器
-func NewController(queueService service.QueueService, jobRepo repository.JobRepository) *Controller {
+func NewController(queueService service.QueueService, jobRepo repository.JobRepository, operationLogSvc service.OperationLogService) *Controller {
 	return &Controller{
-		queueService: queueService,
-		jobRepo:      jobRepo,
+		queueService:    queueService,
+		jobRepo:         jobRepo,
+		operationLogSvc: operationLogSvc,
 	}
 }
 
@@ -61,12 +66,37 @@ func (ctrl *Controller) ReorderQueue(c *gin.Context) {
 		return
 	}
 
-	// 语义：把 JobID 插到 TargetJobID 前面
-	if err := ctrl.queueService.MoveBefore(c.Request.Context(), req.JobID, req.TargetJobID); err != nil {
+	username := middleware.GetUsername(c)
+
+	job, err := ctrl.jobRepo.GetByID(req.JobID)
+	if err != nil {
+		if err := ctrl.operationLogSvc.Log(username, "拖拽任务", "", err.Error(), false); err != nil {
+			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+		}
 		response.InternalError(c, err.Error())
 		return
 	}
 
+	filePath := ""
+	if job != nil {
+		filePath = job.FilePath
+	}
+
+	targetJobIDStr := utils.IntToString(int(req.TargetJobID))
+
+	// 语义：把 JobID 插到 TargetJobID 前面
+	if err := ctrl.queueService.MoveBefore(c.Request.Context(), req.JobID, req.TargetJobID); err != nil {
+		if err := ctrl.operationLogSvc.Log(username, "拖拽任务", filePath, err.Error(), false); err != nil {
+			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	description := "插入到任务" + targetJobIDStr + "前面"
+	if err := ctrl.operationLogSvc.Log(username, "拖拽任务", filePath, description, true); err != nil {
+		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+	}
 	response.Success(c, nil)
 }
 
@@ -84,23 +114,43 @@ func (ctrl *Controller) RemoveJob(c *gin.Context) {
 		return
 	}
 
+	username := middleware.GetUsername(c)
+
+	job, err := ctrl.jobRepo.GetByID(jobID)
+	if err != nil {
+		if err := ctrl.operationLogSvc.Log(username, "删除排队任务", "", err.Error(), false); err != nil {
+			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	filePath := ""
+	if job != nil {
+		filePath = job.FilePath
+	}
+
 	if err := ctrl.queueService.Remove(c.Request.Context(), jobID); err != nil {
+		if err := ctrl.operationLogSvc.Log(username, "删除排队任务", filePath, err.Error(), false); err != nil {
+			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+		}
 		response.InternalError(c, err.Error())
 		return
 	}
 
 	// 同步更新任务状态，避免数据库仍显示为排队中
-	job, err := ctrl.jobRepo.GetByID(jobID)
-	if err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
 	if job != nil && (job.Status == entity.JobStatusQueued || job.Status == entity.JobStatusWaitingGpu) {
 		if err := ctrl.jobRepo.UpdateStatus(jobID, entity.JobStatusCancelled); err != nil {
+			if err := ctrl.operationLogSvc.Log(username, "删除排队任务", filePath, err.Error(), false); err != nil {
+				logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+			}
 			response.InternalError(c, err.Error())
 			return
 		}
 	}
 
+	if err := ctrl.operationLogSvc.Log(username, "删除排队任务", filePath, "成功", true); err != nil {
+		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+	}
 	response.Success(c, nil)
 }

@@ -48,3 +48,8 @@ func StringToUint(s string, result *uint) (bool, error) {
 	*result = uint(val)
 	return true, nil
 }
+
+// IntToString 将int转换为字符串
+func IntToString(i int) string {
+	return strconv.Itoa(i)
+}

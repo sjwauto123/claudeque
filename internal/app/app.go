@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"net/http"
@@ -25,11 +26,12 @@ import (
 
 // App 应用结构体
 type App struct {
-	cfg     *config.Config
-	mysqlDB *gorm.DB
-	redis   *redis.Client
-	router  *api.Router
-	server  *http.Server
+	cfg       *config.Config
+	mysqlDB   *gorm.DB
+	redis     *redis.Client
+	router    *api.Router
+	server    *http.Server
+	scheduler *service.Scheduler // 任务调度器
 }
 
 // NewApp 创建应用实例
@@ -108,18 +110,32 @@ func (a *App) initDatabase() error {
 		&entity.User{},
 		&entity.Job{},
 		&entity.GpuCard{},
+		&entity.OperationLog{},
+		&entity.Process{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
 		logger.Info("数据库迁移完成")
 	}
 
-	// 初始化 Redis（可选）
+	// 初始化 Redis
 	rs, err := database.InitRedis(&a.cfg.Database.Redis)
 	if err != nil {
 		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
 	}
 	a.redis = rs
+
+	//初始化GPU卡片
+	if a.redis != nil {
+		gpuSvc := service.NewGpuService(a.mysqlDB, a.redis)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := gpuSvc.InitializeGpus(ctx); err != nil {
+			logger.Warn("GPU卡片初始化失败", zap.Error(err))
+		} else {
+			logger.Info("GPU卡片初始化完成")
+		}
+		cancel()
+	}
 
 	return nil
 }
@@ -129,20 +145,22 @@ func (a *App) initDependencies() {
 	// 创建 Repository
 	userRepo := repository.NewUserRepository(a.mysqlDB)
 	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
+	operationLogRepo := repository.NewOperationLogRepository(a.mysqlDB)
+	processRepo := repository.NewProcessRepository(a.mysqlDB)
 
-	// 创建基础服务
+	// 创建 Service
 	userSvc := service.NewUserService(userRepo)
 	authSvc := service.NewAuthService(userRepo, userSvc)
-
-	// 创建队列服务和GPU服务
+	operationLogSvc := service.NewOperationLogService(operationLogRepo)
 	queueSvc := service.NewQueueService(a.redis, jobRepo)
 	gpuSvc := service.NewGpuService(a.mysqlDB, a.redis)
-
-	// 创建任务服务
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 
+	// 创建调度器
+	logDir := "./logs/jobs"
+	a.scheduler = service.NewScheduler(a.mysqlDB, a.redis, jobRepo, queueSvc, gpuSvc, processRepo, logDir)
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, jobRepo)
+	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, operationLogSvc, jobRepo)
 }
 
 // initRouter 初始化路由
@@ -170,6 +188,10 @@ func (a *App) initServer() {
 
 // Run 运行应用
 func (a *App) Run() {
+	// 启动任务调度器
+	if a.scheduler != nil {
+		a.scheduler.Start()
+	}
 
 	// 启动 HTTP 服务器
 	go func() {
@@ -177,7 +199,7 @@ func (a *App) Run() {
 			zap.String("addr", a.server.Addr),
 			zap.String("mode", a.cfg.App.Mode),
 		)
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatal("HTTP 服务器启动失败", zap.Error(err))
 		}
 	}()
@@ -193,6 +215,11 @@ func (a *App) gracefulShutdown() {
 	<-quit
 
 	logger.Info("正在关闭服务器...")
+
+	// 停止任务调度器
+	if a.scheduler != nil {
+		a.scheduler.Stop()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

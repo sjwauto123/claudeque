@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strconv"
 	"time"
 
@@ -63,7 +64,10 @@ func (s *queueService) Peek(ctx context.Context) (*entity.Item, error) {
 		return nil, nil
 	}
 
-	jobID, _ := strconv.ParseUint(items[0].Member.(string), 10, 64)
+	jobID, err := strconv.ParseUint(items[0].Member.(string), 10, 64)
+	if err != nil {
+		return nil, fmt.Errorf("解析任务ID失败: %w", err)
+	}
 
 	return &entity.Item{
 		JobID: uint(jobID),
@@ -89,7 +93,10 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequ
 
 	orderedJobIDs := make([]uint, 0, len(members))
 	for _, m := range members {
-		jobID, _ := strconv.ParseUint(m, 10, 64)
+		jobID, err := strconv.ParseUint(m, 10, 64)
+		if err != nil {
+			continue
+		}
 		orderedJobIDs = append(orderedJobIDs, uint(jobID))
 	}
 	if req.PageSize <= 0 {

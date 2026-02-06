@@ -17,10 +17,10 @@ func FormatTime(t time.Time) string {
 	return t.Format("2006-01-02 15:04:05")
 }
 
-// ParseTime 解析时间字符串
+// ParseTime 解析时间字符串（使用本地时区）
 func ParseTime(s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
-	return time.Parse("2006-01-02 15:04:05", s)
+	return time.ParseInLocation("2006-01-02 15:04:05", s, time.Local)
 }

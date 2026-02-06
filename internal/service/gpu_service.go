@@ -2,11 +2,11 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"cloudque/internal/model/entity"
-
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -28,44 +28,26 @@ const (
 	gpuStatusKeyPrefix = "gpu:status:" // GPU状态Redis key前缀
 )
 
-// GpuStatus GPU状态信息
-type GpuStatus struct {
-	ID           uint   `json:"id"`
-	Name         string `json:"name"`
-	Status       int    `json:"status"`         // 0-空闲，1-忙碌
-	CurrentJobID *uint  `json:"current_job_id"` // 当前执行的任务ID
-}
-
-// InitializeGpus 初始化GPU卡片（如果不存在）
+// InitializeGpus 初始化GPU卡片
+// 只补齐缺失的GPU，不修改现有状态（防止进程重启时丢失正在运行的任务状态）
 func (s *GpuService) InitializeGpus(ctx context.Context) error {
-	// 检查是否已经初始化
-	var count int64
-	if err := s.db.Model(&entity.GpuCard{}).Count(&count).Error; err != nil {
-		return fmt.Errorf("检查GPU表失败: %w", err)
-	}
-
-	// 如果已经有数据，则跳过
-	if count >= int64(totalGpuCount) {
-		return nil
-	}
-
-	// 清空旧数据（如果有）
-	if count > 0 {
-		if err := s.db.Exec("DELETE FROM gpu_cards").Error; err != nil {
-			return fmt.Errorf("清空GPU表失败: %w", err)
-		}
-	}
-
-	// 创建4张显卡
 	for i := 0; i < totalGpuCount; i++ {
+		name := fmt.Sprintf("gpu-%d", i)
+		var existing entity.GpuCard
+		result := s.db.Where("name = ?", name).First(&existing)
+		if result.Error == nil {
+			continue
+		}
+		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return fmt.Errorf("查询 GPU %s 失败: %w", name, result.Error)
+		}
 		gpu := entity.GpuCard{
-			Name:   fmt.Sprintf("gpu-%d", i),
+			Name:   name,
 			Status: entity.GpuStatusIdle,
 		}
 		if err := s.db.Create(&gpu).Error; err != nil {
 			return fmt.Errorf("创建GPU-%d失败: %w", i, err)
 		}
-		// 初始化Redis缓存
 		key := fmt.Sprintf("%s%d", gpuStatusKeyPrefix, gpu.ID)
 		s.redis.HSet(ctx, key, "status", entity.GpuStatusIdle)
 		s.redis.HSet(ctx, key, "job_id", "")
@@ -73,16 +55,6 @@ func (s *GpuService) InitializeGpus(ctx context.Context) error {
 	}
 
 	return nil
-}
-
-// GetIdleCards 获取空闲显卡列表
-func (s *GpuService) GetIdleCards(ctx context.Context) ([]entity.GpuCard, error) {
-	var cards []entity.GpuCard
-	err := s.db.Where("status = ?", entity.GpuStatusIdle).Find(&cards).Error
-	if err != nil {
-		return nil, fmt.Errorf("查询空闲显卡失败: %w", err)
-	}
-	return cards, nil
 }
 
 // GetIdleCount 获取空闲显卡数量
@@ -95,42 +67,11 @@ func (s *GpuService) GetIdleCount(ctx context.Context) (int, error) {
 	return int(count), nil
 }
 
-// GetBusyCards 获取忙碌显卡列表
-func (s *GpuService) GetBusyCards(ctx context.Context) ([]entity.GpuCard, error) {
-	var cards []entity.GpuCard
-	err := s.db.Where("status = ?", entity.GpuStatusBusy).Find(&cards).Error
-	if err != nil {
-		return nil, fmt.Errorf("查询忙碌显卡失败: %w", err)
-	}
-	return cards, nil
-}
-
-// GetAllStatus 获取所有显卡状态
-func (s *GpuService) GetAllStatus(ctx context.Context) ([]GpuStatus, error) {
-	var cards []entity.GpuCard
-	if err := s.db.Find(&cards).Error; err != nil {
-		return nil, fmt.Errorf("查询所有显卡失败: %w", err)
-	}
-
-	statusList := make([]GpuStatus, len(cards))
-	for i, card := range cards {
-		statusList[i] = GpuStatus{
-			ID:           card.ID,
-			Name:         card.Name,
-			Status:       card.Status,
-			CurrentJobID: card.CurrentJobID,
-		}
-	}
-	return statusList, nil
-}
-
 // AcquireCards 占用指定数量的显卡
-// 返回被占用的显卡ID列表
 func (s *GpuService) AcquireCards(ctx context.Context, count int, jobID uint) ([]uint, error) {
 	if count <= 0 || count > totalGpuCount {
 		return nil, fmt.Errorf("显卡数量必须在1-%d之间", totalGpuCount)
 	}
-
 	// 使用事务确保原子性
 	tx := s.db.Begin()
 	defer func() {
@@ -206,30 +147,4 @@ func (s *GpuService) ReleaseCards(ctx context.Context, cardIDs []uint) error {
 	}
 
 	return nil
-}
-
-// ReleaseCardsByJobID 根据任务ID释放相关显卡
-func (s *GpuService) ReleaseCardsByJobID(ctx context.Context, jobID uint) error {
-	// 查找该任务占用的显卡
-	var cards []entity.GpuCard
-	if err := s.db.Where("current_job_id = ?", jobID).Find(&cards).Error; err != nil {
-		return fmt.Errorf("查找任务%d的显卡失败: %w", jobID, err)
-	}
-
-	if len(cards) == 0 {
-		return nil // 没有关联显卡
-	}
-
-	// 释放显卡
-	cardIDs := make([]uint, len(cards))
-	for i, card := range cards {
-		cardIDs[i] = card.ID
-	}
-
-	return s.ReleaseCards(ctx, cardIDs)
-}
-
-// GetTotalGpuCount 获取总显卡数量
-func (s *GpuService) GetTotalGpuCount() int {
-	return totalGpuCount
 }

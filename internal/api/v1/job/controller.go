@@ -4,20 +4,24 @@ import (
 	"cloudque/internal/middleware"
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
+	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"cloudque/pkg/utils"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // Controller 任务控制器
 type Controller struct {
-	jobService service.JobService
+	jobService      service.JobService
+	operationLogSvc service.OperationLogService
 }
 
 // NewController 创建任务控制器
-func NewController(jobService service.JobService) *Controller {
+func NewController(jobService service.JobService, operationLogSvc service.OperationLogService) *Controller {
 	return &Controller{
-		jobService: jobService,
+		jobService:      jobService,
+		operationLogSvc: operationLogSvc,
 	}
 }
 
@@ -113,20 +117,27 @@ func (ctrl *Controller) SubmitJob(c *gin.Context) {
 	}
 
 	userID := middleware.GetUserID(c)
+	username := middleware.GetUsername(c)
 
 	job, err := ctrl.jobService.SubmitJob(c.Request.Context(), req, userID)
 	if err != nil {
+		if err := ctrl.operationLogSvc.Log(username, "提交任务", req.FilePath, err.Error(), false); err != nil {
+			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+		}
 		response.InternalError(c, err.Error())
 		return
 	}
 
+	description := "任务名称: " + req.Name + ", 显卡数量: " + utils.IntToString(req.GpuCount)
+	if err := ctrl.operationLogSvc.Log(username, "提交任务", req.FilePath, description, true); err != nil {
+		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+	}
 	response.Success(c, job)
 }
 
 // CancelJob 取消排队中的任务
 func (ctrl *Controller) CancelJob(c *gin.Context) {
-	// 获取job_id参数
-	jobIDStr := c.Param("jobId")
+	jobIDStr := c.Param("id")
 	if jobIDStr == "" {
 		response.BadRequest(c, "缺少任务ID")
 		return
@@ -139,11 +150,33 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 	}
 
 	userID := middleware.GetUserID(c)
-	if err := ctrl.jobService.CancelJob(c.Request.Context(), jobID, userID); err != nil {
+	username := middleware.GetUsername(c)
+
+	job, err := ctrl.jobService.GetJobByID(c.Request.Context(), jobID)
+	if err != nil {
+		if err := ctrl.operationLogSvc.Log(username, "取消任务", "", err.Error(), false); err != nil {
+			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+		}
 		response.InternalError(c, err.Error())
 		return
 	}
 
+	filePath := ""
+	if job != nil {
+		filePath = job.FilePath
+	}
+
+	if err := ctrl.jobService.CancelJob(c.Request.Context(), jobID, userID); err != nil {
+		if err := ctrl.operationLogSvc.Log(username, "取消任务", filePath, err.Error(), false); err != nil {
+			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+		}
+		response.InternalError(c, err.Error())
+		return
+	}
+
+	if err := ctrl.operationLogSvc.Log(username, "取消任务", filePath, "成功", true); err != nil {
+		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
+	}
 	response.Success(c, nil)
 }
 
@@ -168,4 +201,14 @@ func (ctrl *Controller) GetJobLog(c *gin.Context) {
 		return
 	}
 	response.Success(c, gin.H{"log": log})
+}
+
+// GetStats 获取任务统计
+func (ctrl *Controller) GetStats(c *gin.Context) {
+	stats, err := ctrl.jobService.GetStats()
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, stats)
 }

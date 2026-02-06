@@ -23,4 +23,6 @@ type JobRepository interface {
 	GetQueueJobsByIDs(jobIDs []uint) (map[uint]response.QueueJobDBRow, error)
 	// GetQueueJobListFiltered 按队列顺序、条件筛选、分页获取排队任务
 	GetQueueJobListFiltered(orderedJobIDs []uint, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int64, error)
+	// GetStats 获取任务统计
+	GetStats() (*response.JobStatsResponse, error)
 }

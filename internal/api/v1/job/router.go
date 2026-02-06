@@ -13,7 +13,8 @@ func (ctrl *Controller) JobsRoutes(r *gin.RouterGroup) {
 		jobsGroup.POST("", ctrl.SubmitJob)
 		jobsGroup.GET("", ctrl.GetJobsList)
 		jobsGroup.GET("/wait", ctrl.GetWaitJobsList)
+		jobsGroup.GET("/stats", ctrl.GetStats)
 		jobsGroup.GET("/:jobId", ctrl.GetJobLog)
-		jobsGroup.DELETE("/:jobId", ctrl.CancelJob)
+		jobsGroup.DELETE("/:id", ctrl.CancelJob)
 	}
 }

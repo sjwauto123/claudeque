@@ -13,12 +13,17 @@ type JobResponse struct {
 	Status int64 `json:"status"`
 	// 创建时间
 	CreatedAt time.Time `json:"created_at"`
-	// 错误信息
-	ResultMsg string `json:"result_msg"`
-	// 使用的显卡（保留兼容性，实际应从其他接口获取）
+	// 使用的显卡
 	Card string `json:"card"`
-	// 前方等待任务数（保留兼容性）
+	// 前方等待任务数
 	Count int `json:"count"`
 	// 已等待时间
 	WaitTime string `json:"wait_time"`
+}
+
+type JobStatsResponse struct {
+	Total     int64 `json:"total"`
+	Running   int64 `json:"running"`
+	Queued    int64 `json:"queued"`
+	Exception int64 `json:"exception"`
 }

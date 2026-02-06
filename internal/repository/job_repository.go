@@ -63,7 +63,6 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 			j.description,
 			j.status,
 			j.created_at,
-			j.result_msg,
 			COALESCE(g.card, '') AS card,
 			0 AS count
 		`).
@@ -220,4 +219,26 @@ func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []uint, req request
 	}
 
 	return rows, total, nil
+}
+
+func (r jobRepository) GetStats() (*response.JobStatsResponse, error) {
+	var result response.JobStatsResponse
+
+	if err := r.db.Model(&entity.Job{}).Count(&result.Total).Error; err != nil {
+		return nil, err
+	}
+
+	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusRunning).Count(&result.Running).Error; err != nil {
+		return nil, err
+	}
+
+	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusQueued).Count(&result.Queued).Error; err != nil {
+		return nil, err
+	}
+
+	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusFailed, entity.JobStatusCancelled}).Count(&result.Exception).Error; err != nil {
+		return nil, err
+	}
+
+	return &result, nil
 }

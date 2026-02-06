@@ -26,13 +26,14 @@ func NewRouter(
 	authService service.AuthService,
 	jobService service.JobService,
 	queueService service.QueueService,
+	operationLogSvc service.OperationLogService,
 	repository repository.JobRepository,
 ) *Router {
 	return &Router{
 		userCtrl:  user.NewController(userService),
 		authCtrl:  auth.NewController(authService, userService),
-		jobCtrl:   job.NewController(jobService),
-		queueCtrl: queue.NewController(queueService, repository),
+		jobCtrl:   job.NewController(jobService, operationLogSvc),
+		queueCtrl: queue.NewController(queueService, repository, operationLogSvc),
 	}
 }
 

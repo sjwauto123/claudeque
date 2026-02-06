@@ -10,6 +10,8 @@ import (
 	"cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
+	"cloudque/pkg/logger"
+	"go.uber.org/zap"
 	"time"
 )
 
@@ -73,7 +75,9 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 	// 将任务加入排队队列
 	if err := s.queueSvc.Enqueue(ctx, job.ID, priority); err != nil {
 		// 如果入队失败，更新任务状态为失败
-		_ = s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed)
+		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
+			logger.Warn("更新任务状态失败", zap.Error(err), zap.Uint("job_id", job.ID))
+		}
 		return nil, fmt.Errorf("加入排队队列失败: %w", err)
 	}
 
@@ -186,4 +190,12 @@ func readLogFile(logPath string) (string, error) {
 	}
 
 	return string(content), nil
+}
+
+func (s *jobService) GetJobByID(ctx context.Context, jobID uint) (*entity.Job, error) {
+	return s.jobRepo.GetByID(jobID)
+}
+
+func (s *jobService) GetStats() (*response.JobStatsResponse, error) {
+	return s.jobRepo.GetStats()
 }

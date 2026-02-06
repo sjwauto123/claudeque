@@ -14,8 +14,8 @@ type Job struct {
 	CreatedAt *time.Time `json:"created_at" gorm:"column:created_at;autoCreateTime"`
 	//StartedAt  *time.Time `json:"started_at" gorm:"column:started_at"`
 	FinishedAt *time.Time `json:"finished_at" gorm:"column:finished_at"`
-	ResultMsg  string     `json:"result_msg" gorm:"column:result_msg;type:text"`     // 错误信息
-	LogPath    string     `json:"log_path" gorm:"column:log_path;type:varchar(255)"` // 日志文件路径
+
+	LogPath string `json:"log_path" gorm:"column:log_path;type:varchar(255)"` // 日志文件路径
 }
 
 // JobStatus 任务状态常量

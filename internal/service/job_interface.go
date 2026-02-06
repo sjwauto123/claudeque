@@ -19,4 +19,8 @@ type JobService interface {
 	EnrichJobList(ctx context.Context, jobs []response.JobResponse) error
 	// GetJobLog 查看任务日志
 	GetJobLog(ctx context.Context, jobID uint, userID uint) (string, error)
+	// GetJobByID 根据ID获取任务信息
+	GetJobByID(ctx context.Context, jobID uint) (*entity.Job, error)
+	// GetStats 获取任务统计
+	GetStats() (*response.JobStatsResponse, error)
 }
