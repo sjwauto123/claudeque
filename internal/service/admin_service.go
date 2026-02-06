@@ -35,10 +35,15 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 		Password: string(hashedPassword),
 		Email:    req.Email,
 		Status:   req.Status,
-		Avatar:   req.Avatar,
 	}
-
-	return s.userRepo.Create(user)
+	if err := s.userRepo.Create(user); err != nil {
+		return err
+	}
+	// 默认赋予普通用户角色
+	if err := s.userRepo.AssignRoleByName(user.ID, "user"); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (s *userService) DeleteUser(id uint) error {
@@ -48,6 +53,9 @@ func (s *userService) DeleteUser(id uint) error {
 	}
 	if user == nil {
 		return bizerrors.ErrUserNotFound
+	}
+	if err := s.userRepo.ClearRoles(id); err != nil {
+		return err
 	}
 	return s.userRepo.Delete(id)
 }
@@ -83,10 +91,6 @@ func (s *userService) AdminUpdateUser(id uint, req *request.AdminUpdateUserReque
 		user.Email = req.Email
 	}
 
-	if req.Avatar != "" {
-		user.Avatar = req.Avatar
-	}
-
 	if req.Status != nil {
 		user.Status = *req.Status
 	}
@@ -111,5 +115,10 @@ func (s *userService) AdminUpdateUser(id uint, req *request.AdminUpdateUserReque
 		user.CrossServer = *req.CrossServer
 	}
 
+	if req.Roles != nil {
+		if err := s.userRepo.ReplaceRolesByNames(id, *req.Roles); err != nil {
+			return err
+		}
+	}
 	return s.userRepo.Update(user)
 }

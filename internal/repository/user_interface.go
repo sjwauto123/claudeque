@@ -24,4 +24,10 @@ type UserRepository interface {
 	ExistsByUsername(username string) (bool, error)
 	// ExistsByEmail 检查邮箱是否存在
 	ExistsByEmail(email string) (bool, error)
+	// AssignRoleByName 为用户分配指定角色
+	AssignRoleByName(userID uint, name string) error
+	// ClearRoles 清空用户的所有角色关联
+	ClearRoles(userID uint) error
+	// ReplaceRolesByNames 使用角色名称替换用户的角色集合
+	ReplaceRolesByNames(userID uint, names []string) error
 }

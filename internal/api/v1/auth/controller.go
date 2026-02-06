@@ -87,6 +87,26 @@ func (ctrl *Controller) Login(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// ResetPassword 重置密码
+func (ctrl *Controller) ResetPassword(c *gin.Context) {
+	var req request.ResetPasswordRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	if req.NewPassword != req.ConfirmPassword {
+		response.BadRequest(c, "两次输入的密码不一致")
+	}
+
+	if err := ctrl.userService.ResetPassword(&req); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, nil)
+}
+
 // RefreshToken 刷新 Token
 // @Summary 刷新 Token
 // @Description 使用旧 Token 获取新 Token

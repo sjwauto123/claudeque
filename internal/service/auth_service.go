@@ -58,11 +58,12 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		return nil, bizerrors.ErrInvalidCredentials
 	}
 
-	// 获取用户角色（模拟）
-	// TODO: 实现 getUserRoles(user.ID)
-	// roles, err := s.roleRepo.GetRolesByUserID(user.ID)
-	// 目前暂时硬编码为 admin 角色以便测试，或者空
-	roles := []string{"admin"} // 示例角色
+	roles := make([]string, 0, len(user.Roles))
+	for _, r := range user.Roles {
+		if r.Status == 1 {
+			roles = append(roles, r.Slug)
+		}
+	}
 
 	// 生成 Token
 	token, err := jwt.GenerateToken(user.ID, user.Username, roles)

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"strings"
 
 	"cloudque/pkg/jwt"
@@ -65,6 +66,7 @@ func RequirePermission(permission string) gin.HandlerFunc {
 			return
 		}
 		roles := rolesInterface.([]string)
+		log.Println(roles)
 
 		// 2. 查到用户所有的权限
 		// 注意：此处应调用 Service 或 Repository 层方法查询数据库
@@ -98,7 +100,7 @@ func getPermissionsByRoles(roles []string) []string {
 	permissions := make([]string, 0)
 	for _, role := range roles {
 		switch role {
-		case "admin":
+		case "a":
 			// admin 拥有所有权限
 			permissions = append(permissions, "user_manage", "post_manage", "system_manage")
 		case "user_manager":

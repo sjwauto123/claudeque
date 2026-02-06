@@ -12,6 +12,7 @@ type UserResponse struct {
 	Priority      int       `json:"priority"`
 	MultiTraining int       `json:"multi_training"`
 	CrossServer   int       `json:"cross_server"`
+	Roles         []string  `json:"roles"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

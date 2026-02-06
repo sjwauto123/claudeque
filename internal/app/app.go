@@ -129,7 +129,7 @@ func (a *App) initDependencies() {
 	redisRepo := repository.NewRedisRepository()
 
 	// 创建 Service
-	userSvc := service.NewUserService(userRepo)
+	userSvc := service.NewUserService(userRepo, redisRepo)
 	authSvc := service.NewAuthService(userRepo, redisRepo, userSvc)
 
 	// 创建 Router
