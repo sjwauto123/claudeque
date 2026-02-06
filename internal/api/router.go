@@ -21,6 +21,7 @@ type Router struct {
 	filesCtrl    *files.Controller
 	terminalCtrl *terminal.Controller
 	wsCtrl       *ws.Controller
+	logService   service.LogService
 }
 
 // NewRouter 创建路由
@@ -39,6 +40,7 @@ func NewRouter(
 		filesCtrl:    files.NewController(fileService, logService),
 		terminalCtrl: terminal.NewController(terminalService, authService, logService),
 		wsCtrl:       ws.NewController(wsPool, authService, sessionManager),
+		logService:   logService,
 	}
 }
 
@@ -47,6 +49,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 	// 全局中间件
 	engine.Use(middleware.Recovery())
 	engine.Use(middleware.Logger())
+	engine.Use(middleware.RequestLogger(r.logService)) // 添加请求日志中间件
 	engine.Use(middleware.CORS())
 
 	// 健康检查

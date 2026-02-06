@@ -41,14 +41,33 @@ CREATE TABLE IF NOT EXISTS `users` (
 -- 操作日志表
 CREATE TABLE IF NOT EXISTS `operation_logs` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '日志ID',
-  `user_id` int unsigned NOT NULL COMMENT '操作用户ID，关联users.id',
+  `username` varchar(50) NOT NULL COMMENT '操作用户名称，关联users.username',
   `action_type` varchar(50) NOT NULL COMMENT '操作类型 (Login, SubmitJob, CancelJob, DeleteFile...)',
   `description` text COMMENT '操作详情描述',
-  `ip_address` varchar(45) NOT NULL COMMENT '操作IP地址',
   `created_at` timestamp DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
   `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
   PRIMARY KEY (`id`),
   KEY `idx_action_type` (`action_type`),
   KEY `idx_operation_time` (`created_at`),
-  KEY `idx_user_operation` (`user_id`, `created_at`)
+  KEY `idx_user_operation` (`username`, `created_at`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='用户操作日志表';
+
+-- 请求日志表
+CREATE TABLE IF NOT EXISTS `request_logs` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+  `user_id` int unsigned DEFAULT 0 COMMENT '用户ID',
+  `method` varchar(10) NOT NULL COMMENT '请求方法',
+  `path` varchar(255) NOT NULL COMMENT '请求路径',
+  `query` text COMMENT '请求参数',
+  `body` text COMMENT '请求体',
+  `ip_address` varchar(45) NOT NULL COMMENT '请求IP',
+  `user_agent` varchar(255) DEFAULT '' COMMENT '用户代理',
+  `status_code` int NOT NULL COMMENT '响应状态码',
+  `latency` bigint DEFAULT 0 COMMENT '耗时(ms)',
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP COMMENT '请求时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_request_time` (`created_at`),
+  KEY `idx_user_request` (`user_id`, `created_at`),
+  KEY `idx_path` (`path`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='用户请求日志表';
+

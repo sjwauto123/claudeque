@@ -115,9 +115,16 @@ func (a *App) initDatabase() error {
 
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
+
+	// 临时修复：尝试删除旧字段 (如果存在)
+	// 忽略错误，因为如果字段不存在会报错
+	a.mysqlDB.Exec("ALTER TABLE operation_logs DROP COLUMN user_id")
+	a.mysqlDB.Exec("ALTER TABLE operation_logs DROP COLUMN ip_address")
+
 	if err := a.mysqlDB.AutoMigrate(
 		&entity.User{},
 		&entity.OperationLog{},
+		&entity.RequestLog{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {

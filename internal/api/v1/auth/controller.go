@@ -61,7 +61,7 @@ func (ctrl *Controller) Login(c *gin.Context) {
 		return
 	}
 
-	ctrl.logService.CreateLog(resp.User.ID, "Login", "User logged in", c.ClientIP())
+	ctrl.logService.CreateLog(req.Username, "Login", "User logged in")
 	response.Success(c, resp)
 }
 
@@ -114,7 +114,8 @@ func (ctrl *Controller) Logout(c *gin.Context) {
 		return
 	}
 
-	ctrl.logService.CreateLog(userID, "Logout", "User logged out", c.ClientIP())
+	username := getUsernameFromContext(c)
+	ctrl.logService.CreateLog(username, "Logout", "User logged out")
 	response.Success(c, nil)
 }
 
@@ -126,4 +127,14 @@ func getUserIDFromContext(c *gin.Context) uint {
 		}
 	}
 	return 0
+}
+
+// getUsernameFromContext 从上下文获取用户名
+func getUsernameFromContext(c *gin.Context) string {
+	if username, exists := c.Get("username"); exists {
+		if name, ok := username.(string); ok {
+			return name
+		}
+	}
+	return ""
 }
