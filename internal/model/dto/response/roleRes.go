@@ -1,17 +1,17 @@
 package response
 
 type RolePermissionTree struct {
-	Permissions []*MenuTreeNode `json:"data_permissions"` // 实际为 []*MenuTreeNode
-	API         APITree         `json:"data_api"`
+	Permissions []*MenuTreeNodeRole `json:"data_permissions"` // 实际为 []*MenuTreeNode
+	API         APITree             `json:"data_api"`
 }
 
-type MenuTreeNode struct {
-	ID       int             `json:"id"`
-	Title    string          `json:"title"`
-	Name     string          `json:"name,omitempty"`
-	Type     string          `json:"type"` // catalogue/menu/permission
-	Checked  bool            `json:"checked"`
-	Children []*MenuTreeNode `json:"children,omitempty"`
+type MenuTreeNodeRole struct {
+	ID       int                 `json:"id"`
+	Title    string              `json:"title"`
+	Name     string              `json:"name,omitempty"`
+	Type     string              `json:"type"` // catalogue/menu/permission
+	Checked  bool                `json:"checked"`
+	Children []*MenuTreeNodeRole `json:"children,omitempty"`
 }
 
 type APITree struct {

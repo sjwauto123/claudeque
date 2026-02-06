@@ -107,20 +107,20 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionTree
 	}
 
 	// Step 2: 构建菜单树（业务逻辑）
-	menuMap := make(map[int]*dto.MenuTreeNode)
+	menuMap := make(map[int]*dto.MenuTreeNodeRole)
 	for _, m := range menus {
-		node := &dto.MenuTreeNode{
+		node := &dto.MenuTreeNodeRole{
 			ID:       m.ID,
 			Title:    m.Title,
 			Name:     "",
 			Type:     "menu", // 或根据 m.Type 动态设为 "catalogue"
 			Checked:  contains(permIDs, m.ID),
-			Children: []*dto.MenuTreeNode{},
+			Children: []*dto.MenuTreeNodeRole{},
 		}
 		menuMap[m.ID] = node
 	}
 
-	var roots []*dto.MenuTreeNode
+	var roots []*dto.MenuTreeNodeRole
 	for _, m := range menus {
 		node := menuMap[m.ID]
 		if m.ParentID == nil {
@@ -142,7 +142,7 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionTree
 			continue
 		}
 		if parentNode, exists := menuMap[parentID]; exists {
-			child := &dto.MenuTreeNode{
+			child := &dto.MenuTreeNodeRole{
 				ID:       p.ID,
 				Title:    p.Name,
 				Name:     p.Name,

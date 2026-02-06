@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cloudque/internal/api/permissionManage/menu"
 	"cloudque/internal/api/permissionManage/permission"
 	"cloudque/internal/api/permissionManage/role"
 	"cloudque/internal/middleware"
@@ -12,17 +13,20 @@ import (
 // Router 路由
 type Router struct {
 	roleCtrl *role.RoleController
-	apiCtrl  *permission.APIController
+	apiCtrl  *permission.APIController // 新增API控制器
+	menuCtrl *menu.MenuController      // 新增菜单控制器
 }
 
 // NewRouter 创建路由
 func NewRouter(
 	roleService service.RoleService,
-	apiService service.APIService,
+	apiService service.APIService, // 新增API服务
+	menuService service.MenuService, // 新增菜单服务
 ) *Router {
 	return &Router{
 		roleCtrl: role.NewRoleController(roleService),
-		apiCtrl:  permission.NewAPIController(apiService),
+		apiCtrl:  permission.NewAPIController(apiService), // 新增API控制器初始化
+		menuCtrl: menu.NewMenuController(menuService),     // 新增菜单控制器初始化
 	}
 }
 
@@ -49,5 +53,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// API管理路由
 		r.apiCtrl.RegisterRoutes(v1)
+
+		// 菜单管理路由
+		r.menuCtrl.RegisterRoutes(v1)
 	}
 }

@@ -117,18 +117,20 @@ func (a *App) initDatabase() error {
 	return nil
 }
 
-// initDependencies 初始化依赖注入
+// initDependencies 初始化依赖
 func (a *App) initDependencies() {
 	// 创建 Repository
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
-	apiRepo := repository.NewAPIRepository(a.mysqlDB)
+	apiRepo := repository.NewAPIRepository(a.mysqlDB)   // 新增API仓库
+	menuRepo := repository.NewMenuRepository(a.mysqlDB) // 新增菜单仓库
 
 	// 创建 Service
 	roleSvc := service.NewRoleService(roleRepo)
-	apiSvc := service.NewAPIService(apiRepo)
+	apiSvc := service.NewAPIService(apiRepo)    // 新增API服务
+	menuSvc := service.NewMenuService(menuRepo) // 新增菜单服务
 
-	// 创建 Router
-	a.router = api.NewRouter(roleSvc, apiSvc)
+	// 创建 Router（传入所有 Service）
+	a.router = api.NewRouter(roleSvc, apiSvc, menuSvc) // 更新路由初始化，添加菜单服务
 }
 
 // initRouter 初始化路由
