@@ -19,28 +19,9 @@ func (u *operationLogRepository) CreateLog(log *entity.OperationLog) error {
 	return u.db.Create(log).Error
 }
 
-// FindAdminLogs 查询关机或重启类型的日志
-func (u *operationLogRepository) FindAdminLogs(offset int, size int) (*[]dto.AdminLogResponse, int64, error) {
-	query := u.db.Model(&entity.OperationLog{}).Where("action_type IN ?", []string{"关机", "重启"})
-
-	// 总数
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	// 分页数据
-	var logs []dto.AdminLogResponse
-	if err := query.Offset(offset).Limit(size).Find(&logs).Error; err != nil {
-		return nil, 0, err
-	}
-
-	return &logs, total, nil
-}
-
 // FindUserLogs 查询非关机或重启类型的日志
 func (u *operationLogRepository) FindUserLogs(offset int, size int, username string, actionType string, start time.Time, end time.Time) (*[]dto.UserLogsResponse, int64, error) {
-	query := u.db.Model(&entity.OperationLog{}).Where("action_type NOT IN ?", []string{"关机", "重启"})
+	query := u.db.Model(&entity.OperationLog{})
 
 	// 操作类型
 	if actionType != "" {

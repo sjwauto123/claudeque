@@ -66,6 +66,7 @@ func (a *App) Initialize() error {
 
 	// 6. 初始化服务器
 	a.initServer()
+
 	return nil
 
 }
@@ -117,14 +118,6 @@ func (a *App) initDatabase() error {
 	} else {
 		logger.Info("数据库迁移完成")
 	}
-
-	//// 初始化 Redis（可选）
-	//rs, err := database.InitRedis(&a.cfg.Database.Redis)
-	//if err != nil {
-	//	logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
-	//}
-	//a.redis = rs
-
 	return nil
 }
 
@@ -135,19 +128,18 @@ func (a *App) initDependencies() {
 	processRepo := repository.NewProcessRepository(a.mysqlDB)
 
 	// 创建 Service
-	userLogSvc := service.NewUserLogService(operationLogRepo)
-	adminLogSvc := service.NewAdminLogService(operationLogRepo)
+	userLogSvc := service.NewUserOperationLogService(operationLogRepo)
 	infoService := service.NewSystemInfoService(a.pool, processRepo)
 
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, infoService, adminLogSvc)
+	a.router = api.NewRouter(userLogSvc, infoService)
 
 	// 启动日志限制定时任务
-	go a.startLogLimitTask(adminLogSvc)
+	go a.startLogLimitTask(userLogSvc)
 }
 
 // startLogLimitTask 启动日志限制定时任务
-func (a *App) startLogLimitTask(adminLogSvc service.AdminLogService) {
+func (a *App) startLogLimitTask(adminLogSvc service.UserOperationLogService) {
 	// 日志保留数量限制
 	const logLimit int64 = 10000
 

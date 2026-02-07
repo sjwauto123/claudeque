@@ -9,14 +9,12 @@ import (
 )
 
 type Controller struct {
-	userLogSer  service.UserLogService
-	adminLogSer service.AdminLogService
+	userOperationLogSer service.UserOperationLogService
 }
 
-func NewController(userLogCon service.UserLogService, adminLogCon service.AdminLogService) *Controller {
+func NewController(userOperationLogCon service.UserOperationLogService) *Controller {
 	return &Controller{
-		userLogSer:  userLogCon,
-		adminLogSer: adminLogCon,
+		userOperationLogSer: userOperationLogCon,
 	}
 }
 
@@ -60,42 +58,12 @@ func (ctrl *Controller) GetUserLogs(c *gin.Context) {
 		end = t
 	}
 
-	data, err := ctrl.userLogSer.GetUserLogs(&req, start, end)
+	data, err := ctrl.userOperationLogSer.GetUserLogs(&req, start, end)
 	if err != nil {
 		response.BizError(c, err)
 		return
 	}
 
 	response.Success(c, data)
-
-}
-
-func (ctrl *Controller) GetAdminLogs(c *gin.Context) {
-
-	var req response.PageRequest
-	if err := c.ShouldBindQuery(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	// 参数标准化
-	page := req.Page
-	if page < 1 {
-		page = 1
-	}
-	size := req.Size
-	if size < 1 {
-		size = 10
-	}
-	if size > 100 {
-		size = 100
-	}
-
-	logs, err := ctrl.adminLogSer.GetAdminLogs(&req)
-	if err != nil {
-		response.BizError(c, err)
-		return
-	}
-
-	response.Success(c, logs)
 
 }

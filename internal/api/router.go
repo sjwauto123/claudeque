@@ -15,13 +15,12 @@ type Router struct {
 
 // NewRouter 创建路由
 func NewRouter(
-	userLogService service.UserLogService,
+	userLogService service.UserOperationLogService,
 	infoService service.SystemInfoService,
-	adminLogService service.AdminLogService,
 	// 新增
 ) *Router {
 	return &Router{
-		operationLogCtrl: operationLogs.NewController(userLogService, adminLogService),
+		operationLogCtrl: operationLogs.NewController(userLogService),
 		systemInfoCtrl:   system.NewController(infoService),
 	}
 }
