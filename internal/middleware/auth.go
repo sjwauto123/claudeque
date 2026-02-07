@@ -4,6 +4,7 @@ import (
 	"log"
 	"strings"
 
+	"cloudque/internal/service"
 	"cloudque/pkg/jwt"
 	"cloudque/pkg/response"
 
@@ -56,9 +57,9 @@ func Auth() gin.HandlerFunc {
 }
 
 // RequirePermission 权限检查中间件
-func RequirePermission(permission string) gin.HandlerFunc {
+func RequirePermission(authService service.AuthService, permission string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. 获取用户角色
+		// 1. 获取用户角色slug
 		rolesInterface, exists := c.Get(ContextRoles)
 		if !exists {
 			response.Forbidden(c, "无权访问")
@@ -66,18 +67,28 @@ func RequirePermission(permission string) gin.HandlerFunc {
 			return
 		}
 		roles := rolesInterface.([]string)
-		log.Println(roles)
 
 		// 2. 查到用户所有的权限
-		// 注意：此处应调用 Service 或 Repository 层方法查询数据库
-		// 例如: permissions := permissionService.GetPermissionsByRoles(roles)
-		userPermissions := getPermissionsByRoles(roles)
-
-		// 3. 找是否有传入的这个权限名
 		hasPermission := false
-		for _, p := range userPermissions {
-			if p == permission {
+		for _, roleSlug := range roles {
+			if roleSlug == "a" {
 				hasPermission = true
+				break
+			}
+
+			perms, err := authService.GetPermissionsByRole(roleSlug)
+			if err != nil {
+				log.Printf("获取角色 %s 权限失败: %v", roleSlug, err)
+				continue
+			}
+
+			for _, p := range perms {
+				if p.Slug == permission {
+					hasPermission = true
+					break
+				}
+			}
+			if hasPermission {
 				break
 			}
 		}
@@ -90,26 +101,6 @@ func RequirePermission(permission string) gin.HandlerFunc {
 
 		c.Next()
 	}
-}
-
-// getPermissionsByRoles 根据角色获取权限列表 (模拟实现)
-func getPermissionsByRoles(roles []string) []string {
-	// 实际项目中应查询数据库或缓存
-	// return permissionRepo.GetByRoles(roles)
-
-	permissions := make([]string, 0)
-	for _, role := range roles {
-		switch role {
-		case "a":
-			// admin 拥有所有权限
-			permissions = append(permissions, "user_manage", "post_manage", "system_manage")
-		case "user_manager":
-			permissions = append(permissions, "user_manage")
-		case "editor":
-			permissions = append(permissions, "post_manage")
-		}
-	}
-	return permissions
 }
 
 // GetUserID 从上下文获取用户 ID

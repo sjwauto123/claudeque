@@ -8,8 +8,8 @@ import (
 
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	adminGroup := r.Group("/admin")
-	adminGroup.Use(middleware.Auth())                           // 需要认证
-	adminGroup.Use(middleware.RequirePermission("user_manage")) // 需要用户管理权限
+	adminGroup.Use(middleware.Auth())                                             // 需要认证
+	adminGroup.Use(middleware.RequirePermission(ctrl.authService, "user_manage")) // 需要用户管理权限
 
 	{
 		adminGroup.POST("/users", ctrl.CreateUser)

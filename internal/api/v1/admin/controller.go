@@ -12,12 +12,14 @@ import (
 type Controller struct {
 	adminService service.AdminService
 	userService  service.UserService
+	authService  service.AuthService
 }
 
-func NewController(adminService service.AdminService, userService service.UserService) *Controller {
+func NewController(adminService service.AdminService, userService service.UserService, authService service.AuthService) *Controller {
 	return &Controller{
 		adminService: adminService,
 		userService:  userService,
+		authService:  authService,
 	}
 }
 

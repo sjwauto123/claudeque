@@ -25,7 +25,7 @@ func NewRouter(
 	return &Router{
 		userCtrl:  user.NewController(userService),
 		authCtrl:  auth.NewController(authService, userService),
-		adminCtrl: admin.NewController(userService, userService),
+		adminCtrl: admin.NewController(userService, userService, authService),
 	}
 }
 

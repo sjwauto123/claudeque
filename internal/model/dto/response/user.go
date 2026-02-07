@@ -1,6 +1,9 @@
 package response
 
-import "time"
+import (
+	"cloudque/internal/model/entity"
+
+)
 
 // UserResponse 用户响应
 type UserResponse struct {
@@ -19,8 +22,9 @@ type UserResponse struct {
 
 // LoginResponse 登录响应
 type LoginResponse struct {
-	Token string       `json:"token"`
-	User  UserResponse `json:"user"`
+	Token       string              `json:"token"`
+	User        UserResponse        `json:"user"`
+	Permissions []entity.Permission `json:"permissions"`
 }
 
 // UserInfoResponse 用户信息响应

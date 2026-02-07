@@ -3,6 +3,7 @@ package service
 import (
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
+	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/pkg/captcha"
 	"cloudque/pkg/email"
@@ -19,14 +20,16 @@ import (
 // authService 认证服务实现
 type authService struct {
 	userRepo    repository.UserRepository
+	roleRepo    repository.RoleRepository
 	redisRepo   repository.RedisRepository
 	userService UserService
 }
 
 // NewAuthService 创建认证服务
-func NewAuthService(userRepo repository.UserRepository, redisRepo repository.RedisRepository, userService UserService) AuthService {
+func NewAuthService(userRepo repository.UserRepository, roleRepo repository.RoleRepository, redisRepo repository.RedisRepository, userService UserService) AuthService {
 	return &authService{
 		userRepo:    userRepo,
+		roleRepo:    roleRepo,
 		redisRepo:   redisRepo,
 		userService: userService,
 	}
@@ -65,6 +68,27 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		}
 	}
 
+	// 聚合用户权限（按角色去重，返回完整权限对象）
+	permMap := make(map[uint]entity.Permission)
+	for _, r := range user.Roles {
+		if r.Status != 1 {
+			continue
+		}
+		role, err := s.roleRepo.FindBySlug(r.Slug)
+		if err != nil || role == nil {
+			continue
+		}
+		for _, p := range role.Permissions {
+			if p.Status == 1 {
+				permMap[p.ID] = p
+			}
+		}
+	}
+	permissions := make([]entity.Permission, 0, len(permMap))
+	for _, p := range permMap {
+		permissions = append(permissions, p)
+	}
+
 	// 生成 Token
 	token, err := jwt.GenerateToken(user.ID, user.Username, roles)
 	if err != nil {
@@ -74,8 +98,9 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	// 构建响应
 	userResp := s.userService.GetUserResponse(user)
 	return &dto.LoginResponse{
-		Token: token,
-		User:  *userResp,
+		Token:       token,
+		User:        *userResp,
+		Permissions: permissions,
 	}, nil
 }
 
@@ -110,4 +135,17 @@ func (s *authService) SendEmailCode(emailStr string) error {
 	}
 
 	return nil
+}
+
+// GetPermissionsByRole 根据角色 Slug 获取权限列表
+func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, error) {
+	role, err := s.roleRepo.FindBySlug(slug)
+	if err != nil {
+		return nil, err
+	}
+	if role == nil {
+		return nil, bizerrors.New(bizerrors.CodeInvalidParam, "角色不存在")
+	}
+
+	return role.Permissions, nil
 }
