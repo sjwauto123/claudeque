@@ -42,9 +42,9 @@ func NewApp() *App {
 }
 
 // Initialize 初始化应用
-func (a *App) Initialize() error {
+func (a *App) Initialize(configPath string) error {
 	// 1. 加载配置
-	if err := a.initConfig(); err != nil {
+	if err := a.initConfig(configPath); err != nil {
 		return err
 	}
 
@@ -61,6 +61,16 @@ func (a *App) Initialize() error {
 	// 4. 初始化依赖
 	a.initDependencies()
 
+	// 打印 SSH 状态
+	if a.cfg.Server.Enabled {
+		logger.Info("SSH 远程服务器配置已就绪",
+			zap.String("host", a.cfg.Server.Host),
+			zap.String("root_user", a.cfg.Server.RootUsername),
+		)
+	} else {
+		logger.Warn("SSH 功能已在配置中禁用")
+	}
+
 	// 5. 初始化路由
 	a.initRouter()
 
@@ -71,8 +81,8 @@ func (a *App) Initialize() error {
 }
 
 // initConfig 加载配置
-func (a *App) initConfig() error {
-	cfg, err := config.Load("")
+func (a *App) initConfig(configPath string) error {
+	cfg, err := config.Load(configPath)
 	if err != nil {
 		return fmt.Errorf("加载配置失败: %w", err)
 	}
@@ -148,6 +158,10 @@ func (a *App) initDependencies() {
 	sessionRepo := repository.NewSessionRepository(a.redis)
 	logRepo := repository.NewLogRepository(a.mysqlDB)
 
+	// 如果将来需要使用通用 Redis 仓库，可以使用：
+	// redisRepo := repository.NewRedisRepository(a.redis)
+	// _ = redisRepo
+
 	// 创建 SSH 会话管理器
 	var sessionManager *ssh.SessionManager
 	if a.cfg.Server.Enabled {
@@ -181,6 +195,7 @@ func (a *App) initDependencies() {
 	authSvc := service.NewAuthService(userRepo, userSvc, sessionRepo, sessionManager)
 	if a.cfg.Server.Enabled {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
+		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
 	}
 	fileSvc := service.NewFileService(sessionManager)
 	terminalSvc := service.NewTerminalService(sessionManager)

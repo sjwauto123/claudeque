@@ -51,6 +51,8 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 		return
 	}
 
+	// 如果指定了 TargetUserID，说明是管理员查看他人目录
+	// 这里需要校验当前用户是否有管理员权限
 	data, err := ctrl.fileService.GetFileList(userID, &req)
 	if err != nil {
 		response.BizError(c, err)

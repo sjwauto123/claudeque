@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"cloudque/internal/service"
 	"cloudque/pkg/jwt"
@@ -75,6 +76,14 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return
 	}
 	defer conn.Close()
+
+	// 设置心跳和超时
+	const pongWait = 60 * time.Second
+	conn.SetReadDeadline(time.Now().Add(pongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pongWait))
+		return nil
+	})
 
 	// 记录终端连接日志
 	ctrl.logService.CreateLog(claims.GetUsername(), "TerminalConnect", "Terminal connected")
@@ -149,6 +158,8 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		if err != nil {
 			break
 		}
+		// 每次收到消息都刷新读取超时
+		conn.SetReadDeadline(time.Now().Add(pongWait))
 
 		var in inboundMsg
 		if err := json.Unmarshal(data, &in); err != nil {

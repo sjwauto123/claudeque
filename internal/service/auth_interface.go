@@ -3,6 +3,7 @@ package service
 import (
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
+	"time"
 )
 
 // AuthService 认证服务接口
@@ -17,4 +18,6 @@ type AuthService interface {
 	EnsureSSHSession(userID uint) error
 	// SetSSHServerHost 设置SSH服务器地址
 	SetSSHServerHost(host string)
+	// SetSSHTimeout 设置SSH连接超时
+	SetSSHTimeout(timeout time.Duration)
 }

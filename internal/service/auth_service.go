@@ -31,8 +31,8 @@ type authService struct {
 	userService    UserService
 	sessionRepo    repository.SessionRepository
 	sessionManager *ssh.SessionManager
-	redisClient    interface{} // Redis客户端（用于存储会话凭证）
-	sshServerHost  string      // SSH服务器地址
+	sshServerHost  string        // SSH服务器地址
+	sshTimeout     time.Duration // SSH连接超时
 }
 
 // NewAuthService 创建认证服务
@@ -45,14 +45,14 @@ func NewAuthService(userRepo repository.UserRepository, userService UserService,
 	}
 }
 
-// SetRedisClient 设置Redis客户端
-func (s *authService) SetRedisClient(redisClient interface{}) {
-	s.redisClient = redisClient
-}
-
 // SetSSHServerHost 设置SSH服务器地址
 func (s *authService) SetSSHServerHost(host string) {
 	s.sshServerHost = host
+}
+
+// SetSSHTimeout 设置SSH连接超时
+func (s *authService) SetSSHTimeout(timeout time.Duration) {
+	s.sshTimeout = timeout
 }
 
 // verifySSHCredentials 通过SSH验证用户凭证
@@ -66,8 +66,13 @@ func (s *authService) verifySSHCredentials(username, password string) (*server.C
 	// 获取服务器地址
 	serverHost := s.sshServerHost
 	if serverHost == "" {
-		// 默认使用 localhost:22
-		serverHost = "localhost:22"
+		return nil, fmt.Errorf("SSH服务器地址未配置")
+	}
+
+	// 获取超时时间
+	timeout := s.sshTimeout
+	if timeout == 0 {
+		timeout = 10 * time.Second
 	}
 
 	// 尝试连接SSH服务器验证凭证
@@ -75,7 +80,7 @@ func (s *authService) verifySSHCredentials(username, password string) (*server.C
 		Host:     serverHost,
 		Username: username,
 		Password: password,
-		Timeout:  10 * time.Second,
+		Timeout:  timeout,
 	}
 
 	client, err := server.NewClient(sshConfig)

@@ -65,8 +65,16 @@ func (ctrl *Controller) Connect(c *gin.Context) {
 		return
 	}
 
-	ctrl.pool.Add(userID, conn, &pkgws.SessionMetadata{UserID: userID, SessionType: "ws", CreatedAt: time.Now().Unix()})
-	defer ctrl.pool.Remove(userID)
+	client := ctrl.pool.Add(userID, conn, &pkgws.SessionMetadata{UserID: userID, SessionType: "ws", CreatedAt: time.Now().Unix()})
+	defer client.Close()
+
+	// 配置连接参数
+	conn.SetReadLimit(pkgws.MaxMessageSize)
+	conn.SetReadDeadline(time.Now().Add(pkgws.PongWait))
+	conn.SetPongHandler(func(string) error {
+		conn.SetReadDeadline(time.Now().Add(pkgws.PongWait))
+		return nil
+	})
 
 	// 保持连接
 	for {

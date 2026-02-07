@@ -4,10 +4,11 @@ import "mime/multipart"
 
 // FileListRequest 文件列表查询请求
 type FileListRequest struct {
-	Path     string `form:"path" json:"path"`           // 目录路径
-	Keyword  string `form:"keyword" json:"keyword"`     // 模糊搜索关键词
-	Page     int    `form:"page" json:"page"`           // 第几页
-	PageSize int    `form:"page_size" json:"page_size"` // 每页条数
+	Path         string `form:"path" json:"path"`                     // 目录路径
+	Keyword      string `form:"keyword" json:"keyword"`               // 模糊搜索关键词
+	Page         int    `form:"page" json:"page"`                     // 第几页
+	PageSize     int    `form:"page_size" json:"page_size"`           // 每页条数
+	TargetUserID uint   `form:"target_user_id" json:"target_user_id"` // 目标用户ID (管理员查看他人目录时使用)
 }
 
 // DiskUsageRequest 计算目录磁盘占比和大小

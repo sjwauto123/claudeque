@@ -98,7 +98,24 @@ func (s *fileService) executeSSHCommand(userID uint, cmd string) (string, error)
 
 // GetFileList 获取文件列表
 func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*dto.FilesListData, error) {
-	client, err := s.getSftpClient(userID)
+	// 确定实际要操作的用户 ID
+	opUserID := userID
+	if req.TargetUserID > 0 {
+		// 管理员权限检查逻辑：
+		// 1. 获取当前用户
+		// 2. 检查角色是否为管理员
+		// 这里为了保持逻辑内聚，我们通过 sessionManager 获取当前用户的 session 来判断
+		currentSession, err := s.sessionManager.GetSession(userID)
+		if err != nil || !currentSession.IsRoot() {
+			// 如果当前用户不是 root 且没有管理员标识，拒绝访问他人目录
+			// 注意：这里 IsRoot() 是判断 SSH 连接是否为 root，
+			// 在实际业务中，可能还需要检查数据库里的 User.RoleID
+			return nil, errors.New(errors.CodeForbidden, "没有权限查看其他用户的目录")
+		}
+		opUserID = req.TargetUserID
+	}
+
+	client, err := s.getSftpClient(opUserID)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +130,7 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 	path := req.Path
 	if path == "" || path == "." {
 		// 检查是否为 root 用户，如果是则默认从 / 开始
-		session, err := s.sessionManager.GetSession(userID)
+		session, err := s.sessionManager.GetSession(opUserID)
 		if err == nil && session.IsRoot() {
 			path = "/"
 		} else if path == "" {
@@ -141,7 +158,7 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 
 	// Fetch /etc/passwd to map UIDs to names
 	// Try getent first, then cat /etc/passwd
-	passwdOut, err := s.executeSSHCommand(userID, "getent passwd || cat /etc/passwd")
+	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd")
 	if err == nil {
 		lines := strings.Split(passwdOut, "\n")
 		for _, line := range lines {
