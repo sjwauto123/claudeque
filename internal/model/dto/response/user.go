@@ -7,7 +7,7 @@ import (
 
 // UserResponse 用户响应
 type UserResponse struct {
-	ID            uint      `json:"id"`
+	ID            int       `json:"id"`
 	Username      string    `json:"username"`
 	Email         string    `json:"email"`
 	Avatar        string    `json:"avatar"`
@@ -29,6 +29,6 @@ type LoginResponse struct {
 
 // UserInfoResponse 用户信息响应
 type UserInfoResponse struct {
-	UserID   uint   `json:"user_id"`
+	UserID   int    `json:"user_id"`
 	Username string `json:"username"`
 }

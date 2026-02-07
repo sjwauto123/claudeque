@@ -6,7 +6,7 @@ type AdminService interface {
 	// CreateUser 新建用户
 	CreateUser(req *request.CreateRequest) error
 	// DeleteUser 删除用户
-	DeleteUser(id uint) error
+	DeleteUser(id int) error
 	// AdminUpdateUser 管理员更新用户
-	AdminUpdateUser(id uint, req *request.AdminUpdateUserRequest) error
+	AdminUpdateUser(id int, req *request.AdminUpdateUserRequest) error
 }

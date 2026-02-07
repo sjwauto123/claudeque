@@ -69,7 +69,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}
 
 	// 聚合用户权限（按角色去重，返回完整权限对象）
-	permMap := make(map[uint]entity.Permission)
+	permMap := make(map[int]entity.Permission)
 	for _, r := range user.Roles {
 		if r.Status != 1 {
 			continue

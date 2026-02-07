@@ -41,13 +41,13 @@ func (ctrl *Controller) CreateUser(c *gin.Context) {
 // DeleteUser 删除用户
 func (ctrl *Controller) DeleteUser(c *gin.Context) {
 	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseInt(idStr, 10, 32)
 	if err != nil {
 		response.BadRequest(c, "invalid user id")
 		return
 	}
 
-	if err := ctrl.adminService.DeleteUser(uint(id)); err != nil {
+	if err := ctrl.adminService.DeleteUser(int(id)); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -57,7 +57,7 @@ func (ctrl *Controller) DeleteUser(c *gin.Context) {
 // UpdateUser 更新用户
 func (ctrl *Controller) UpdateUser(c *gin.Context) {
 	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseInt(idStr, 10, 32)
 	if err != nil {
 		response.BadRequest(c, "invalid user id")
 		return
@@ -69,7 +69,7 @@ func (ctrl *Controller) UpdateUser(c *gin.Context) {
 		return
 	}
 
-	if err := ctrl.adminService.AdminUpdateUser(uint(id), &req); err != nil {
+	if err := ctrl.adminService.AdminUpdateUser(int(id), &req); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -79,13 +79,13 @@ func (ctrl *Controller) UpdateUser(c *gin.Context) {
 // GetUser 获取用户详情
 func (ctrl *Controller) GetUser(c *gin.Context) {
 	idStr := c.Param("id")
-	id, err := strconv.ParseUint(idStr, 10, 32)
+	id, err := strconv.ParseInt(idStr, 10, 32)
 	if err != nil {
 		response.BadRequest(c, "invalid user id")
 		return
 	}
 
-	user, err := ctrl.userService.GetUserByID(uint(id))
+	user, err := ctrl.userService.GetUserByID(int(id))
 	if err != nil {
 		response.BizError(c, err)
 		return

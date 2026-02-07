@@ -14,17 +14,17 @@ type UserService interface {
 	// Register 用户注册
 	Register(req *request.RegisterRequest) error
 	// GetUserByID 根据 ID 获取用户
-	GetUserByID(id uint) (*entity.User, error)
+	GetUserByID(id int) (*entity.User, error)
 	// GetUserByUsername 根据用户名获取用户
 	GetUserByUsername(username string) (*entity.User, error)
 	// UpdateUser 更新用户用户名
-	UpdateUser(id uint, req *request.UpdateUserRequest) error
+	UpdateUser(id int, req *request.UpdateUserRequest) error
 	// ChangePassword 修改密码
-	ChangePassword(id uint, req *request.ChangePasswordRequest) error
+	ChangePassword(id int, req *request.ChangePasswordRequest) error
 	// ResetPassword 重置密码
 	ResetPassword(req *request.ResetPasswordRequest) error
 	// UpdateAvatar 更新头像路径
-	UpdateAvatar(id uint, avatarPath string) error
+	UpdateAvatar(id int, avatarPath string) error
 	// GetUserResponse 获取用户响应
 	GetUserResponse(user *entity.User) *dto.UserResponse
 	// ListUsers 分页获取用户列表

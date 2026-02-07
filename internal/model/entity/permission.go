@@ -1,6 +1,8 @@
 package entity
 
-import "time"
+import (
+	"time"
+)
 
 type Permission struct {
 	BaseEntity
@@ -21,8 +23,8 @@ func (Permission) TableName() string {
 
 // RolePermission 角色权限关联表
 type RolePermission struct {
-	RoleID       uint      `gorm:"primaryKey;comment:角色ID" json:"role_id"`
-	PermissionID uint      `gorm:"primaryKey;comment:权限ID" json:"permission_id"`
+	RoleID       int       `gorm:"primaryKey;comment:角色ID" json:"role_id"`
+	PermissionID int       `gorm:"primaryKey;comment:权限ID" json:"permission_id"`
 	CreatedAt    time.Time `json:"created_at"`
 	UpdatedAt    time.Time `json:"updated_at"`
 }

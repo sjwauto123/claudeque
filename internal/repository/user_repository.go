@@ -19,7 +19,7 @@ func NewUserRepository(db *gorm.DB) UserRepository {
 }
 
 // FindByID 根据 ID 查找用户
-func (r *userRepository) FindByID(id uint) (*entity.User, error) {
+func (r *userRepository) FindByID(id int) (*entity.User, error) {
 	var user entity.User
 	err := r.db.Preload("Roles").First(&user, id).Error
 	if err != nil {
@@ -72,7 +72,7 @@ func (r *userRepository) Update(user *entity.User) error {
 }
 
 // Delete 删除用户
-func (r *userRepository) Delete(id uint) error {
+func (r *userRepository) Delete(id int) error {
 	return r.db.Delete(&entity.User{}, id).Error
 }
 
@@ -110,7 +110,7 @@ func (r *userRepository) ExistsByEmail(email string) (bool, error) {
 }
 
 // AssignRoleByName 为用户分配指定角色（按名称）
-func (r *userRepository) AssignRoleByName(userID uint, name string) error {
+func (r *userRepository) AssignRoleByName(userID int, name string) error {
 	var role entity.Role
 	if err := r.db.Where("name = ?", name).First(&role).Error; err != nil {
 		return err
@@ -120,12 +120,12 @@ func (r *userRepository) AssignRoleByName(userID uint, name string) error {
 }
 
 // ClearRoles 清空用户的所有角色关联
-func (r *userRepository) ClearRoles(userID uint) error {
+func (r *userRepository) ClearRoles(userID int) error {
 	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
 	return r.db.Model(&user).Association("Roles").Clear()
 }
 
-func (r *userRepository) ReplaceRolesByNames(userID uint, names []string) error {
+func (r *userRepository) ReplaceRolesByNames(userID int, names []string) error {
 	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
 	if len(names) == 0 {
 		return r.db.Model(&user).Association("Roles").Clear()

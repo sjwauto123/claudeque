@@ -71,7 +71,7 @@ func RequirePermission(authService service.AuthService, permission string) gin.H
 		// 2. 查到用户所有的权限
 		hasPermission := false
 		for _, roleSlug := range roles {
-			if roleSlug == "a" {
+			if roleSlug == "admin" {
 				hasPermission = true
 				break
 			}
@@ -104,9 +104,9 @@ func RequirePermission(authService service.AuthService, permission string) gin.H
 }
 
 // GetUserID 从上下文获取用户 ID
-func GetUserID(c *gin.Context) uint {
+func GetUserID(c *gin.Context) int {
 	if userID, exists := c.Get(ContextUserID); exists {
-		return userID.(uint)
+		return userID.(int)
 	}
 	return 0
 }

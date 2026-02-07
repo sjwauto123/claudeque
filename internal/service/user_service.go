@@ -94,7 +94,7 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 }
 
 // GetUserByID 根据 ID 获取用户
-func (s *userService) GetUserByID(id uint) (*entity.User, error) {
+func (s *userService) GetUserByID(id int) (*entity.User, error) {
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
 		return nil, err
@@ -117,7 +117,7 @@ func (s *userService) GetUserByUsername(username string) (*entity.User, error) {
 }
 
 // UpdateUser 更新用户信息
-func (s *userService) UpdateUser(id uint, req *request.UpdateUserRequest) error {
+func (s *userService) UpdateUser(id int, req *request.UpdateUserRequest) error {
 	user, err := s.GetUserByID(id)
 	if err != nil {
 		return err
@@ -128,7 +128,7 @@ func (s *userService) UpdateUser(id uint, req *request.UpdateUserRequest) error 
 	return s.userRepo.Update(user)
 }
 
-func (s *userService) UpdateAvatar(id uint, avatarPath string) error {
+func (s *userService) UpdateAvatar(id int, avatarPath string) error {
 	user, err := s.GetUserByID(id)
 	if err != nil {
 		return err
@@ -149,7 +149,7 @@ func (s *userService) UpdateAvatar(id uint, avatarPath string) error {
 }
 
 // ChangePassword 修改密码
-func (s *userService) ChangePassword(id uint, req *request.ChangePasswordRequest) error {
+func (s *userService) ChangePassword(id int, req *request.ChangePasswordRequest) error {
 	user, err := s.GetUserByID(id)
 	if err != nil {
 		return err

@@ -17,8 +17,8 @@ func (Role) TableName() string {
 
 // UserRole 用户角色关联表
 type UserRole struct {
-	RoleID    uint      `gorm:"primaryKey;comment:角色ID" json:"role_id"`
-	UserID    uint      `gorm:"primaryKey;comment:用户ID" json:"user_id"`
+	RoleID    int       `gorm:"primaryKey;comment:角色ID" json:"role_id"`
+	UserID    int       `gorm:"primaryKey;comment:用户ID" json:"user_id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

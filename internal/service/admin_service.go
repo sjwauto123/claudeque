@@ -46,7 +46,7 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	return nil
 }
 
-func (s *userService) DeleteUser(id uint) error {
+func (s *userService) DeleteUser(id int) error {
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
 		return err
@@ -60,7 +60,7 @@ func (s *userService) DeleteUser(id uint) error {
 	return s.userRepo.Delete(id)
 }
 
-func (s *userService) AdminUpdateUser(id uint, req *request.AdminUpdateUserRequest) error {
+func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserRequest) error {
 	user, err := s.userRepo.FindByID(id)
 	if err != nil {
 		return err
