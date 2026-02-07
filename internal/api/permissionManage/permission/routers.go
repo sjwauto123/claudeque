@@ -10,7 +10,7 @@ func (ctrl *APIController) RegisterRoutes(r *gin.RouterGroup) {
 	apiGroup := r.Group("/permissionManage/API")
 	{
 		apiGroup.GET("/page", ctrl.PageList)
-		apiGroup.GET("/", ctrl.GetAPIByID)
+		apiGroup.GET("/:id", ctrl.GetAPIByID)
 		apiGroup.POST("/", ctrl.Create)
 		apiGroup.PUT("/", ctrl.Update)
 		apiGroup.DELETE("/:id", ctrl.Delete)

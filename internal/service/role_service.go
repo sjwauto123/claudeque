@@ -142,15 +142,18 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionTree
 			continue
 		}
 		if parentNode, exists := menuMap[parentID]; exists {
-			child := &dto.MenuTreeNodeRole{
-				ID:       p.ID,
-				Title:    p.Name,
-				Name:     p.Name,
-				Type:     "permission",
-				Checked:  permSet[p.ID],
-				Children: nil,
+			permNode := dto.PermissionNode{
+				ID:         p.ID,
+				Name:       p.Name,
+				Category:   p.Category,
+				Slug:       p.Slug,
+				Type:       p.Type,
+				Status:     p.Status,
+				HTTPMethod: p.HTTPMethod,
+				HTTPPath:   p.HTTPPath,
+				Sort:       p.Sort,
 			}
-			parentNode.Children = append(parentNode.Children, child)
+			parentNode.Permission = append(parentNode.Permission, permNode)
 		}
 	}
 

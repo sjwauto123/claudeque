@@ -11,8 +11,8 @@ func (ctrl *RoleController) RegisterRoutes(r *gin.RouterGroup) {
 		roleGroup.PUT("/", ctrl.Update)
 		roleGroup.DELETE("/:id", ctrl.Delete)
 		roleGroup.DELETE("/batch", ctrl.BatchDelete)
-		roleGroup.GET("/role_perm/{id}", ctrl.GetRolePermissionByID)
-		roleGroup.POST("/role_perm", ctrl.UpdateRolePermission)
+		roleGroup.GET("/role_perm/:id", ctrl.GetRolePermissionByID)
+		roleGroup.PUT("/role_perm", ctrl.UpdateRolePermission)
 	}
 
 }
