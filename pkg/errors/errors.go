@@ -55,6 +55,7 @@ var (
 	ErrInvalidCredentials = NewDefault(CodeInvalidCredentials)
 	ErrInvalidToken       = NewDefault(CodeInvalidToken)
 	ErrTokenExpired       = NewDefault(CodeTokenExpired)
+	ErrInvalidCaptcha     = NewDefault(CodeInvalidCaptcha)
 	ErrInvalidParam       = NewDefault(CodeInvalidParam)
 	ErrMissingParam       = NewDefault(CodeMissingParam)
 )

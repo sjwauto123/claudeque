@@ -43,7 +43,7 @@ func InitRedis(cfg *config.RedisConfig) (*redis.Client, error) {
 // GetRedis 获取 Redis 实例
 func GetRedis() *redis.Client {
 	if redisClient == nil {
-		panic("Redis 未初始化")
+		logger.Info("Redis 未初始化")
 	}
 	return redisClient
 }
