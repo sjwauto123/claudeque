@@ -14,7 +14,6 @@ type Permission struct {
 	HttpMethod string `gorm:"type:varchar(10);comment:API请求方法" json:"http_method"`
 	HttpPath   string `gorm:"type:varchar(255);comment:API路径" json:"http_path"`
 	Sort       int    `gorm:"type:int;default:0;comment:菜单排序" json:"sort"`
-	CateGory   string `gorm:"type:int;default:1;comment:权限类型" json:"category"`
 }
 
 func (Permission) TableName() string {
