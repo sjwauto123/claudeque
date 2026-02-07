@@ -5,7 +5,7 @@ import (
 	"time"
 )
 
-// RedisRepository Redis 仓库接口
+// RedisRepository Redis 仓储接口
 type RedisRepository interface {
 	// Set 设置缓存
 	Set(ctx context.Context, key string, value interface{}, expiration time.Duration) error
