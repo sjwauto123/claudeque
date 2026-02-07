@@ -5,11 +5,9 @@ import (
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/pkg/logger"
-	"cloudque/pkg/ws"
+	"cloudque/pkg/websocket"
 	"encoding/json"
 	"fmt"
-	"log"
-	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -17,7 +15,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
+	ws "github.com/gorilla/websocket"
+
 	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/process"
@@ -25,25 +24,54 @@ import (
 
 // ResourceCollector 资源收集器
 type ResourceCollector struct {
-	Hub           *ws.Hub
+	Pool          *websocket.ConnectionPool
 	ProcRepo      repository.ProcessRepository
 	Done          chan struct{}
 	Once          sync.Once
 	processCache  []entity.Process
 	cacheExpiry   time.Time
 	cacheDuration time.Duration
-	isRunning     bool
 	mutex         sync.RWMutex
 }
 
+type systemInfoService struct {
+	Pool      *websocket.ConnectionPool
+	Collector *ResourceCollector
+}
+
+func NewSystemInfoService(pool *websocket.ConnectionPool, procRepo repository.ProcessRepository) SystemInfoService {
+	collector := NewResourceCollector(pool, procRepo)
+	collector.Start()
+	return &systemInfoService{
+		Pool:      pool,
+		Collector: collector,
+	}
+}
+
+// HandleSyMessage 处理请求创建连接
+func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID uint) {
+	// 创建会话元数据，设置角色为管理员
+	metadata := &websocket.SessionMetadata{
+		UserID:      userID,
+		SessionType: "ws",
+		Role:        "admin", // 系统信息连接默认为管理员
+		CreatedAt:   time.Now().Unix(),
+	}
+
+	// 使用连接池添加新客户端
+	s.Pool.Add(userID, conn, metadata)
+
+	// 资源收集器会定期收集并分发给所有管理员客户端
+	logger.Infof("新的管理员websocket连接已建立，用户ID: %d", userID)
+}
+
 // NewResourceCollector 创建资源收集器
-func NewResourceCollector(hub *ws.Hub, procRepo repository.ProcessRepository) *ResourceCollector {
+func NewResourceCollector(pool *websocket.ConnectionPool, procRepo repository.ProcessRepository) *ResourceCollector {
 	return &ResourceCollector{
-		Hub:           hub,
+		Pool:          pool,
 		ProcRepo:      procRepo,
 		Done:          make(chan struct{}),
 		cacheDuration: 20 * time.Second, // 缓存10秒
-		isRunning:     false,
 	}
 }
 
@@ -51,83 +79,40 @@ func NewResourceCollector(hub *ws.Hub, procRepo repository.ProcessRepository) *R
 func (rc *ResourceCollector) Start() {
 	rc.Once.Do(func() {
 		go func() {
+			ticker := time.NewTicker(2 * time.Second)
+			defer ticker.Stop()
 			for {
 				select {
 				case <-rc.Done:
 					return
-				case <-rc.Hub.StartCollect:
-					rc.startCollection()
-				case <-rc.Hub.StopCollect:
-					rc.stopCollection()
+				case <-ticker.C:
+					// 检查连接数
+					connectionCount := rc.Pool.GetAdminConnectionCount()
+					// 根据连接数决定是否收集信息
+					if connectionCount > 0 {
+						// 收集系统信息
+						info := rc.collectSystemInfo()
+						if info == nil {
+							logger.Error("系统信息收集失败")
+							continue
+						}
+						// 转换为JSON
+						data, err := json.Marshal(info)
+						if err != nil {
+							logger.Errorf("JSON转换失败: %v", err)
+							continue
+						}
+						// 分发给所有管理员客户端
+						rc.Pool.BroadcastToAdmins(data)
+					}
 				}
 			}
 		}()
 	})
 }
 
-// startCollection 开始收集
-func (rc *ResourceCollector) startCollection() {
-	rc.mutex.Lock()
-	if rc.isRunning {
-		rc.mutex.Unlock()
-		return
-	}
-	rc.isRunning = true
-	rc.mutex.Unlock()
-
-	logger.Info("开始系统信息收集")
-
-	go func() {
-		ticker := time.NewTicker(2 * time.Second)
-		defer ticker.Stop()
-
-		for {
-			rc.mutex.RLock()
-			running := rc.isRunning
-			rc.mutex.RUnlock()
-
-			if !running {
-				return
-			}
-
-			select {
-			case <-rc.Done:
-				return
-			case <-ticker.C:
-				// 收集系统信息
-				info := rc.collectSystemInfo()
-				fmt.Println(info)
-				// 转换为JSON
-				data := JsonToByte(info)
-				// 分发给所有管理员
-				rc.Hub.SendToAllAdmins(data)
-			}
-		}
-	}()
-}
-
-// stopCollection 停止收集
-func (rc *ResourceCollector) stopCollection() {
-	rc.mutex.Lock()
-	if !rc.isRunning {
-		rc.mutex.Unlock()
-		return
-	}
-	rc.isRunning = false
-	rc.mutex.Unlock()
-
-	logger.Info("停止系统信息收集")
-}
-
-// Stop 停止资源收集
-func (rc *ResourceCollector) Stop() {
-	rc.Once.Do(func() {
-		close(rc.Done)
-	})
-}
-
 // collectSystemInfo 收集系统信息
-func (rc *ResourceCollector) collectSystemInfo() *response.SystemMessages {
+func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfoResponse {
 	diskInfo, err := getDiskInfo()
 	if err != nil {
 		logger.Errorf("Failed to get disk info: %v", err)
@@ -149,7 +134,7 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemMessages {
 		logger.Errorf("Failed to get process info: %v", err)
 	}
 
-	var info response.SystemMessages
+	var info response.SystemInfoResponse
 	info.CpuList = append(info.CpuList, *diskInfo)
 	info.CpuList = append(info.CpuList, *memoryInfo)
 	info.GpuList = append(info.GpuList, gpuInfo...)
@@ -212,61 +197,7 @@ func (rc *ResourceCollector) getProcessesFromCache() ([]entity.Process, error) {
 	return processes, nil
 }
 
-type systemInfoService struct {
-	Hub       *ws.Hub
-	Collector *ResourceCollector
-}
-
-func NewSystemInfoService(hub *ws.Hub, procRepo repository.ProcessRepository) SystemInfoService {
-	collector := NewResourceCollector(hub, procRepo)
-	collector.Start()
-	return &systemInfoService{
-		Hub:       hub,
-		Collector: collector,
-	}
-}
-
-func (s *systemInfoService) HandleSyMessage(conn *websocket.Conn) {
-	// 这里假设所有连接都是管理员
-	client := ws.NewClient(s.Hub, conn, "admin")
-	s.Hub.Register <- client
-
-	// 标记为管理员客户端
-	s.Hub.AdminClients[client] = true
-
-	//// 开启读协程
-	//go client.ReadPump()
-	// 开启写协程
-	go client.WritePump()
-
-	// 注意：现在不需要为每个客户端单独启动收集协程
-	// 资源收集器会定期收集并分发给所有管理员客户端
-}
-
-// GetSystemInfo 仅负责采集数据，不涉及推送！
-func (s *systemInfoService) GetSystemInfo() *response.SystemMessages {
-	diskInfo, err := getDiskInfo()
-	if err != nil {
-		logger.Errorf("Failed to get disk info: %v", err)
-	}
-
-	memoryInfo, err := getMemoryInfo()
-	if err != nil {
-		logger.Errorf("Failed to get memory info: %v", err)
-	}
-
-	gpuInfo, err := GetNvidiaGPUInfo()
-	if err != nil {
-		logger.Errorf("Failed to get GPU info: %v", err)
-	}
-
-	var info response.SystemMessages
-	info.CpuList = append(info.CpuList, *diskInfo)
-	info.CpuList = append(info.CpuList, *memoryInfo)
-	info.GpuList = append(info.GpuList, gpuInfo...)
-	return &info
-}
-
+// GetNvidiaGPUInfo 获取显卡信息
 func GetNvidiaGPUInfo() ([]response.GPUInfo, error) {
 	// 执行 nvidia-smi 命令，输出 CSV 格式
 	cmd := exec.Command("nvidia-smi", "--query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
@@ -358,13 +289,6 @@ func getMemoryInfo() (*response.SystemInfo, error) {
 		Percentage: fmt.Sprintf("%.1f%%", vmStat.UsedPercent),
 	}, nil
 }
-func JsonToByte(msg *response.SystemMessages) []byte {
-	marshal, err := json.Marshal(msg)
-	if err != nil {
-		log.Println(err)
-	}
-	return marshal
-}
 
 // isProcessRunning 检查进程是否正在运行
 func isProcessRunning(pid int) bool {
@@ -387,51 +311,6 @@ func isProcessRunning(pid int) bool {
 	}
 }
 
-// isProcessOnGPU 检查进程是否在指定的显卡上运行
-func isProcessOnGPU(pid int, gpuID int) bool {
-	// 使用nvidia-smi命令检查进程是否在指定显卡上
-	// 在Windows上，需要确保nvidia-smi在PATH中
-	cmd := exec.Command("nvidia-smi", "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader")
-
-	// 在Windows上，可能需要指定完整路径
-	if runtime.GOOS == "windows" {
-		// 尝试常见的nvidia-smi路径
-		nvidiaPaths := []string{
-			"C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe",
-			"C:\\Program Files (x86)\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe",
-		}
-
-		// 检查是否存在nvidia-smi.exe
-		for _, path := range nvidiaPaths {
-			if _, err := os.Stat(path); err == nil {
-				cmd = exec.Command(path, "--query-compute-apps=pid,gpu_uuid", "--format=csv,noheader")
-				break
-			}
-		}
-	}
-
-	output, err := cmd.Output()
-	if err != nil {
-		// 如果命令执行失败，尝试直接返回true（假设进程在GPU上运行）
-		// 因为在开发环境中，nvidia-smi可能不可用
-		return true
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		parts := strings.Split(strings.TrimSpace(line), ", ")
-		if len(parts) == 2 {
-			pidStr := parts[0]
-			if pidStr == strconv.Itoa(pid) {
-				// 这里简化处理，实际需要根据gpu_uuid映射到gpuID
-				return true
-			}
-		}
-	}
-
-	return false
-}
-
 // getProcessDetails 获取进程的详细信息
 func getProcessDetails(pid int) (response.ProcessInfo, error) {
 	p, err := process.NewProcess(int32(pid))
@@ -446,7 +325,7 @@ func getProcessDetails(pid int) (response.ProcessInfo, error) {
 
 	// 计算运行时间
 	startTime := time.Unix(createTime/1000, 0).Format("2006-01-02 15:04:05")
-	runtime := time.Since(time.Unix(createTime/1000, 0)).String()
+	r := time.Since(time.Unix(createTime/1000, 0)).String()
 
 	// 获取GPU信息
 	gpuName := getGPUNameByPID(pid)
@@ -457,7 +336,7 @@ func getProcessDetails(pid int) (response.ProcessInfo, error) {
 		GPUname:   gpuName,
 		StartTime: startTime,
 		IsNormal:  1, // 假设进程正常运行
-		Runtime:   runtime,
+		Runtime:   r,
 		Command:   cmdline,
 	}, nil
 }

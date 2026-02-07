@@ -357,7 +357,7 @@ func TestUserService_Register(t *testing.T) {
 ### 1. 查看日志
 
 ```bash
-tail -f logs/app.log
+tail -f operationLogs/app.log
 ```
 
 ### 2. 打印调试信息

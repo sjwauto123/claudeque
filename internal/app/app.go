@@ -1,7 +1,7 @@
 package app
 
 import (
-	"cloudque/pkg/ws"
+	"cloudque/pkg/websocket"
 	"context"
 	"fmt"
 	"net/http"
@@ -31,7 +31,7 @@ type App struct {
 	redis   *redis.Client
 	router  *api.Router
 	server  *http.Server
-	hub     *ws.Hub
+	pool    *websocket.ConnectionPool
 }
 
 // NewApp 创建应用实例
@@ -56,8 +56,7 @@ func (a *App) Initialize() error {
 		return err
 	}
 
-	a.hub = ws.NewHub()
-	go a.hub.Run()
+	a.pool = websocket.NewConnectionPool()
 
 	// 4. 初始化依赖
 	a.initDependencies()
@@ -110,7 +109,7 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
-		&entity.UserLog{},
+		&entity.OperationLog{},
 		&entity.BaseEntity{},
 		&entity.Process{},
 	); err != nil {
@@ -132,22 +131,50 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
-	userLogRepo := repository.NewUserLogRepository(a.mysqlDB)
+	operationLogRepo := repository.NewOperationLogRepository(a.mysqlDB)
 	processRepo := repository.NewProcessRepository(a.mysqlDB)
 
 	// 创建 Service
-	userLogSvc := service.NewUserLogService(userLogRepo)
-	infoService := service.NewSystemInfoService(a.hub, processRepo)
+	userLogSvc := service.NewUserLogService(operationLogRepo)
+	adminLogSvc := service.NewAdminLogService(operationLogRepo)
+	infoService := service.NewSystemInfoService(a.pool, processRepo)
 
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, infoService)
+	a.router = api.NewRouter(userLogSvc, infoService, adminLogSvc)
+
+	// 启动日志限制定时任务
+	go a.startLogLimitTask(adminLogSvc)
+}
+
+// startLogLimitTask 启动日志限制定时任务
+func (a *App) startLogLimitTask(adminLogSvc service.AdminLogService) {
+	// 日志保留数量限制
+	const logLimit int64 = 10000
+
+	// 立即执行一次
+	if err := adminLogSvc.LimitLogs(logLimit); err != nil {
+		logger.Errorf("日志限制失败: %v", err)
+	}
+
+	// 创建定时器，每天执行一次
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		if err := adminLogSvc.LimitLogs(logLimit); err != nil {
+			logger.Errorf("日志限制失败: %v", err)
+		} else {
+			logger.Info("操作日志限制执行成功，保留最近10000条日志")
+		}
+	}
 }
 
 // Shutdown 关闭应用
 func (a *App) Shutdown() {
-	// 关闭 Hub
-	if a.hub != nil {
-		close(a.hub.Done)
+	// 关闭 ConnectionPool
+	if a.pool != nil {
+		a.pool.CloseAll()
 	}
 }
 

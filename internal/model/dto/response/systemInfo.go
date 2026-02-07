@@ -26,7 +26,7 @@ type SystemInfo struct {
 	RemainCap  string `json:"remainCap"`
 	Percentage string `json:"percentage"`
 }
-type SystemMessages struct {
+type SystemInfoResponse struct {
 	CpuList     []SystemInfo  `json:"cpulist"`
 	GpuList     []GPUInfo     `json:"gpulist"`
 	ProcessList []ProcessInfo `json:"processlist"`

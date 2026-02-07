@@ -5,9 +5,10 @@ package system
 import (
 	"cloudque/internal/service"
 	"cloudque/pkg/logger"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"net/http"
 )
 
 var upgrader = websocket.Upgrader{
@@ -31,13 +32,8 @@ func NewController(svc service.SystemInfoService) *Controller {
 }
 
 func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
-	// 检查是否是管理员
-	// userID := middleware.GetUserID(c) // 假设返回 string
-	// role := middleware.GetUserRole(c)
-	// if role != "admin" {
-	// 	response.Forbidden(c, "仅管理员可访问")
-	// 	return
-	// }
+	// 暂时使用默认用户ID 1，因为我们禁用了认证中间件
+	userID := uint(1)
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -46,8 +42,6 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 		// Gin 已接管 writer，不能写 JSON，直接 return
 		return
 	}
-
 	// 处理WebSocket连接
-	ctrl.svc.HandleSyMessage(conn)
-
+	ctrl.svc.HandleSyMessage(conn, userID)
 }
