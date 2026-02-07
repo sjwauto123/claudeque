@@ -4,6 +4,7 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
+	"os/exec"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
@@ -108,4 +109,14 @@ func (ctrl *Controller) ListUsers(c *gin.Context) {
 		return
 	}
 	response.Success(c, resp)
+}
+
+// Restart 重启系统
+func (ctrl *Controller) Restart(c *gin.Context) {
+	cmd := exec.Command("shutdown", "/r", "/t", "0")
+	if err := cmd.Start(); err != nil {
+		response.InternalError(c, "failed to restart system")
+		return
+	}
+	response.Success(c, gin.H{"message": "restarting"})
 }
