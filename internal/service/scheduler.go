@@ -262,7 +262,7 @@ func (s *Scheduler) executeJob(job *entity.Job) error {
 	// 设置环境变量，指定使用的GPU
 	gpuIDs := make([]string, len(cardIDs))
 	for i, id := range cardIDs {
-		gpuIDs[i] = strconv.Itoa(int(id - 1))
+		gpuIDs[i] = strconv.Itoa(id - 1)
 	}
 	cmd.Env = append(os.Environ(),
 		"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIDs, ","),
