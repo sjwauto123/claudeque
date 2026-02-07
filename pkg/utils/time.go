@@ -3,13 +3,13 @@ package utils
 import "time"
 
 // GetCurrentTimestamp 获取当前时间戳（秒）
-func GetCurrentTimestamp() int64 {
-	return time.Now().Unix()
+func GetCurrentTimestamp() int {
+	return int(time.Now().Unix())
 }
 
 // GetCurrentMilliTimestamp 获取当前时间戳（毫秒）
-func GetCurrentMilliTimestamp() int64 {
-	return time.Now().UnixMilli()
+func GetCurrentMilliTimestamp() int {
+	return int(time.Now().UnixMilli())
 }
 
 // FormatTime 格式化时间

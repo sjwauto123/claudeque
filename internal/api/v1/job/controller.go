@@ -73,7 +73,6 @@ func (ctrl *Controller) GetWaitJobsList(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	j.Status = 1
 	userID := middleware.GetUserID(c)
 	startTime, err := utils.ParseTime(j.StartTime)
 	if err != nil {
@@ -143,8 +142,8 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 		return
 	}
 
-	var jobID uint
-	if _, err := utils.StringToUint(jobIDStr, &jobID); err != nil {
+	var jobID int
+	if _, err := utils.StringToInt(jobIDStr, &jobID); err != nil {
 		response.BadRequest(c, "任务ID格式错误")
 		return
 	}
@@ -178,29 +177,6 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 	}
 	response.Success(c, nil)
-}
-
-// GetJobLog 查看任务日志
-func (ctrl *Controller) GetJobLog(c *gin.Context) {
-	jobIDStr := c.Param("jobId")
-	if jobIDStr == "" {
-		response.BadRequest(c, "缺少任务ID")
-		return
-	}
-
-	var jobID uint
-	if _, err := utils.StringToUint(jobIDStr, &jobID); err != nil {
-		response.BadRequest(c, "任务ID格式错误")
-		return
-	}
-
-	userID := middleware.GetUserID(c)
-	log, err := ctrl.jobService.GetJobLog(c.Request.Context(), jobID, userID)
-	if err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-	response.Success(c, gin.H{"log": log})
 }
 
 // GetStats 获取任务统计

@@ -14,7 +14,7 @@ var (
 )
 
 // GenerateToken 生成 JWT Token
-func GenerateToken(userID uint, username string) (string, error) {
+func GenerateToken(userID int, username string) (string, error) {
 	cfg := config.Get().JWT
 
 	claims := CustomClaims{

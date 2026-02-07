@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"os"
 	"strconv"
 
 	"cloudque/internal/model/dto/request"
@@ -34,7 +33,7 @@ func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuS
 }
 
 // GetJobList 获取任务列表
-func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID uint) ([]response.JobResponse, int64, int, int, error) {
+func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int, int, int, error) {
 	if req.PageSize <= 0 {
 		req.PageSize = 5
 	}
@@ -45,7 +44,7 @@ func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time,
 }
 
 // SubmitJob 提交任务
-func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID uint) (*entity.Job, error) {
+func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error) {
 	// 获取用户优先级
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
@@ -64,8 +63,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		UserId:      userID,
 		FilePath:    req.FilePath,
 		GpuCount:    req.GpuCount,
-		//Priority:    priority,
-		Status: entity.JobStatusPending,
+		Status:      entity.JobStatusPending,
 	}
 
 	if err := s.jobRepo.Create(job); err != nil {
@@ -76,7 +74,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 	if err := s.queueSvc.Enqueue(ctx, job.ID, priority); err != nil {
 		// 如果入队失败，更新任务状态为失败
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Uint("job_id", job.ID))
+			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return nil, fmt.Errorf("加入排队队列失败: %w", err)
 	}
@@ -85,12 +83,11 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
 		return nil, fmt.Errorf("更新任务状态失败: %w", err)
 	}
-
 	return job, nil
 }
 
 // CancelJob 取消任务
-func (s *jobService) CancelJob(ctx context.Context, jobID uint, userID uint) error {
+func (s *jobService) CancelJob(ctx context.Context, jobID int, userID int) error {
 	// 获取任务信息
 	job, err := s.jobRepo.GetByID(jobID)
 	if err != nil {
@@ -132,7 +129,7 @@ func (s *jobService) EnrichJobList(ctx context.Context, jobs []response.JobRespo
 	now := time.Now()
 
 	for i := range jobs {
-		jobID := uint(jobs[i].ID)
+		jobID := jobs[i].ID
 
 		front, err := s.queueSvc.GetFrontCount(ctx, jobID)
 		if err != nil {
@@ -141,7 +138,7 @@ func (s *jobService) EnrichJobList(ctx context.Context, jobs []response.JobRespo
 
 		if front >= 0 {
 			jobs[i].Count = front
-			jobs[i].WaitTime = strconv.FormatInt(int64(now.Sub(jobs[i].CreatedAt).Seconds()), 10)
+			jobs[i].WaitTime = strconv.Itoa(int(now.Sub(jobs[i].CreatedAt).Seconds()))
 		} else {
 			jobs[i].Count = -1
 		}
@@ -150,49 +147,7 @@ func (s *jobService) EnrichJobList(ctx context.Context, jobs []response.JobRespo
 	return nil
 }
 
-func (s *jobService) GetJobLog(ctx context.Context, jobID uint, userID uint) (string, error) {
-	// 获取任务信息
-	job, err := s.jobRepo.GetByID(jobID)
-	if err != nil {
-		return "", fmt.Errorf("获取任务失败: %w", err)
-	}
-
-	if job == nil {
-		return "", fmt.Errorf("任务不存在")
-	}
-
-	// 验证权限
-	if job.UserId != userID {
-		return "", fmt.Errorf("无权查看此任务")
-	}
-
-	// 读取日志文件
-	if job.LogPath == "" {
-		return "", fmt.Errorf("任务日志不存在")
-	}
-
-	content, err := readLogFile(job.LogPath)
-	if err != nil {
-		return "", fmt.Errorf("读取日志文件失败: %w", err)
-	}
-
-	return content, nil
-}
-
-func readLogFile(logPath string) (string, error) {
-	if logPath == "" {
-		return "", fmt.Errorf("日志路径为空")
-	}
-
-	content, err := os.ReadFile(logPath)
-	if err != nil {
-		return "", err
-	}
-
-	return string(content), nil
-}
-
-func (s *jobService) GetJobByID(ctx context.Context, jobID uint) (*entity.Job, error) {
+func (s *jobService) GetJobByID(ctx context.Context, jobID int) (*entity.Job, error) {
 	return s.jobRepo.GetByID(jobID)
 }
 

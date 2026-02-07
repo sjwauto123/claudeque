@@ -14,9 +14,9 @@ func NewOperationLogService(repo repository.OperationLogRepository) OperationLog
 }
 
 func (s *operationLogService) Log(username, actionType, object, description string, success bool) error {
-	status := "0"
+	status := 0
 	if !success {
-		status = "1"
+		status = 1
 	}
 
 	log := &entity.OperationLog{

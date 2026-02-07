@@ -82,7 +82,7 @@ func (ctrl *Controller) ReorderQueue(c *gin.Context) {
 		filePath = job.FilePath
 	}
 
-	targetJobIDStr := utils.IntToString(int(req.TargetJobID))
+	targetJobIDStr := utils.IntToString(req.TargetJobID)
 
 	// 语义：把 JobID 插到 TargetJobID 前面
 	if err := ctrl.queueService.MoveBefore(c.Request.Context(), req.JobID, req.TargetJobID); err != nil {
@@ -108,8 +108,8 @@ func (ctrl *Controller) RemoveJob(c *gin.Context) {
 		return
 	}
 
-	var jobID uint
-	if _, err := utils.StringToUint(jobIDStr, &jobID); err != nil {
+	var jobID int
+	if _, err := utils.StringToInt(jobIDStr, &jobID); err != nil {
 		response.BadRequest(c, "任务ID格式错误")
 		return
 	}

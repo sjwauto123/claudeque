@@ -9,10 +9,10 @@ import (
 )
 
 type QueueService interface {
-	Enqueue(ctx context.Context, jobID uint, priority int) error
+	Enqueue(ctx context.Context, jobID int, priority int) error
 	Peek(ctx context.Context) (*entity.Item, error)
-	Remove(ctx context.Context, jobID uint) error
-	GetQueuePage(ctx context.Context, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error)
-	MoveBefore(ctx context.Context, jobID uint, beforeJobID uint) error
-	GetFrontCount(ctx context.Context, jobID uint) (int, error)
+	Remove(ctx context.Context, jobID int) error
+	GetQueuePage(ctx context.Context, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int, int, int, error)
+	MoveBefore(ctx context.Context, jobID int, beforeJobID int) error
+	GetFrontCount(ctx context.Context, jobID int) (int, error)
 }

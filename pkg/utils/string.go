@@ -36,16 +36,16 @@ func IsEmpty(s string) bool {
 	return TrimSpace(s) == ""
 }
 
-// StringToUint 将字符串转换为int
-func StringToUint(s string, result *uint) (bool, error) {
+// StringToInt 将字符串转换为int
+func StringToInt(s string, result *int) (bool, error) {
 	if s == "" {
 		return false, nil
 	}
-	val, err := strconv.ParseUint(s, 10, 64)
+	val, err := strconv.Atoi(s)
 	if err != nil {
 		return false, err
 	}
-	*result = uint(val)
+	*result = val
 	return true, nil
 }
 

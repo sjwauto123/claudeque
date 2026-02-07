@@ -17,7 +17,7 @@ func (r *processRepository) Create(p *entity.Process) error {
 	return r.db.Create(p).Error
 }
 
-func (r *processRepository) DeleteByJobID(jobID uint) error {
+func (r *processRepository) DeleteByJobID(jobID int) error {
 	return r.db.Where("job_id = ?", jobID).Delete(&entity.Process{}).Error
 }
 

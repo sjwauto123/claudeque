@@ -7,7 +7,7 @@ import (
 // UserRepository 用户仓储接口
 type UserRepository interface {
 	// FindByID 根据 ID 查找用户
-	FindByID(id uint) (*entity.User, error)
+	FindByID(id int) (*entity.User, error)
 	// FindByUsername 根据用户名查找用户
 	FindByUsername(username string) (*entity.User, error)
 	// FindByEmail 根据邮箱查找用户
@@ -17,9 +17,9 @@ type UserRepository interface {
 	// Update 更新用户
 	Update(user *entity.User) error
 	// Delete 删除用户
-	Delete(id uint) error
+	Delete(id int) error
 	// List 分页获取用户列表
-	List(offset, limit int) ([]*entity.User, int64, error)
+	List(offset, limit int) ([]*entity.User, int, error)
 	// ExistsByUsername 检查用户名是否存在
 	ExistsByUsername(username string) (bool, error)
 	// ExistsByEmail 检查邮箱是否存在

@@ -157,8 +157,7 @@ func (a *App) initDependencies() {
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 
 	// 创建调度器
-	logDir := "./logs/jobs"
-	a.scheduler = service.NewScheduler(a.mysqlDB, a.redis, jobRepo, queueSvc, gpuSvc, processRepo, logDir)
+	a.scheduler = service.NewScheduler(a.mysqlDB, a.redis, jobRepo, queueSvc, gpuSvc, processRepo)
 	// 创建 Router
 	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, operationLogSvc, jobRepo)
 }

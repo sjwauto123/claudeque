@@ -4,13 +4,13 @@ import "time"
 
 type JobResponse struct {
 	// 任务ID
-	ID int64 `json:"id"`
+	ID int `json:"id"`
 	// 任务名称
 	Name string `json:"name"`
 	// 任务描述
 	Description string `json:"description"`
 	// 任务状态：0-待执行 1-排队中 2-执行中 3-已完成 4-失败 5-被终止 6-等待显卡
-	Status int64 `json:"status"`
+	Status int `json:"status"`
 	// 创建时间
 	CreatedAt time.Time `json:"created_at"`
 	// 使用的显卡
@@ -22,8 +22,8 @@ type JobResponse struct {
 }
 
 type JobStatsResponse struct {
-	Total     int64 `json:"total"`
-	Running   int64 `json:"running"`
-	Queued    int64 `json:"queued"`
-	Exception int64 `json:"exception"`
+	Total     int `json:"total"`
+	Running   int `json:"running"`
+	Queued    int `json:"queued"`
+	Exception int `json:"exception"`
 }

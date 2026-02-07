@@ -24,7 +24,7 @@ func NewJobRepository(db *gorm.DB, rs *redis.Client) JobRepository {
 }
 
 // GetJobList 获取任务列表
-func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID uint) ([]response.JobResponse, int64, int, int, error) {
+func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int, int, int, error) {
 	var (
 		list  []response.JobResponse
 		total int64
@@ -39,6 +39,9 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 	}
 	if req.Status > 0 {
 		baseDB = baseDB.Where("j.status = ?", req.Status)
+	} else {
+		baseDB = baseDB.Where("j.status = ?", 1)
+		baseDB = baseDB.Where("j.status = ?", 6)
 	}
 	if req.Name != "" {
 		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
@@ -51,7 +54,7 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 	}
 
 	if err := baseDB.Count(&total).Error; err != nil {
-		return nil, 0, req.Page, req.PageSize, err
+		return []response.JobResponse{}, 0, req.Page, req.PageSize, err
 	}
 
 	offset := (req.Page - 1) * req.PageSize
@@ -80,10 +83,10 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 		Scan(&list).Error
 
 	if err != nil {
-		return nil, 0, req.Page, req.PageSize, err
+		return []response.JobResponse{}, 0, req.Page, req.PageSize, err
 	}
 
-	return list, total, req.Page, req.PageSize, nil
+	return list, int(total), req.Page, req.PageSize, nil
 }
 
 // Create 创建任务
@@ -95,7 +98,7 @@ func (r jobRepository) Create(job *entity.Job) error {
 }
 
 // GetByID 根据ID获取任务
-func (r jobRepository) GetByID(id uint) (*entity.Job, error) {
+func (r jobRepository) GetByID(id int) (*entity.Job, error) {
 	var job entity.Job
 	if err := r.db.First(&job, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -107,7 +110,7 @@ func (r jobRepository) GetByID(id uint) (*entity.Job, error) {
 }
 
 // UpdateStatus 更新任务状态
-func (r jobRepository) UpdateStatus(id uint, status int) error {
+func (r jobRepository) UpdateStatus(id int, status int) error {
 	now := time.Now()
 	updates := map[string]interface{}{"status": status}
 
@@ -122,15 +125,10 @@ func (r jobRepository) UpdateStatus(id uint, status int) error {
 	return r.db.Model(&entity.Job{}).Where("id = ?", id).Updates(updates).Error
 }
 
-// UpdateLogPath 更新任务日志路径
-func (r jobRepository) UpdateLogPath(id uint, logPath string) error {
-	return r.db.Model(&entity.Job{}).Where("id = ?", id).Update("log_path", logPath).Error
-}
-
 // GetQueueJobsByIDs 通过任务id获取任务信息
-func (r jobRepository) GetQueueJobsByIDs(jobIDs []uint) (map[uint]response.QueueJobDBRow, error) {
+func (r jobRepository) GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJobDBRow, error) {
 	if len(jobIDs) == 0 {
-		return map[uint]response.QueueJobDBRow{}, nil
+		return map[int]response.QueueJobDBRow{}, nil
 	}
 
 	var rows []response.QueueJobDBRow
@@ -152,7 +150,7 @@ func (r jobRepository) GetQueueJobsByIDs(jobIDs []uint) (map[uint]response.Queue
 		return nil, err
 	}
 
-	result := make(map[uint]response.QueueJobDBRow, len(rows))
+	result := make(map[int]response.QueueJobDBRow, len(rows))
 	for _, r := range rows {
 		result[r.JobID] = r
 	}
@@ -161,7 +159,7 @@ func (r jobRepository) GetQueueJobsByIDs(jobIDs []uint) (map[uint]response.Queue
 }
 
 // GetQueueJobListFiltered 按队列顺序、条件筛选、分页获取排队任务
-func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []uint, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int64, error) {
+func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error) {
 	if len(orderedJobIDs) == 0 {
 		return []response.QueueJobDBRow{}, 0, nil
 	}
@@ -203,7 +201,7 @@ func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []uint, req request
 
 	ids := make([]string, len(orderedJobIDs))
 	for i, id := range orderedJobIDs {
-		ids[i] = strconv.FormatUint(uint64(id), 10)
+		ids[i] = strconv.Itoa(id)
 	}
 
 	orderSQL := "FIELD(j.id, " + strings.Join(ids, ",") + ")"
@@ -218,27 +216,33 @@ func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []uint, req request
 		return nil, 0, err
 	}
 
-	return rows, total, nil
+	return rows, int(total), nil
 }
 
+// GetStats 获取任务统计
 func (r jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	var result response.JobStatsResponse
+	var total, running, queued, exception int64
 
-	if err := r.db.Model(&entity.Job{}).Count(&result.Total).Error; err != nil {
+	if err := r.db.Model(&entity.Job{}).Count(&total).Error; err != nil {
 		return nil, err
 	}
+	result.Total = int(total)
 
-	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusRunning).Count(&result.Running).Error; err != nil {
+	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusRunning).Count(&running).Error; err != nil {
 		return nil, err
 	}
+	result.Running = int(running)
 
-	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusQueued).Count(&result.Queued).Error; err != nil {
+	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusQueued).Count(&queued).Error; err != nil {
 		return nil, err
 	}
+	result.Queued = int(queued)
 
-	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusFailed, entity.JobStatusCancelled}).Count(&result.Exception).Error; err != nil {
+	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusFailed, entity.JobStatusCancelled}).Count(&exception).Error; err != nil {
 		return nil, err
 	}
+	result.Exception = int(exception)
 
 	return &result, nil
 }

@@ -68,7 +68,7 @@ func (s *GpuService) GetIdleCount(ctx context.Context) (int, error) {
 }
 
 // AcquireCards 占用指定数量的显卡
-func (s *GpuService) AcquireCards(ctx context.Context, count int, jobID uint) ([]uint, error) {
+func (s *GpuService) AcquireCards(ctx context.Context, count int, jobID int) ([]int, error) {
 	if count <= 0 || count > totalGpuCount {
 		return nil, fmt.Errorf("显卡数量必须在1-%d之间", totalGpuCount)
 	}
@@ -97,7 +97,7 @@ func (s *GpuService) AcquireCards(ctx context.Context, count int, jobID uint) ([
 	}
 
 	// 更新显卡状态为忙碌
-	cardIDs := make([]uint, len(cards))
+	cardIDs := make([]int, len(cards))
 	for i, card := range cards {
 		if err := tx.Model(&card).
 			Updates(map[string]interface{}{
@@ -124,7 +124,7 @@ func (s *GpuService) AcquireCards(ctx context.Context, count int, jobID uint) ([
 }
 
 // ReleaseCards 释放指定显卡
-func (s *GpuService) ReleaseCards(ctx context.Context, cardIDs []uint) error {
+func (s *GpuService) ReleaseCards(ctx context.Context, cardIDs []int) error {
 	if len(cardIDs) == 0 {
 		return nil
 	}

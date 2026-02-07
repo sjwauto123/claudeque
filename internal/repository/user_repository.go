@@ -18,7 +18,7 @@ func NewUserRepository(db *gorm.DB) UserRepository {
 }
 
 // FindByID 根据 ID 查找用户
-func (r *userRepository) FindByID(id uint) (*entity.User, error) {
+func (r *userRepository) FindByID(id int) (*entity.User, error) {
 	var user entity.User
 	err := r.db.First(&user, id).Error
 	if err != nil {
@@ -67,12 +67,12 @@ func (r *userRepository) Update(user *entity.User) error {
 }
 
 // Delete 删除用户
-func (r *userRepository) Delete(id uint) error {
+func (r *userRepository) Delete(id int) error {
 	return r.db.Delete(&entity.User{}, id).Error
 }
 
 // List 分页获取用户列表
-func (r *userRepository) List(offset, limit int) ([]*entity.User, int64, error) {
+func (r *userRepository) List(offset, limit int) ([]*entity.User, int, error) {
 	var users []*entity.User
 	var total int64
 
@@ -87,7 +87,7 @@ func (r *userRepository) List(offset, limit int) ([]*entity.User, int64, error) 
 		return nil, 0, err
 	}
 
-	return users, total, nil
+	return users, int(total), nil
 }
 
 // ExistsByUsername 检查用户名是否存在
