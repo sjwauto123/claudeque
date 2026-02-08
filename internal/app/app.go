@@ -31,7 +31,7 @@ type App struct {
 	redis     *redis.Client
 	router    *api.Router
 	server    *http.Server
-	scheduler *service.Scheduler // 任务调度器
+	scheduler service.Scheduler // 任务调度器
 }
 
 // NewApp 创建应用实例
@@ -127,7 +127,9 @@ func (a *App) initDatabase() error {
 
 	//初始化GPU卡片
 	if a.redis != nil {
-		gpuSvc := service.NewGpuService(a.mysqlDB, a.redis)
+		gpuRepo := repository.NewGpuRepository(a.mysqlDB)
+		gpuCache := repository.NewGpuCacheRepository(a.redis)
+		gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		if err := gpuSvc.InitializeGpus(ctx); err != nil {
 			logger.Warn("GPU卡片初始化失败", zap.Error(err))
@@ -146,18 +148,21 @@ func (a *App) initDependencies() {
 	userRepo := repository.NewUserRepository(a.mysqlDB)
 	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
 	operationLogRepo := repository.NewOperationLogRepository(a.mysqlDB)
-	processRepo := repository.NewProcessRepository(a.mysqlDB)
+	//processRepo := repository.NewProcessRepository(a.mysqlDB)
+	gpuRepo := repository.NewGpuRepository(a.mysqlDB)
+	gpuCache := repository.NewGpuCacheRepository(a.redis)
+	queueRepo := repository.NewQueueRepository(a.redis)
 
 	// 创建 Service
 	userSvc := service.NewUserService(userRepo)
 	authSvc := service.NewAuthService(userRepo, userSvc)
 	operationLogSvc := service.NewOperationLogService(operationLogRepo)
-	queueSvc := service.NewQueueService(a.redis, jobRepo)
-	gpuSvc := service.NewGpuService(a.mysqlDB, a.redis)
+	queueSvc := service.NewQueueService(queueRepo, jobRepo)
+	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 
 	// 创建调度器
-	a.scheduler = service.NewScheduler(a.mysqlDB, a.redis, jobRepo, queueSvc, gpuSvc, processRepo)
+	//a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo)
 	// 创建 Router
 	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, operationLogSvc, jobRepo)
 }

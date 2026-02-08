@@ -3,7 +3,6 @@ package service
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strconv"
 	"time"
 
@@ -16,74 +15,58 @@ import (
 )
 
 const (
-	QueueKey = "queue:jobs"
-
 	// PriorityGap 优先级基数
 	PriorityGap = int(1_000_000_000)
 )
 
 type queueService struct {
-	redis   *redis.Client
-	jobRepo repository.JobRepository
+	queueRepo repository.QueueRepository
+	jobRepo   repository.JobRepository
 }
 
-func NewQueueService(redis *redis.Client, jobRepo repository.JobRepository) QueueService {
-	return &queueService{redis: redis, jobRepo: jobRepo}
-}
-
-// 内部：获取全局自增序号
-func (s *queueService) nextSeq(ctx context.Context) (int, error) {
-	val, err := s.redis.Incr(ctx, "queue:seq").Result()
-	return int(val), err
+func NewQueueService(queueRepo repository.QueueRepository, jobRepo repository.JobRepository) QueueService {
+	return &queueService{queueRepo: queueRepo, jobRepo: jobRepo}
 }
 
 // Enqueue 入队
 func (s *queueService) Enqueue(ctx context.Context, jobID int, priority int) error {
-	seq, err := s.nextSeq(ctx)
+	seq, err := s.queueRepo.NextSeq(ctx)
 	if err != nil {
 		return err
 	}
 
-	base := int(priority) * PriorityGap
+	base := priority * PriorityGap
 
-	score := base + seq
+	score := float64(base + seq)
 
-	return s.redis.ZAdd(ctx, QueueKey, redis.Z{
-		Score:  float64(score),
-		Member: strconv.Itoa(jobID),
-	}).Err()
+	return s.queueRepo.Add(ctx, jobID, score)
 }
 
 // Peek scheduler的方法
 func (s *queueService) Peek(ctx context.Context) (*entity.Item, error) {
-	items, err := s.redis.ZRangeWithScores(ctx, QueueKey, 0, 0).Result()
+	jobID, score, err := s.queueRepo.Peek(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(items) == 0 {
+	if jobID == 0 {
 		return nil, nil
 	}
 
-	jobID, err := strconv.Atoi(items[0].Member.(string))
-	if err != nil {
-		return nil, fmt.Errorf("解析任务ID失败: %w", err)
-	}
-
 	return &entity.Item{
-		JobID: int(jobID),
-		Score: int(items[0].Score),
+		JobID: jobID,
+		Score: int(score),
 	}, nil
 }
 
 // Remove 出队
 func (s *queueService) Remove(ctx context.Context, jobID int) error {
-	return s.redis.ZRem(ctx, QueueKey, strconv.Itoa(jobID)).Err()
+	return s.queueRepo.Remove(ctx, jobID)
 }
 
 // GetQueuePage 分页查询，按条件检索，返回完整排队任务信息
 func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int, int, int, error) {
-	members, err := s.redis.ZRange(ctx, QueueKey, 0, -1).Result()
+	members, err := s.queueRepo.Range(ctx, 0, -1)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
@@ -98,7 +81,7 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequ
 		if err != nil {
 			continue
 		}
-		orderedJobIDs = append(orderedJobIDs, int(jobID))
+		orderedJobIDs = append(orderedJobIDs, jobID)
 	}
 	if req.PageSize <= 0 {
 		req.PageSize = 10
@@ -112,7 +95,7 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequ
 	now := time.Now()
 	list := make([]response.QueueJobResponse, 0, len(rows))
 	for _, row := range rows {
-		rank, err := s.redis.ZRank(ctx, QueueKey, strconv.Itoa(int(row.JobID))).Result()
+		rank, err := s.queueRepo.Rank(ctx, row.JobID)
 		frontCount := 0
 		if err == nil {
 			frontCount = int(rank)
@@ -136,17 +119,14 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequ
 	return list, total, req.Page, req.PageSize, nil
 }
 func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID int) error {
-	jobKey := strconv.Itoa(jobID)
-	beforeKey := strconv.Itoa(beforeJobID)
-
 	// 获取 beforeJob 的 rank
-	rank, err := s.redis.ZRank(ctx, QueueKey, beforeKey).Result()
+	rank, err := s.queueRepo.Rank(ctx, beforeJobID)
 	if err != nil {
 		return err
 	}
 
 	// 获取 beforeJob 的 score
-	beforeScore, err := s.redis.ZScore(ctx, QueueKey, beforeKey).Result()
+	beforeScore, err := s.queueRepo.Score(ctx, beforeJobID)
 	if err != nil {
 		return err
 	}
@@ -157,25 +137,22 @@ func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID in
 		newScore = beforeScore - float64(PriorityGap)
 	} else {
 		// 拿前一个元素
-		prev, err := s.redis.ZRangeWithScores(ctx, QueueKey, rank-1, rank-1).Result()
+		prevs, err := s.queueRepo.RangeWithScores(ctx, rank-1, rank-1)
 		if err != nil {
 			return err
 		}
-		prevScore := prev[0].Score
+		prevScore := prevs[0].Score
 		// 取中点
 		newScore = (prevScore + beforeScore) / 2
 	}
 
 	// 更新 score
-	return s.redis.ZAdd(ctx, QueueKey, redis.Z{
-		Score:  newScore,
-		Member: jobKey,
-	}).Err()
+	return s.queueRepo.Add(ctx, jobID, newScore)
 }
 
 // GetFrontCount 返回某个任务前方排队数量（不在队列返回 -1）
 func (s *queueService) GetFrontCount(ctx context.Context, jobID int) (int, error) {
-	rank, err := s.redis.ZRank(ctx, QueueKey, strconv.Itoa(jobID)).Result()
+	rank, err := s.queueRepo.Rank(ctx, jobID)
 	if err != nil {
 		if errors.Is(err, redis.Nil) {
 			return -1, nil // 不在队列中

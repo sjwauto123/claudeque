@@ -39,9 +39,9 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 	}
 	if req.Status > 0 {
 		baseDB = baseDB.Where("j.status = ?", req.Status)
-	} else {
-		baseDB = baseDB.Where("j.status = ?", 1)
-		baseDB = baseDB.Where("j.status = ?", 6)
+	} else if req.Status == 0 {
+		// 默认显示排队中(1)和等待资源(6)的任务
+		baseDB = baseDB.Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
 	}
 	if req.Name != "" {
 		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")

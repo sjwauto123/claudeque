@@ -18,12 +18,12 @@ import (
 type jobService struct {
 	jobRepo  repository.JobRepository
 	queueSvc QueueService
-	gpuSvc   *GpuService
+	gpuSvc   GpuService
 	userRepo repository.UserRepository
 }
 
 // NewJobService 创建任务服务
-func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc *GpuService, userRepo repository.UserRepository) JobService {
+func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc GpuService, userRepo repository.UserRepository) JobService {
 	return &jobService{
 		jobRepo:  jobRepo,
 		queueSvc: queueSvc,

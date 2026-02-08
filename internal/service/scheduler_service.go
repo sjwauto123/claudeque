@@ -17,18 +17,14 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/logger"
 
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
-	"gorm.io/gorm"
 )
 
 // Scheduler 任务调度器
-type Scheduler struct {
-	db          *gorm.DB
-	redis       *redis.Client
+type scheduler struct {
 	jobRepo     repository.JobRepository
 	queueSvc    QueueService
-	gpuSvc      *GpuService
+	gpuSvc      GpuService
 	processRepo repository.ProcessRepository
 
 	ctx       context.Context
@@ -50,18 +46,9 @@ type JobProcess struct {
 }
 
 // NewScheduler 创建调度器
-func NewScheduler(
-	db *gorm.DB,
-	redis *redis.Client,
-	jobRepo repository.JobRepository,
-	queueSvc QueueService,
-	gpuSvc *GpuService,
-	processRepo repository.ProcessRepository,
-) *Scheduler {
+func NewScheduler(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc GpuService, processRepo repository.ProcessRepository) Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Scheduler{
-		db:          db,
-		redis:       redis,
+	return &scheduler{
 		jobRepo:     jobRepo,
 		queueSvc:    queueSvc,
 		gpuSvc:      gpuSvc,
@@ -73,7 +60,7 @@ func NewScheduler(
 }
 
 // Start 启动调度器
-func (s *Scheduler) Start() {
+func (s *scheduler) Start() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -84,13 +71,13 @@ func (s *Scheduler) Start() {
 	s.isRunning = true
 
 	s.wg.Add(1)
-	go s.run()
+	go s.Run()
 
 	logger.Info("任务调度器已启动")
 }
 
 // Stop 停止调度器
-func (s *Scheduler) Stop() {
+func (s *scheduler) Stop() {
 	s.mu.Lock()
 	if !s.isRunning {
 		s.mu.Unlock()
@@ -106,13 +93,13 @@ func (s *Scheduler) Stop() {
 	s.wg.Wait()
 
 	// 终止所有正在运行的任务
-	s.terminateAllRunningJobs()
+	s.TerminateAllRunningJobs()
 
 	logger.Info("任务调度器已停止")
 }
 
-// terminateAllRunningJobs 终止所有正在运行的任务
-func (s *Scheduler) terminateAllRunningJobs() {
+// TerminateAllRunningJobs 终止所有正在运行的任务
+func (s *scheduler) TerminateAllRunningJobs() {
 	s.runningMu.Lock()
 	defer s.runningMu.Unlock()
 
@@ -127,8 +114,8 @@ func (s *Scheduler) terminateAllRunningJobs() {
 	}
 }
 
-// run 调度器主循环
-func (s *Scheduler) run() {
+// Run 调度器主循环
+func (s *scheduler) Run() {
 	defer s.wg.Done()
 
 	ticker := time.NewTicker(3 * time.Second)
@@ -139,13 +126,13 @@ func (s *Scheduler) run() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			s.processQueue()
+			s.ProcessQueue()
 		}
 	}
 }
 
-// processQueue 处理排队队列
-func (s *Scheduler) processQueue() {
+// ProcessQueue 处理排队队列
+func (s *scheduler) ProcessQueue() {
 	// 获取队列头部的任务
 	item, err := s.queueSvc.Peek(s.ctx)
 	if err != nil {
@@ -206,7 +193,7 @@ func (s *Scheduler) processQueue() {
 	}
 
 	// 执行任务
-	if err := s.executeJob(job); err != nil {
+	if err := s.ExecuteJob(job); err != nil {
 		logger.Error("执行任务失败", zap.Error(err), zap.Int("job_id", job.ID))
 		// 更新任务状态为失败
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
@@ -225,8 +212,8 @@ func (s *Scheduler) processQueue() {
 	}
 }
 
-// executeJob 执行任务
-func (s *Scheduler) executeJob(job *entity.Job) error {
+// ExecuteJob 执行任务
+func (s *scheduler) ExecuteJob(job *entity.Job) error {
 	logger.Info("开始执行任务", zap.Int("job_id", job.ID), zap.String("name", job.Name))
 
 	// 占用显卡
@@ -305,7 +292,7 @@ func (s *Scheduler) executeJob(job *entity.Job) error {
 	}
 
 	// 启动goroutine监控任务执行状态
-	go s.monitorJob(jp)
+	go s.MonitorJob(jp)
 
 	logger.Info("任务已启动",
 		zap.Int("job_id", job.ID),
@@ -315,8 +302,8 @@ func (s *Scheduler) executeJob(job *entity.Job) error {
 	return nil
 }
 
-// monitorJob 监控任务执行状态
-func (s *Scheduler) monitorJob(jp *JobProcess) {
+// MonitorJob 监控任务执行状态
+func (s *scheduler) MonitorJob(jp *JobProcess) {
 	jobID := jp.jobID
 	cardIDs := jp.cardIDs
 
@@ -389,5 +376,5 @@ func (s *Scheduler) monitorJob(jp *JobProcess) {
 	}
 
 	// 尝试调度下一个任务
-	go s.processQueue()
+	go s.ProcessQueue()
 }
