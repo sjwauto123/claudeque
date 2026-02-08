@@ -2,7 +2,7 @@ package menu
 
 import (
 	"cloudque/internal/model/dto/request"
-	response2 "cloudque/internal/model/dto/response"
+	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/service"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
@@ -41,12 +41,12 @@ func (ctrl *MenuController) GetMenuByID(c *gin.Context) {
 	}
 
 	// 转换为响应格式
-	menuResp := response2.MenuResponse{
+	menuResp := dto.MenuResponse{
 		ID:       menu.ID,
 		ParentID: menu.ParentID,
 		Title:    menu.Title,
 		Type:     menu.Type,
-		Status:   *menu.Status,
+		Status:   menu.Status,
 		Icon:     menu.Icon,
 		URI:      menu.URI,
 		Sort:     menu.Sort,
@@ -79,14 +79,14 @@ func (ctrl *MenuController) PageList(c *gin.Context) {
 	}
 
 	// 转换为响应格式
-	var menuResponses []response2.MenuResponse
+	var menuResponses []dto.MenuResponse
 	for _, menu := range menus {
-		menuResponses = append(menuResponses, response2.MenuResponse{
+		menuResponses = append(menuResponses, dto.MenuResponse{
 			ID:       menu.ID,
 			ParentID: menu.ParentID,
 			Title:    menu.Title,
 			Type:     menu.Type,
-			Status:   *menu.Status,
+			Status:   menu.Status,
 			Icon:     menu.Icon,
 			URI:      menu.URI,
 			Sort:     menu.Sort,

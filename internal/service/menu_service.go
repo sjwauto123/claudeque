@@ -2,7 +2,7 @@ package service
 
 import (
 	"cloudque/internal/model/dto/request"
-	response2 "cloudque/internal/model/dto/response"
+	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
@@ -60,7 +60,7 @@ func (s *menuService) Create(req *request.CreateMenuRequest) error {
 	menu := &entity.Menu{
 		Title:    req.Title,
 		Type:     req.Type,
-		Status:   req.Status,
+		Status:   *req.Status,
 		Icon:     req.Icon,
 		URI:      req.URI,
 		Sort:     req.Sort,
@@ -101,7 +101,7 @@ func (s *menuService) Update(req *request.UpdateMenuRequest) error {
 		menu.Type = req.Type
 	}
 	if req.Status != nil {
-		menu.Status = req.Status
+		menu.Status = *req.Status
 	}
 	if req.Icon != "" {
 		menu.Icon = req.Icon
@@ -157,27 +157,27 @@ func (s *menuService) BatchDelete(ids []int) error {
 	return s.menuRepo.BatchDelete(ids)
 }
 
-func (s *menuService) BuildMenuTree(menus []*entity.Menu) ([]*response2.MenuTreeNode, error) {
+func (s *menuService) BuildMenuTree(menus []*entity.Menu) ([]*dto.MenuTreeNode, error) {
 	if len(menus) == 0 {
-		return []*response2.MenuTreeNode{}, nil
+		return []*dto.MenuTreeNode{}, nil
 	}
 
-	menuMap := make(map[int]*response2.MenuTreeNode)
+	menuMap := make(map[int]*dto.MenuTreeNode)
 	for _, m := range menus {
-		node := &response2.MenuTreeNode{
+		node := &dto.MenuTreeNode{
 			ID:       m.ID,
 			Title:    m.Title,
 			Type:     m.Type,
-			Status:   *m.Status,
+			Status:   m.Status,
 			Icon:     m.Icon,
 			URI:      m.URI,
 			Sort:     m.Sort,
-			Children: []*response2.MenuTreeNode{},
+			Children: []*dto.MenuTreeNode{},
 		}
 		menuMap[m.ID] = node
 	}
 
-	var roots []*response2.MenuTreeNode
+	var roots []*dto.MenuTreeNode
 	for _, m := range menus {
 		node := menuMap[m.ID]
 		if m.ParentID == nil {

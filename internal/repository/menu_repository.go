@@ -53,7 +53,7 @@ func (r *menuRepository) Update(menu *entity.Menu) error {
 	if menu.Type != "" {
 		updates["type"] = menu.Type
 	}
-	if menu.Status != nil {
+	if menu.Status != 0 {
 		updates["status"] = menu.Status
 	}
 	if menu.Icon != "" {

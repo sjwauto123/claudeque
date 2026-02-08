@@ -51,8 +51,8 @@ func (r *roleRepository) PageList(offset, limit int, name string, status *int) (
 	}
 
 	return roles, total, nil
-}
 
+}
 func (r *roleRepository) Create(role *entity.Role) error {
 	return r.db.Create(role).Error
 }

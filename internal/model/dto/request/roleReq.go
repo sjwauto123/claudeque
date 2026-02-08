@@ -6,7 +6,7 @@ type RolePageQueryRequest struct {
 	Page     int    `form:"page" binding:"required,min=1"`
 	PageSize int    `form:"pageSize" binding:"required,min=1,max=100"`
 	Name     string `form:"name" binding:"omitempty,max=50"`
-	Status   *int   `form:"status" binding:"oneof=0 1"`
+	Status   *int   `form:"status" binding:"omitempty,oneof=0 1"`
 }
 type CreateRoleRequest struct {
 	entity.BaseEntity
