@@ -9,6 +9,7 @@ import (
 func (ctrl *Controller) JobsRoutes(r *gin.RouterGroup) {
 	jobsGroup := r.Group("/job")
 	jobsGroup.Use(middleware.Auth())
+	jobsGroup.Use(middleware.RequirePermission(ctrl.authService, ""))
 	{
 		jobsGroup.POST("", ctrl.SubmitJob)
 		jobsGroup.GET("", ctrl.GetJobsList)

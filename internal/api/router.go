@@ -1,12 +1,12 @@
 package api
 
 import (
+	"cloudque/internal/api/job"
 	"cloudque/internal/api/operationLogs"
+	"cloudque/internal/api/queue"
 	"cloudque/internal/api/system"
 	"cloudque/internal/api/v1/admin"
 	"cloudque/internal/api/v1/auth"
-	"cloudque/internal/api/v1/job"
-	"cloudque/internal/api/v1/queue"
 	"cloudque/internal/api/v1/user"
 	"cloudque/internal/middleware"
 	"cloudque/internal/repository"
@@ -42,8 +42,8 @@ func NewRouter(
 		adminCtrl:        admin.NewController(userService, userService, authService),
 		operationLogCtrl: operationLogs.NewController(userLogService, authService),
 		systemInfoCtrl:   system.NewController(infoService, authService),
-		jobCtrl:          job.NewController(jobService, userLogService),
-		queueCtrl:        queue.NewController(queueService, repository, userLogService),
+		jobCtrl:          job.NewController(jobService, userLogService, authService),
+		queueCtrl:        queue.NewController(queueService, repository, userLogService, authService),
 	}
 }
 

@@ -18,14 +18,16 @@ type Controller struct {
 	queueService    service.QueueService
 	jobRepo         repository.JobRepository
 	operationLogSvc service.UserOperationLogService
+	authService     service.AuthService
 }
 
 // NewController 创建队列控制器
-func NewController(queueService service.QueueService, jobRepo repository.JobRepository, operationLogSvc service.UserOperationLogService) *Controller {
+func NewController(queueService service.QueueService, jobRepo repository.JobRepository, operationLogSvc service.UserOperationLogService, authService service.AuthService) *Controller {
 	return &Controller{
 		queueService:    queueService,
 		jobRepo:         jobRepo,
 		operationLogSvc: operationLogSvc,
+		authService:     authService,
 	}
 }
 

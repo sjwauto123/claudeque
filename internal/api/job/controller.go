@@ -15,13 +15,15 @@ import (
 type Controller struct {
 	jobService      service.JobService
 	operationLogSvc service.UserOperationLogService
+	authService     service.AuthService
 }
 
 // NewController 创建任务控制器
-func NewController(jobService service.JobService, operationLogSvc service.UserOperationLogService) *Controller {
+func NewController(jobService service.JobService, operationLogSvc service.UserOperationLogService, authService service.AuthService) *Controller {
 	return &Controller{
 		jobService:      jobService,
 		operationLogSvc: operationLogSvc,
+		authService:     authService,
 	}
 }
 
