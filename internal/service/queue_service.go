@@ -65,7 +65,7 @@ func (s *queueService) Remove(ctx context.Context, jobID int) error {
 }
 
 // GetQueuePage 分页查询，按条件检索，返回完整排队任务信息
-func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int, int, int, error) {
+func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error) {
 	members, err := s.queueRepo.Range(ctx, 0, -1)
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -116,7 +116,7 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequ
 		})
 	}
 
-	return list, total, req.Page, req.PageSize, nil
+	return list, int64(total), req.Page, req.PageSize, nil
 }
 
 // MoveBefore 更新排队

@@ -3,7 +3,6 @@ package app
 import (
 	"cloudque/pkg/websocket"
 	"context"
-	"errors"
 	"fmt"
 	"github.com/redis/go-redis/v9"
 	"net/http"
@@ -33,7 +32,7 @@ type App struct {
 	router    *api.Router
 	server    *http.Server
 	scheduler service.Scheduler
-	pool    *websocket.ConnectionPool
+	pool      *websocket.ConnectionPool
 }
 
 // NewApp 创建应用实例
@@ -164,7 +163,6 @@ func (a *App) initDependencies() {
 	redisRepo := repository.NewRedisRepository()
 
 	// 创建 Service
-	operationLogSvc := service.NewOperationLogService(operationLogRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
@@ -176,8 +174,7 @@ func (a *App) initDependencies() {
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo)
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, operationLogSvc, jobRepo)
-	a.router = api.NewRouter(userLogSvc, infoService, userSvc, authSvc)
+	a.router = api.NewRouter(userLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo)
 
 	// 启动日志限制定时任务
 	go a.startLogLimitTask(userLogSvc)

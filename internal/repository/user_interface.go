@@ -19,7 +19,7 @@ type UserRepository interface {
 	// Delete 删除用户
 	Delete(id int) error
 	// List 分页获取用户列表
-	List(offset, limit int) ([]*entity.User, int, error)
+	List(offset, limit int) ([]*entity.User, int64, error)
 	// ExistsByUsername 检查用户名是否存在
 	ExistsByUsername(username string) (bool, error)
 	// ExistsByEmail 检查邮箱是否存在

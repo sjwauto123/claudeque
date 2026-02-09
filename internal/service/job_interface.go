@@ -10,7 +10,7 @@ import (
 
 type JobService interface {
 	// GetJobList 获取任务列表
-	GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int, int, int, error)
+	GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error)
 	// SubmitJob 提交任务
 	SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error)
 	// CancelJob 取消任务排队
@@ -18,7 +18,7 @@ type JobService interface {
 	// EnrichJobList 添加队列位置信息
 	EnrichJobList(ctx context.Context, jobs []response.JobResponse) error
 	// GetJobByID 根据ID获取任务信息
-	GetJobByID(ctx context.Context, jobID int) (*entity.Job, error)
+	GetJobByID(jobID int) (*entity.Job, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
 }

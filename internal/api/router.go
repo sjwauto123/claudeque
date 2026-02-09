@@ -17,8 +17,8 @@ import (
 
 // Router 路由
 type Router struct {
-	jobCtrl   *job.Controller
-	queueCtrl *queue.Controller
+	jobCtrl          *job.Controller
+	queueCtrl        *queue.Controller
 	operationLogCtrl *operationLogs.Controller
 	systemInfoCtrl   *system.Controller
 	userCtrl         *user.Controller
@@ -34,7 +34,6 @@ func NewRouter(
 	authService service.AuthService,
 	jobService service.JobService,
 	queueService service.QueueService,
-	operationLogSvc service.OperationLogService,
 	repository repository.JobRepository,
 ) *Router {
 	return &Router{
@@ -43,8 +42,8 @@ func NewRouter(
 		adminCtrl:        admin.NewController(userService, userService, authService),
 		operationLogCtrl: operationLogs.NewController(userLogService, authService),
 		systemInfoCtrl:   system.NewController(infoService, authService),
-		jobCtrl:   job.NewController(jobService, operationLogSvc),
-		queueCtrl: queue.NewController(queueService, repository, operationLogSvc),
+		jobCtrl:          job.NewController(jobService, userLogService),
+		queueCtrl:        queue.NewController(queueService, repository, userLogService),
 	}
 }
 

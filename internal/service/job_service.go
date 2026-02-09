@@ -33,7 +33,7 @@ func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuS
 }
 
 // GetJobList 获取任务列表
-func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int, int, int, error) {
+func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
 	if req.PageSize <= 0 {
 		req.PageSize = 5
 	}
@@ -147,7 +147,7 @@ func (s *jobService) EnrichJobList(ctx context.Context, jobs []response.JobRespo
 	return nil
 }
 
-func (s *jobService) GetJobByID(ctx context.Context, jobID int) (*entity.Job, error) {
+func (s *jobService) GetJobByID(jobID int) (*entity.Job, error) {
 	return s.jobRepo.GetByID(jobID)
 }
 

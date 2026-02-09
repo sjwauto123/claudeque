@@ -17,11 +17,11 @@ import (
 type Controller struct {
 	queueService    service.QueueService
 	jobRepo         repository.JobRepository
-	operationLogSvc service.OperationLogService
+	operationLogSvc service.UserOperationLogService
 }
 
 // NewController 创建队列控制器
-func NewController(queueService service.QueueService, jobRepo repository.JobRepository, operationLogSvc service.OperationLogService) *Controller {
+func NewController(queueService service.QueueService, jobRepo repository.JobRepository, operationLogSvc service.UserOperationLogService) *Controller {
 	return &Controller{
 		queueService:    queueService,
 		jobRepo:         jobRepo,
@@ -36,7 +36,6 @@ func (c *Controller) GetQueue(ctx *gin.Context) {
 		response.BadRequest(ctx, err.Error())
 		return
 	}
-	req.Status = 1
 	startTime, err := utils.ParseTime(req.StartTime)
 	if err != nil {
 		response.BadRequest(ctx, "开始时间格式错误")
@@ -70,7 +69,7 @@ func (ctrl *Controller) ReorderQueue(c *gin.Context) {
 
 	job, err := ctrl.jobRepo.GetByID(req.JobID)
 	if err != nil {
-		if err := ctrl.operationLogSvc.Log(username, "拖拽任务", "", err.Error(), false); err != nil {
+		if err := ctrl.operationLogSvc.CreateLog(username, "拖拽任务", "", err.Error(), false); err != nil {
 			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 		}
 		response.InternalError(c, err.Error())
@@ -86,7 +85,7 @@ func (ctrl *Controller) ReorderQueue(c *gin.Context) {
 
 	// 语义：把 JobID 插到 TargetJobID 前面
 	if err := ctrl.queueService.MoveBefore(c.Request.Context(), req.JobID, req.TargetJobID); err != nil {
-		if err := ctrl.operationLogSvc.Log(username, "拖拽任务", filePath, err.Error(), false); err != nil {
+		if err := ctrl.operationLogSvc.CreateLog(username, "拖拽任务", filePath, err.Error(), false); err != nil {
 			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 		}
 		response.InternalError(c, err.Error())
@@ -94,7 +93,7 @@ func (ctrl *Controller) ReorderQueue(c *gin.Context) {
 	}
 
 	description := "插入到任务" + targetJobIDStr + "前面"
-	if err := ctrl.operationLogSvc.Log(username, "拖拽任务", filePath, description, true); err != nil {
+	if err := ctrl.operationLogSvc.CreateLog(username, "拖拽任务", filePath, description, true); err != nil {
 		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 	}
 	response.Success(c, nil)
@@ -118,7 +117,7 @@ func (ctrl *Controller) RemoveJob(c *gin.Context) {
 
 	job, err := ctrl.jobRepo.GetByID(jobID)
 	if err != nil {
-		if err := ctrl.operationLogSvc.Log(username, "删除排队任务", "", err.Error(), false); err != nil {
+		if err := ctrl.operationLogSvc.CreateLog(username, "删除排队任务", "", err.Error(), false); err != nil {
 			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 		}
 		response.InternalError(c, err.Error())
@@ -131,7 +130,7 @@ func (ctrl *Controller) RemoveJob(c *gin.Context) {
 	}
 
 	if err := ctrl.queueService.Remove(c.Request.Context(), jobID); err != nil {
-		if err := ctrl.operationLogSvc.Log(username, "删除排队任务", filePath, err.Error(), false); err != nil {
+		if err := ctrl.operationLogSvc.CreateLog(username, "删除排队任务", filePath, err.Error(), false); err != nil {
 			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 		}
 		response.InternalError(c, err.Error())
@@ -141,7 +140,7 @@ func (ctrl *Controller) RemoveJob(c *gin.Context) {
 	// 同步更新任务状态，避免数据库仍显示为排队中
 	if job != nil && (job.Status == entity.JobStatusQueued || job.Status == entity.JobStatusWaitingGpu) {
 		if err := ctrl.jobRepo.UpdateStatus(jobID, entity.JobStatusCancelled); err != nil {
-			if err := ctrl.operationLogSvc.Log(username, "删除排队任务", filePath, err.Error(), false); err != nil {
+			if err := ctrl.operationLogSvc.CreateLog(username, "删除排队任务", filePath, err.Error(), false); err != nil {
 				logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 			}
 			response.InternalError(c, err.Error())
@@ -149,7 +148,7 @@ func (ctrl *Controller) RemoveJob(c *gin.Context) {
 		}
 	}
 
-	if err := ctrl.operationLogSvc.Log(username, "删除排队任务", filePath, "成功", true); err != nil {
+	if err := ctrl.operationLogSvc.CreateLog(username, "删除排队任务", filePath, "成功", true); err != nil {
 		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 	}
 	response.Success(c, nil)

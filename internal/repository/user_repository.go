@@ -77,7 +77,7 @@ func (r *userRepository) Delete(id int) error {
 }
 
 // List 分页获取用户列表
-func (r *userRepository) List(offset, limit int) ([]*entity.User, int, error) {
+func (r *userRepository) List(offset, limit int) ([]*entity.User, int64, error) {
 	var users []*entity.User
 	var total int64
 
@@ -92,7 +92,7 @@ func (r *userRepository) List(offset, limit int) ([]*entity.User, int, error) {
 		return nil, 0, err
 	}
 
-	return users, int(total), nil
+	return users, total, nil
 }
 
 // ExistsByUsername 检查用户名是否存在

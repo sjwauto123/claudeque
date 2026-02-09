@@ -10,7 +10,7 @@ import (
 // JobRepository 任务仓储接口
 type JobRepository interface {
 	// GetJobList 获取任务列表
-	GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int, int, int, error)
+	GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error)
 	// Create 新建任务
 	Create(job *entity.Job) error
 	// GetByID 根据ID获得任务信息

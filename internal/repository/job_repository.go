@@ -24,7 +24,7 @@ func NewJobRepository(db *gorm.DB, rs *redis.Client) JobRepository {
 }
 
 // GetJobList 获取任务列表
-func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int, int, int, error) {
+func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
 	var (
 		list  []response.JobResponse
 		total int64
@@ -86,7 +86,7 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 		return []response.JobResponse{}, 0, req.Page, req.PageSize, err
 	}
 
-	return list, int(total), req.Page, req.PageSize, nil
+	return list, total, req.Page, req.PageSize, nil
 }
 
 // Create 创建任务
@@ -179,8 +179,9 @@ func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request.
 	if req.Id > 0 {
 		baseDB = baseDB.Where("j.id = ?", req.Id)
 	}
-	if req.Status > 0 {
-		baseDB = baseDB.Where("j.status = ?", req.Status)
+	if req.Status == 0 {
+		// 默认显示排队中(1)和等待资源(6)的任务
+		baseDB = baseDB.Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
 	}
 	if req.Name != "" {
 		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
@@ -234,7 +235,7 @@ func (r jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	}
 	result.Running = int(running)
 
-	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusQueued).Count(&queued).Error; err != nil {
+	if err := r.db.Model(&entity.Job{}).Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu}).Count(&queued).Error; err != nil {
 		return nil, err
 	}
 	result.Queued = int(queued)

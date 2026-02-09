@@ -2,7 +2,7 @@ package entity
 
 // User 用户实体
 type User struct {
-
+	BaseEntity
 	Username      string `gorm:"type:varchar(50);uniqueIndex;not null;comment:登录账号" json:"username"`
 	Password      string `gorm:"type:varchar(255);not null;comment:加密后的密码" json:"-"`
 	Avatar        string `gorm:"type:longtext;comment:用户头像(Base64格式)" json:"avatar"`

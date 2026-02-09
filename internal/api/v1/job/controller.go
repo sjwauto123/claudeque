@@ -14,11 +14,11 @@ import (
 // Controller 任务控制器
 type Controller struct {
 	jobService      service.JobService
-	operationLogSvc service.OperationLogService
+	operationLogSvc service.UserOperationLogService
 }
 
 // NewController 创建任务控制器
-func NewController(jobService service.JobService, operationLogSvc service.OperationLogService) *Controller {
+func NewController(jobService service.JobService, operationLogSvc service.UserOperationLogService) *Controller {
 	return &Controller{
 		jobService:      jobService,
 		operationLogSvc: operationLogSvc,
@@ -120,7 +120,7 @@ func (ctrl *Controller) SubmitJob(c *gin.Context) {
 
 	job, err := ctrl.jobService.SubmitJob(c.Request.Context(), req, userID)
 	if err != nil {
-		if err := ctrl.operationLogSvc.Log(username, "提交任务", req.FilePath, err.Error(), false); err != nil {
+		if err := ctrl.operationLogSvc.CreateLog(username, "提交任务", req.FilePath, err.Error(), false); err != nil {
 			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 		}
 		response.InternalError(c, err.Error())
@@ -128,7 +128,7 @@ func (ctrl *Controller) SubmitJob(c *gin.Context) {
 	}
 
 	description := "任务名称: " + req.Name + ", 显卡数量: " + utils.IntToString(req.GpuCount)
-	if err := ctrl.operationLogSvc.Log(username, "提交任务", req.FilePath, description, true); err != nil {
+	if err := ctrl.operationLogSvc.CreateLog(username, "提交任务", req.FilePath, description, true); err != nil {
 		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 	}
 	response.Success(c, job)
@@ -151,9 +151,9 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	username := middleware.GetUsername(c)
 
-	job, err := ctrl.jobService.GetJobByID(c.Request.Context(), jobID)
+	job, err := ctrl.jobService.GetJobByID(jobID)
 	if err != nil {
-		if err := ctrl.operationLogSvc.Log(username, "取消任务", "", err.Error(), false); err != nil {
+		if err := ctrl.operationLogSvc.CreateLog(username, "取消任务", "", err.Error(), false); err != nil {
 			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 		}
 		response.InternalError(c, err.Error())
@@ -166,14 +166,14 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 	}
 
 	if err := ctrl.jobService.CancelJob(c.Request.Context(), jobID, userID); err != nil {
-		if err := ctrl.operationLogSvc.Log(username, "取消任务", filePath, err.Error(), false); err != nil {
+		if err := ctrl.operationLogSvc.CreateLog(username, "取消任务", filePath, err.Error(), false); err != nil {
 			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 		}
 		response.InternalError(c, err.Error())
 		return
 	}
 
-	if err := ctrl.operationLogSvc.Log(username, "取消任务", filePath, "成功", true); err != nil {
+	if err := ctrl.operationLogSvc.CreateLog(username, "取消任务", filePath, "成功", true); err != nil {
 		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
 	}
 	response.Success(c, nil)
