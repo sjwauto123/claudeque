@@ -51,7 +51,7 @@ func NewConnectionPool() *ConnectionPool {
 }
 
 // Add 创建并添加一个新客户端
-func (p *ConnectionPool) Add(userID uint, conn *websocket.Conn, metadata *SessionMetadata) *Client {
+func (p *ConnectionPool) Add(userID uint, conn *websocket.Conn, metadata *SessionMetadata) {
 	client := &Client{
 		Pool:     p,
 		Conn:     conn,
@@ -74,7 +74,6 @@ func (p *ConnectionPool) Add(userID uint, conn *websocket.Conn, metadata *Sessio
 	// 启动写协程和读协程
 	go client.WritePump()
 
-	return client
 }
 
 func (c *Client) Close() {
