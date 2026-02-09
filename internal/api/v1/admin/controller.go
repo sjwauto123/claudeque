@@ -113,7 +113,7 @@ func (ctrl *Controller) ListUsers(c *gin.Context) {
 
 // Restart 重启系统
 func (ctrl *Controller) Restart(c *gin.Context) {
-	cmd := exec.Command("shutdown", "/r", "/t", "0")
+	cmd := exec.Command("sudo", "reboot", "now")
 	if err := cmd.Start(); err != nil {
 		response.InternalError(c, "failed to restart system")
 		return

@@ -12,6 +12,7 @@ import (
 	"context"
 	"fmt"
 	"math/rand"
+	"sort"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -70,6 +71,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 	// 聚合用户权限（按角色去重，返回完整权限对象）
 	permMap := make(map[int]entity.Permission)
+	menuMap := make(map[int]entity.Menu)
 	for _, r := range user.Roles {
 		if r.Status != 1 {
 			continue
@@ -78,16 +80,89 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		if err != nil || role == nil {
 			continue
 		}
+
 		for _, p := range role.Permissions {
 			if p.Status == 1 {
 				permMap[p.ID] = p
+				for _, m := range p.Menus {
+					if m.Status == 1 {
+						menuMap[m.ID] = m
+					}
+				}
 			}
 		}
 	}
-	permissions := make([]entity.Permission, 0, len(permMap))
+	//将entity转换为dto
+	permsDTO := make([]dto.Permission, 0, len(permMap))
 	for _, p := range permMap {
-		permissions = append(permissions, p)
+		permsDTO = append(permsDTO, dto.Permission{
+			ID:         p.ID,
+			Name:       p.Name,
+			Category:   p.Category,
+			Slug:       p.Slug,
+			Type:       p.Type,
+			Status:     p.Status,
+			HttpMethod: p.HttpMethod,
+			HttpPath:   p.HttpPath,
+			Sort:       p.Sort,
+			CreatedAt:  p.CreatedAt,
+			UpdatedAt:  p.UpdatedAt,
+		})
 	}
+	//提取到切片中
+	menus := make([]entity.Menu, 0, len(menuMap))
+	for _, m := range menuMap {
+		menus = append(menus, m)
+	}
+
+	//转换menu为树
+	nodeMap := make(map[int]*dto.MenuNode)
+	//父菜单，值为子菜单
+	parentChildren := make(map[int][]dto.MenuNode)
+	for _, m := range menus {
+		nodeMap[m.ID] = &dto.MenuNode{
+			ID:       m.ID,
+			ParentID: m.ParentID,
+			Title:    m.Title,
+			Status:   m.Status,
+			Type:     m.Type,
+			Icon:     m.Icon,
+			URI:      m.URI,
+			Sort:     m.Sort,
+		}
+	}
+	//子菜单绑定到父菜单下
+	for _, n := range nodeMap {
+		if n.ParentID != 0 {
+			parentChildren[n.ParentID] = append(parentChildren[n.ParentID], *n)
+		}
+	}
+	//排序子节点，排树
+	menuNodes := make([]dto.MenuNode, 0)
+	for id, n := range nodeMap {
+		// 绑定子节点
+		if ch, ok := parentChildren[id]; ok {
+			// 子节点排序
+			sort.Slice(ch, func(i, j int) bool {
+				if ch[i].Sort == ch[j].Sort {
+					return ch[i].Title < ch[j].Title
+				}
+				return ch[i].Sort < ch[j].Sort
+			})
+			n.Children = ch
+		}
+
+		if n.ParentID == 0 || nodeMap[n.ParentID] == nil {
+			menuNodes = append(menuNodes, *n)
+		}
+	}
+	// 按根节点排序
+	sort.Slice(menuNodes, func(i, j int) bool {
+		if menuNodes[i].Sort == menuNodes[j].Sort {
+			return menuNodes[i].Title < menuNodes[j].Title
+		}
+		return menuNodes[i].Sort < menuNodes[j].Sort
+	})
 
 	// 生成 Token
 	token, err := jwt.GenerateToken(user.ID, user.Username, roles)
@@ -100,7 +175,8 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	return &dto.LoginResponse{
 		Token:       token,
 		User:        *userResp,
-		Permissions: permissions,
+		Permissions: permsDTO,
+		MenusTree:   menuNodes,
 	}, nil
 }
 
