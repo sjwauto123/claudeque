@@ -112,3 +112,40 @@ func (s *authService) RefreshToken(token string) (string, error) {
 	}
 	return newToken, nil
 }
+
+// SendEmailCode 发送邮箱验证码
+func (s *authService) SendEmailCode(emailStr string) error {
+	// 1. 生成6位随机数字
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	code := fmt.Sprintf("%06d", rnd.Intn(1000000))
+
+	// 2. 存储到 Redis (有效期5分钟)
+	ctx := context.Background()
+	key := fmt.Sprintf("email_code:%s", emailStr)
+	err := s.redisRepo.Set(ctx, key, code, 5*time.Minute)
+	if err != nil {
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "缓存验证码失败", err)
+	}
+
+	// 3. 发送邮件
+	subject := "您的验证码"
+	body := fmt.Sprintf("<h1>您的验证码是: %s</h1><p>有效期5分钟，请勿泄露给他人。</p>", code)
+	if err := email.SendEmail(emailStr, subject, body); err != nil {
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "发送邮件失败", err)
+	}
+
+	return nil
+}
+
+// GetPermissionsByRole 根据角色 Slug 获取权限列表
+func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, error) {
+	role, err := s.roleRepo.FindBySlug(slug)
+	if err != nil {
+		return nil, err
+	}
+	if role == nil {
+		return nil, bizerrors.New(bizerrors.CodeInvalidParam, "角色不存在")
+	}
+
+	return role.Permissions, nil
+}

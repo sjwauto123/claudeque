@@ -56,15 +56,16 @@ func (a *App) Initialize() error {
 		return err
 	}
 
+	// 4. 初始化 WebSocket连接池
 	a.pool = websocket.NewConnectionPool()
 
-	// 4. 初始化依赖
+	// 5. 初始化依赖
 	a.initDependencies()
 
-	// 5. 初始化路由
+	// 6. 初始化路由
 	a.initRouter()
 
-	// 6. 初始化服务器
+	// 7. 初始化服务器
 	a.initServer()
 
 	return nil
@@ -120,6 +121,12 @@ func (a *App) initDatabase() error {
 	} else {
 		logger.Info("数据库迁移完成")
 	}
+
+	initRedis, err := database.InitRedis(&a.cfg.Database.Redis)
+	if err != nil {
+		return fmt.Errorf("redis 初始化失败: %w", err)
+	}
+	a.redis = initRedis
 	return nil
 }
 
@@ -139,7 +146,7 @@ func (a *App) initDependencies() {
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, infoService)
+	a.router = api.NewRouter(userLogSvc, infoService, userSvc, authSvc)
 
 	// 启动日志限制定时任务
 	go a.startLogLimitTask(userLogSvc)

@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,7 +111,7 @@ func (rc *ResourceCollector) Start() {
 }
 
 // collectSystemInfo 收集系统信息
-func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfoResponse {
+func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 	diskInfo, err := getDiskInfo()
 	if err != nil {
 		logger.Errorf("Failed to get disk info: %v", err)
@@ -134,7 +133,7 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfoResponse {
 		logger.Errorf("Failed to get process info: %v", err)
 	}
 
-	var info response.SystemInfoResponse
+	var info response.SystemInfosResponse
 	info.CpuList = append(info.CpuList, *diskInfo)
 	info.CpuList = append(info.CpuList, *memoryInfo)
 	info.GpuList = append(info.GpuList, gpuInfo...)
@@ -142,23 +141,112 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfoResponse {
 	return &info
 }
 
+// 获取磁盘信息（以根分区为例）
+func getDiskInfo() (*response.CpuInfoResponse, error) {
+	// 获取主挂载点（Linux/macOS 用 "/", Windows 用 "C:\\")
+	mountPoint := "/"
+	//if runtime.GOOS == "windows" {
+	//	mountPoint = "C:\\"
+	//}
+
+	usage, err := disk.Usage(mountPoint)
+	if err != nil {
+		return nil, err
+	}
+
+	return &response.CpuInfoResponse{
+		DeviceName: "disk", // ·关键：标识为磁盘
+		TotalCap:   bytesToGB(usage.Total),
+		UseCap:     bytesToGB(usage.Used),
+		RemainCap:  bytesToGB(usage.Free),
+		Percentage: fmt.Sprintf("%.1f%%", usage.UsedPercent),
+	}, nil
+}
+
+// 获取内存信息
+func getMemoryInfo() (*response.CpuInfoResponse, error) {
+	vmStat, err := mem.VirtualMemory()
+	if err != nil {
+		return nil, err
+	}
+
+	total := vmStat.Total
+	used := total - vmStat.Available // 已用 = 总量 - 可用
+	free := vmStat.Available
+
+	return &response.CpuInfoResponse{
+		DeviceName: "memory", //  关键：标识为内存
+		TotalCap:   bytesToGB(total),
+		UseCap:     bytesToGB(used),
+		RemainCap:  bytesToGB(free),
+		Percentage: fmt.Sprintf("%.1f%%", vmStat.UsedPercent),
+	}, nil
+}
+
+// bytesToGB: 转换字节为 GB 字符串（保留1位小数）
+func bytesToGB(bytes uint64) string {
+	gb := float64(bytes) / (1024 * 1024 * 1024)
+	return fmt.Sprintf("%.1fGB", gb)
+}
+
+// GetNvidiaGPUInfo 获取显卡信息
+func GetNvidiaGPUInfo() ([]response.GPUInfoResponse, error) {
+	// 执行 nvidia-smi 命令，输出 CSV 格式
+	cmd := exec.Command("nvidia-smi", "--query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
+	output, err := cmd.Output()
+	if err != nil {
+		// 如果命令不存在（无 NVIDIA 驱动），返回空列表
+		if _, ok := err.(*exec.Error); ok {
+			return []response.GPUInfoResponse{}, nil // 无 GPU 设备
+		}
+		return nil, err
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var gpus []response.GPUInfoResponse
+
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, ", ")
+		if len(fields) < 6 {
+			continue
+		}
+
+		index, _ := strconv.Atoi(strings.TrimSpace(fields[0]))
+		name := strings.TrimSpace(fields[1])
+		temp := strings.TrimSpace(fields[2]) + "°C"
+		util := strings.TrimSpace(fields[3]) + "%"
+		memUsed := strings.TrimSpace(fields[4]) + "MB"
+		memTotal := strings.TrimSpace(fields[5]) + "MB"
+
+		gpus = append(gpus, response.GPUInfoResponse{
+			Index:      index,
+			DeviceName: name,
+			Temp:       temp,
+			Util:       util,
+			MemUsed:    memUsed,
+			MemTotal:   memTotal,
+		})
+	}
+
+	return gpus, nil
+}
+
 // collectProcessInfo 收集进程信息
-func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfo, error) {
-	// 1. 从缓存或数据库获取进程信息
+func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoResponse, error) {
+	// 从缓存或数据库获取进程信息
 	processes, err := rc.getProcessesFromCache()
-	fmt.Println("获取的进程：", processes)
 	if err != nil {
 		return nil, fmt.Errorf("查询进程信息失败: %w", err)
 	}
 
-	var processInfos []response.ProcessInfo
-
-	// 2. 检查每个进程是否真的在运行
+	var processInfos []response.ProcessInfoResponse
 	for _, p := range processes {
-		// 检查进程是否存在
+		// 检查进程是否存在,检查每个进程是否真的在运行
 		if isProcessRunning(p.PID) {
-
-			// 3. 通过本地命令获取进程的详细信息
+			// 通过本地命令获取进程的详细信息
 			info, err := getProcessDetails(p.PID)
 			fmt.Println("获取的进程详情：", info)
 			if err == nil {
@@ -197,99 +285,6 @@ func (rc *ResourceCollector) getProcessesFromCache() ([]entity.Process, error) {
 	return processes, nil
 }
 
-// GetNvidiaGPUInfo 获取显卡信息
-func GetNvidiaGPUInfo() ([]response.GPUInfo, error) {
-	// 执行 nvidia-smi 命令，输出 CSV 格式
-	cmd := exec.Command("nvidia-smi", "--query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
-	output, err := cmd.Output()
-	if err != nil {
-		// 如果命令不存在（无 NVIDIA 驱动），返回空列表
-		if _, ok := err.(*exec.Error); ok {
-			return []response.GPUInfo{}, nil // 无 GPU 设备
-		}
-		return nil, err
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	var gpus []response.GPUInfo
-
-	for _, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		fields := strings.Split(line, ", ")
-		if len(fields) < 6 {
-			continue
-		}
-
-		index, _ := strconv.Atoi(strings.TrimSpace(fields[0]))
-		name := strings.TrimSpace(fields[1])
-		temp := strings.TrimSpace(fields[2]) + "°C"
-		util := strings.TrimSpace(fields[3]) + "%"
-		memUsed := strings.TrimSpace(fields[4]) + "MB"
-		memTotal := strings.TrimSpace(fields[5]) + "MB"
-
-		gpus = append(gpus, response.GPUInfo{
-			Index:      index,
-			DeviceName: name,
-			Temp:       temp,
-			Util:       util,
-			MemUsed:    memUsed,
-			MemTotal:   memTotal,
-		})
-	}
-
-	return gpus, nil
-}
-
-// bytesToGB: 转换字节为 GB 字符串（保留1位小数）
-func bytesToGB(bytes uint64) string {
-	gb := float64(bytes) / (1024 * 1024 * 1024)
-	return fmt.Sprintf("%.1f", gb)
-}
-
-// 获取磁盘信息（以根分区为例）
-func getDiskInfo() (*response.SystemInfo, error) {
-	// 获取主挂载点（Linux/macOS 用 "/", Windows 用 "C:\\")
-	mountPoint := "/"
-	if runtime.GOOS == "windows" {
-		mountPoint = "C:\\"
-	}
-
-	usage, err := disk.Usage(mountPoint)
-	if err != nil {
-		return nil, err
-	}
-
-	return &response.SystemInfo{
-		DeviceName: "disk", // 👈 关键：标识为磁盘
-		TotalCap:   bytesToGB(usage.Total),
-		UseCap:     bytesToGB(usage.Used),
-		RemainCap:  bytesToGB(usage.Free),
-		Percentage: fmt.Sprintf("%.1f%%", usage.UsedPercent),
-	}, nil
-}
-
-// 获取内存信息
-func getMemoryInfo() (*response.SystemInfo, error) {
-	vmStat, err := mem.VirtualMemory()
-	if err != nil {
-		return nil, err
-	}
-
-	total := vmStat.Total
-	used := total - vmStat.Available // 已用 = 总量 - 可用
-	free := vmStat.Available
-
-	return &response.SystemInfo{
-		DeviceName: "memory", // 👈 关键：标识为内存
-		TotalCap:   bytesToGB(total),
-		UseCap:     bytesToGB(used),
-		RemainCap:  bytesToGB(free),
-		Percentage: fmt.Sprintf("%.1f%%", vmStat.UsedPercent),
-	}, nil
-}
-
 // isProcessRunning 检查进程是否正在运行
 func isProcessRunning(pid int) bool {
 	// 跨平台检查进程是否存在
@@ -300,37 +295,46 @@ func isProcessRunning(pid int) bool {
 
 	// 尝试不同的方法检查进程状态
 	// 在Windows上，Status()方法可能不可用，尝试使用其他方法
-	if runtime.GOOS == "windows" {
-		// 在Windows上，尝试获取进程名称
-		_, err = p.Name()
-		return err == nil
-	} else {
-		// 在Linux上，使用Status()方法
-		_, err = p.Status()
-		return err == nil
-	}
+	//if runtime.GOOS == "windows" {
+	//	// 在Windows上，尝试获取进程名称
+	//	_, err = p.Name()
+	//	return err == nil
+	//} else {
+	// 在Linux上，使用Status()方法
+	_, err = p.Status()
+	return err == nil
 }
 
 // getProcessDetails 获取进程的详细信息
-func getProcessDetails(pid int) (response.ProcessInfo, error) {
+func getProcessDetails(pid int) (response.ProcessInfoResponse, error) {
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
-		return response.ProcessInfo{}, err
+		return response.ProcessInfoResponse{}, err
 	}
 
 	// 获取进程信息
-	username, _ := p.Username()
-	createTime, _ := p.CreateTime()
-	cmdline, _ := p.Cmdline()
+	username, err := p.Username()
+	if err != nil {
+		logger.Infof("无法获取进程用户名: %v", err)
+	}
+	createTime, err := p.CreateTime()
+	if err != nil {
+		logger.Infof("无法获取进程创建时间: %v", err)
+	}
+	cmdline, err := p.Cmdline()
+	if err != nil {
+		logger.Infof("无法获取进程命令行: %v", err)
+	}
 
 	// 计算运行时间
 	startTime := time.Unix(createTime/1000, 0).Format("2006-01-02 15:04:05")
-	r := time.Since(time.Unix(createTime/1000, 0)).String()
+	duration := time.Since(time.Unix(createTime/1000, 0))
+	r := formatDuration(duration)
 
 	// 获取GPU信息
 	gpuName := getGPUNameByPID(pid)
 
-	return response.ProcessInfo{
+	return response.ProcessInfoResponse{
 		Username:  username,
 		PID:       strconv.Itoa(pid),
 		GPUname:   gpuName,
@@ -362,4 +366,23 @@ func getGPUNameByPID(pid int) string {
 	}
 
 	return ""
+}
+
+// formatDuration 格式化时间间隔，只保留整数秒部分
+func formatDuration(d time.Duration) string {
+	seconds := int(d.Seconds())
+	hours := seconds / 3600
+	minutes := (seconds % 3600) / 60
+	secs := seconds % 60
+
+	var result string
+	if hours > 0 {
+		result += fmt.Sprintf("%dh", hours)
+	}
+	if minutes > 0 || hours > 0 {
+		result += fmt.Sprintf("%dm", minutes)
+	}
+	result += fmt.Sprintf("%ds", secs)
+
+	return result
 }

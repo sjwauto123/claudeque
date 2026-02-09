@@ -71,30 +71,30 @@ func (p *ConnectionPool) Add(userID uint, conn *websocket.Conn, metadata *Sessio
 	}
 	p.mu.Unlock()
 
-	// 启动写协程
+	// 启动写协程和读协程
 	go client.WritePump()
 
 	return client
 }
 
-func (p *Client) Close() {
-	p.once.Do(func() {
-		p.Pool.mu.Lock()
-		defer p.Pool.mu.Unlock()
+func (c *Client) Close() {
+	c.once.Do(func() {
+		c.Pool.mu.Lock()
+		defer c.Pool.mu.Unlock()
 
-		userID := p.Metadata.UserID
-		if clients, ok := p.Pool.userClients[userID]; ok {
-			delete(clients, p)
+		userID := c.Metadata.UserID
+		if clients, ok := c.Pool.userClients[userID]; ok {
+			delete(clients, c)
 			if len(clients) == 0 {
-				delete(p.Pool.userClients, userID)
+				delete(c.Pool.userClients, userID)
 			}
 		}
 
 		// 如果是管理员，从管理员客户端map中移除
-		delete(p.Pool.adminClients, p)
+		delete(c.Pool.adminClients, c)
 
-		close(p.Send)
-		_ = p.Conn.Close()
+		close(c.Send)
+		_ = c.Conn.Close()
 	})
 }
 
@@ -213,7 +213,6 @@ func (p *ConnectionPool) GetConnectionCount() int {
 func (p *ConnectionPool) GetAdminConnectionCount() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-
 	return len(p.adminClients)
 }
 

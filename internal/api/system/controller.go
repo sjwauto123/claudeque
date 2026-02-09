@@ -3,8 +3,10 @@
 package system
 
 import (
+	"cloudque/internal/middleware"
 	"cloudque/internal/service"
 	"cloudque/pkg/logger"
+	"cloudque/pkg/response"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -18,22 +20,26 @@ var upgrader = websocket.Upgrader{
 }
 
 type Controller struct {
-	svc service.SystemInfoService
+	syInfoSvc service.SystemInfoService
+	authSvc   service.AuthService
 }
 
-func NewController(svc service.SystemInfoService) *Controller {
-
-	if svc == nil {
-		panic("svc must not be nil")
-	}
+func NewController(svc service.SystemInfoService, authSvc service.AuthService) *Controller {
 	return &Controller{
-		svc: svc,
+		syInfoSvc: svc,
+		authSvc:   authSvc,
 	}
 }
 
 func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
-	// 暂时使用默认用户ID 1，因为我们禁用了认证中间件
-	userID := uint(1)
+
+	value, exists := c.Get(middleware.ContextUserID)
+	if !exists {
+		response.BadRequest(c, "未找到用户信息")
+		return
+	}
+
+	userID := value.(uint)
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -43,5 +49,5 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 		return
 	}
 	// 处理WebSocket连接
-	ctrl.svc.HandleSyMessage(conn, userID)
+	ctrl.syInfoSvc.HandleSyMessage(conn, userID)
 }

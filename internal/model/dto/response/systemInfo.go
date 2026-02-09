@@ -1,6 +1,6 @@
 package response
 
-type ProcessInfo struct {
+type ProcessInfoResponse struct {
 	Username  string `json:"username"`
 	PID       string `json:"pid"`
 	GPUname   string `json:"gpu_name"`
@@ -10,7 +10,7 @@ type ProcessInfo struct {
 	Command   string `json:"command"`
 }
 
-type GPUInfo struct {
+type GPUInfoResponse struct {
 	Index      int    `json:"index"`
 	DeviceName string `json:"name"`
 	Temp       string `json:"temp"`
@@ -19,15 +19,15 @@ type GPUInfo struct {
 	MemTotal   string `json:"mem_total"`
 }
 
-type SystemInfo struct {
+type CpuInfoResponse struct {
 	DeviceName string `json:"deviceName"`
 	TotalCap   string `json:"totalCap"`
 	UseCap     string `json:"useCap"`
 	RemainCap  string `json:"remainCap"`
 	Percentage string `json:"percentage"`
 }
-type SystemInfoResponse struct {
-	CpuList     []SystemInfo  `json:"cpulist"`
-	GpuList     []GPUInfo     `json:"gpulist"`
-	ProcessList []ProcessInfo `json:"processlist"`
+type SystemInfosResponse struct {
+	CpuList     []CpuInfoResponse     `json:"cpulist"`
+	GpuList     []GPUInfoResponse     `json:"gpulist"`
+	ProcessList []ProcessInfoResponse `json:"processlist"`
 }
