@@ -68,7 +68,6 @@ func (s *gpuService) AcquireCards(ctx context.Context, count int, jobID int) ([]
 	if count <= 0 || count > totalGpuCount {
 		return nil, fmt.Errorf("显卡数量必须在1-%d之间", totalGpuCount)
 	}
-
 	// 调用 Repository 执行数据库事务
 	cards, err := s.gpuRepo.Acquire(ctx, count, jobID)
 	if err != nil {
@@ -78,7 +77,6 @@ func (s *gpuService) AcquireCards(ctx context.Context, count int, jobID int) ([]
 	cardIDs := make([]int, len(cards))
 	for i, card := range cards {
 		cardIDs[i] = card.ID
-
 		// 更新Redis缓存
 		if err := s.gpuCache.SetBusy(ctx, card.ID, jobID); err != nil {
 			// 记录错误但不必回滚数据库，缓存可以容忍短暂不一致或通过过期修复
@@ -94,18 +92,15 @@ func (s *gpuService) ReleaseCards(ctx context.Context, cardIDs []int) error {
 	if len(cardIDs) == 0 {
 		return nil
 	}
-
 	// 更新数据库
 	if err := s.gpuRepo.Release(ctx, cardIDs); err != nil {
 		return fmt.Errorf("释放显卡失败: %w", err)
 	}
-
 	// 更新Redis缓存
 	for _, cardID := range cardIDs {
 		if err := s.gpuCache.SetIdle(ctx, cardID); err != nil {
 			fmt.Printf("Warning: Failed to update cache for gpu-%d: %v\n", cardID, err)
 		}
 	}
-
 	return nil
 }

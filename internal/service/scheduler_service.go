@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,6 +42,7 @@ type JobProcess struct {
 	cmd     *exec.Cmd
 	jobID   int
 	cardIDs []int
+	done    chan struct{}
 }
 
 // NewScheduler 创建调度器
@@ -86,32 +86,67 @@ func (s *scheduler) Stop() {
 	s.isRunning = false
 	s.mu.Unlock()
 
-	// 取消上下文
+	// 终止所有正在运行的任务
+	// 这里先调用 Terminate，会触发 MonitorJob 退出并执行清理逻辑
+	s.TerminateAllRunningJobs()
+
+	// 取消调度循环上下文
 	s.cancel()
 
-	// 等待所有goroutine退出
+	// 等待所有goroutine退出（包括 Run 和所有的 MonitorJob）
 	s.wg.Wait()
-
-	// 终止所有正在运行的任务
-	s.TerminateAllRunningJobs()
 
 	logger.Info("任务调度器已停止")
 }
 
-// TerminateAllRunningJobs 终止所有正在运行的任务
+// TerminateAllRunningJobs 终止所有正在运行的任务并清理资源
 func (s *scheduler) TerminateAllRunningJobs() {
 	s.runningMu.Lock()
-	defer s.runningMu.Unlock()
+	// 复制一份任务列表，避免在循环中操作锁
+	jobs := make(map[int]*JobProcess)
+	for id, jp := range s.runningJobs {
+		jobs[id] = jp
+	}
+	s.runningMu.Unlock()
 
-	for jobID, jp := range s.runningJobs {
-		logger.Info("终止任务", zap.Int("job_id", jobID))
-		if jp.cmd.Process != nil {
-			if err := jp.cmd.Process.Signal(syscall.SIGTERM); err != nil {
-				logger.Warn("发送终止信号失败", zap.Error(err), zap.Int("job_id", jobID))
+	if len(jobs) == 0 {
+		return
+	}
+
+	var wg sync.WaitGroup
+	for jobID, jp := range jobs {
+		wg.Add(1)
+		go func(id int, p *JobProcess) {
+			defer wg.Done()
+			s.terminateSingleJob(id, p)
+		}(jobID, jp)
+	}
+
+	// 等待所有清理任务完成，或者达到总超时
+	wg.Wait()
+}
+
+// terminateSingleJob 终止单个任务的私有方法
+func (s *scheduler) terminateSingleJob(jobID int, jp *JobProcess) {
+	logger.Info("正在终止残留任务", zap.Int("job_id", jobID))
+
+	if jp.cmd.Process != nil {
+		// 尝试发送 SIGTERM，优雅退出
+		if err := jp.cmd.Process.Signal(syscall.SIGTERM); err == nil {
+			// 如果信号发送成功，等待 MonitorJob 报告进程退出
+			select {
+			case <-jp.done:
+				logger.Info("任务已优雅退出", zap.Int("job_id", jobID))
+				return
+			case <-time.After(10 * time.Second):
+				logger.Warn("任务未在规定时间内优雅退出，强制杀掉", zap.Int("job_id", jobID))
 			}
 		}
-		delete(s.runningJobs, jobID)
 	}
+
+	// 等待 MonitorJob 完成清理逻辑
+	<-jp.done
+	logger.Info("残留任务清理完成", zap.Int("job_id", jobID))
 }
 
 // Run 调度器主循环
@@ -273,6 +308,7 @@ func (s *scheduler) ExecuteJob(job *entity.Job) error {
 		cmd:     cmd,
 		jobID:   job.ID,
 		cardIDs: cardIDs,
+		done:    make(chan struct{}),
 	}
 	s.runningMu.Lock()
 	s.runningJobs[job.ID] = jp
@@ -292,6 +328,7 @@ func (s *scheduler) ExecuteJob(job *entity.Job) error {
 	}
 
 	// 启动goroutine监控任务执行状态
+	s.wg.Add(1)
 	go s.MonitorJob(jp)
 
 	logger.Info("任务已启动",
@@ -307,11 +344,16 @@ func (s *scheduler) MonitorJob(jp *JobProcess) {
 	jobID := jp.jobID
 	cardIDs := jp.cardIDs
 
+	defer s.wg.Done()
+	defer close(jp.done)
 	defer func() {
 		// 从运行列表中移除
 		s.runningMu.Lock()
 		delete(s.runningJobs, jobID)
 		s.runningMu.Unlock()
+
+		// 释放显卡和清理进程表使用 Background，确保在程序关闭时也能执行成功
+		cleanupCtx := context.Background()
 
 		// 从进程表中删除
 		if err := s.processRepo.DeleteByJobID(jobID); err != nil {
@@ -319,7 +361,7 @@ func (s *scheduler) MonitorJob(jp *JobProcess) {
 		}
 
 		// 释放显卡
-		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
+		if err := s.gpuSvc.ReleaseCards(cleanupCtx, cardIDs); err != nil {
 			logger.Error("释放显卡失败",
 				zap.Error(err),
 				zap.Int("job_id", jobID),
@@ -331,6 +373,7 @@ func (s *scheduler) MonitorJob(jp *JobProcess) {
 	err := jp.cmd.Wait()
 
 	// 获取任务详情
+	// 使用 Background 确保更新状态不受 scheduler 取消影响
 	job, err2 := s.jobRepo.GetByID(jobID)
 	if err2 != nil {
 		logger.Error("获取任务详情失败", zap.Error(err2), zap.Int("job_id", jobID))
@@ -341,38 +384,18 @@ func (s *scheduler) MonitorJob(jp *JobProcess) {
 		return
 	}
 
-	// 检查进程退出码
-	exitCode := 0
+	// 更新任务状态
+	status := entity.JobStatusCompleted
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
-			if status, ok := exitErr.Sys().(syscall.WaitStatus); ok {
-				exitCode = status.ExitStatus()
-			}
-		}
+		// 如果进程被杀掉，err 会包含 exit status 1 等信息
+		status = entity.JobStatusFailed
+		logger.Info("任务执行结束,非正常退出", zap.Int("job_id", jobID), zap.Error(err))
+	} else {
+		logger.Info("任务执行成功", zap.Int("job_id", jobID))
 	}
 
-	// 更新任务状态
-	if exitCode != 0 {
-		// 任务执行失败
-		logger.Error("任务执行失败",
-			zap.Error(err),
-			zap.Int("job_id", jobID),
-			zap.Int("exit_code", exitCode),
-			zap.String("name", job.Name))
-
-		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
-		}
-	} else {
-		// 任务执行成功
-		logger.Info("任务执行成功",
-			zap.Int("job_id", jobID),
-			zap.String("name", job.Name))
-
-		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusCompleted); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
-		}
+	if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
+		logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
 	}
 
 	// 尝试调度下一个任务

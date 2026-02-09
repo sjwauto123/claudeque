@@ -36,7 +36,7 @@ func (c *Controller) GetQueue(ctx *gin.Context) {
 		response.BadRequest(ctx, err.Error())
 		return
 	}
-
+	req.Status = 1
 	startTime, err := utils.ParseTime(req.StartTime)
 	if err != nil {
 		response.BadRequest(ctx, "开始时间格式错误")

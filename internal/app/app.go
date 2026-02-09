@@ -148,7 +148,7 @@ func (a *App) initDependencies() {
 	userRepo := repository.NewUserRepository(a.mysqlDB)
 	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
 	operationLogRepo := repository.NewOperationLogRepository(a.mysqlDB)
-	//processRepo := repository.NewProcessRepository(a.mysqlDB)
+	processRepo := repository.NewProcessRepository(a.mysqlDB)
 	gpuRepo := repository.NewGpuRepository(a.mysqlDB)
 	gpuCache := repository.NewGpuCacheRepository(a.redis)
 	queueRepo := repository.NewQueueRepository(a.redis)
@@ -162,7 +162,7 @@ func (a *App) initDependencies() {
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 
 	// 创建调度器
-	//a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo)
+	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo)
 	// 创建 Router
 	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, operationLogSvc, jobRepo)
 }

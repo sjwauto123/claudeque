@@ -118,6 +118,8 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequ
 
 	return list, total, req.Page, req.PageSize, nil
 }
+
+// MoveBefore 更新排队
 func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID int) error {
 	// 获取 beforeJob 的 rank
 	rank, err := s.queueRepo.Rank(ctx, beforeJobID)
@@ -150,7 +152,7 @@ func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID in
 	return s.queueRepo.Add(ctx, jobID, newScore)
 }
 
-// GetFrontCount 返回某个任务前方排队数量（不在队列返回 -1）
+// GetFrontCount 返回某个任务前方排队数量
 func (s *queueService) GetFrontCount(ctx context.Context, jobID int) (int, error) {
 	rank, err := s.queueRepo.Rank(ctx, jobID)
 	if err != nil {
