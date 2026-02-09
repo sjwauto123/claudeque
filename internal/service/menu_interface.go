@@ -2,13 +2,13 @@ package service
 
 import (
 	"cloudque/internal/model/dto/request"
-	response2 "cloudque/internal/model/dto/response"
+	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 )
 
 type MenuService interface {
 	// PageList 分页查询菜单列表
-	PageList(req *request.MenuPageQueryRequest) ([]*entity.Menu, int64, error)
+	PageList(req *request.MenuPageQueryRequest) ([]*dto.MenuTreeNode, int64, error)
 
 	// Create 创建菜单
 	Create(req *request.CreateMenuRequest) error
@@ -26,5 +26,5 @@ type MenuService interface {
 	GetMenuByID(id int) (*entity.Menu, error)
 
 	// BuildMenuTree 构建菜单树结构
-	BuildMenuTree(menus []*entity.Menu) ([]*response2.MenuTreeNode, error)
+	BuildMenuTree(menus []*entity.Menu) ([]*dto.MenuTreeNode, error)
 }

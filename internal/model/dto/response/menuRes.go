@@ -5,7 +5,7 @@ type MenuResponse struct {
 	ID        int    `json:"id"`
 	ParentID  *int   `json:"parent_id,omitempty"`
 	Title     string `json:"title"`
-	Type      string `json:"type"`   // catalogue/menu/permission
+	Type      string `json:"type"`   // catalogue/menu/button
 	Status    int    `json:"status"` // 0=停用, 1=启用
 	Icon      string `json:"icon,omitempty"`
 	URI       string `json:"uri"`
@@ -18,7 +18,7 @@ type MenuResponse struct {
 type MenuTreeNode struct {
 	ID       int             `json:"id"`
 	Title    string          `json:"title"`
-	Type     string          `json:"type"`   // catalogue/menu/permission
+	Type     string          `json:"type"`   // catalogue/menu/button
 	Status   int             `json:"status"` // 0=停用, 1=启用
 	Icon     string          `json:"icon,omitempty"`
 	URI      string          `json:"uri"`
@@ -37,7 +37,7 @@ type PermissionResponse struct {
 	ID       int    `json:"id"`
 	Name     string `json:"name"`
 	Slug     string `json:"slug"`
-	Type     string `json:"type"`   // catalogue/menu/permission
+	Type     string `json:"type"`   // catalogue/menu/button
 	Status   int    `json:"status"` // 0=停用, 1=启用
 	HTTPPath string `json:"http_path,omitempty"`
 	Sort     int    `json:"sort"`

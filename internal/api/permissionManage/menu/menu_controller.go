@@ -55,7 +55,7 @@ func (ctrl *MenuController) GetMenuByID(c *gin.Context) {
 	response.Success(c, menuResp)
 }
 
-// PageList 分页查询菜单列表
+// PageList 分页查询菜单列表（返回树形结构）
 func (ctrl *MenuController) PageList(c *gin.Context) {
 	var req request.MenuPageQueryRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
@@ -63,37 +63,14 @@ func (ctrl *MenuController) PageList(c *gin.Context) {
 		return
 	}
 
-	menus, total, err := ctrl.menuService.PageList(&req)
+	list, total, err := ctrl.menuService.PageList(&req)
 	if err != nil {
 		logger.Error("查询菜单列表失败", zap.Error(err))
 		response.BizError(c, err)
 		return
 	}
 
-	// 构建菜单树结构（用于前端树形展示）
-	_, err = ctrl.menuService.BuildMenuTree(menus)
-	if err != nil {
-		logger.Error("构建菜单树失败", zap.Error(err))
-		response.BizError(c, err)
-		return
-	}
-
-	// 转换为响应格式
-	var menuResponses []dto.MenuResponse
-	for _, menu := range menus {
-		menuResponses = append(menuResponses, dto.MenuResponse{
-			ID:       menu.ID,
-			ParentID: menu.ParentID,
-			Title:    menu.Title,
-			Type:     menu.Type,
-			Status:   menu.Status,
-			Icon:     menu.Icon,
-			URI:      menu.URI,
-			Sort:     menu.Sort,
-		})
-	}
-
-	pageResp := response.NewPageResponse(menuResponses, total, req.Page, req.PageSize)
+	pageResp := response.NewPageResponse(list, total, req.Page, req.PageSize)
 	response.Success(c, pageResp)
 }
 

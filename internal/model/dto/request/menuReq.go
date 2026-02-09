@@ -15,8 +15,8 @@ type CreateMenuRequest struct {
 	entity.BaseEntity
 	ParentID *int   `json:"parent_id" binding:"omitempty"`
 	Title    string `json:"title" binding:"required,min=1,max=50"`
-	Type     string `json:"type" binding:"required,oneof=catalogue menu button"`
-	Status   *int   `json:"status" binding:"required,oneof=0 1"` // 0=停用, 1=启用
+	Type     string `json:"type" binding:"required,oneof=catalogue menu button"` // 修改为 button
+	Status   *int   `json:"status" binding:"required,oneof=0 1"`                 // 0=停用, 1=启用
 	Icon     string `json:"icon" binding:"omitempty,max=50"`
 	URI      string `json:"uri" binding:"required,min=1,max=50"`
 	Sort     int    `json:"sort" binding:"required"`
@@ -26,8 +26,8 @@ type CreateMenuRequest struct {
 type UpdateMenuRequest struct {
 	ID       int    `json:"id" binding:"required"`
 	Title    string `json:"title" binding:"omitempty,min=1,max=50"`
-	Type     string `json:"type" binding:"omitempty,oneof=catalogue menu permission"`
-	Status   *int   `json:"status" binding:"omitempty,oneof=0 1"` // 0=停用, 1=启用
+	Type     string `json:"type" binding:"omitempty,oneof=catalogue menu button"` // 修改为 button
+	Status   *int   `json:"status" binding:"omitempty,oneof=0 1"`                 // 0=停用, 1=启用
 	Icon     string `json:"icon" binding:"omitempty,max=50"`
 	URI      string `json:"uri" binding:"omitempty,min=1,max=50"`
 	Sort     *int   `json:"sort" binding:"omitempty"`

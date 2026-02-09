@@ -14,11 +14,14 @@ func NewMenuRepository(db *gorm.DB) MenuRepository {
 	return &menuRepository{db: db}
 }
 
-func (r *menuRepository) PageList(offset, limit int, title string, status *int) ([]*entity.Menu, int64, error) {
-	var menus []*entity.Menu
+func (r *menuRepository) PageList(offset, limit int, title string, status *int) ([]*entity.Menu, []*entity.Menu, int64, error) {
+	var parents []*entity.Menu
+	var children []*entity.Menu
 	var total int64
 
-	query := r.db.Model(&entity.Menu{})
+	// 1️⃣ 只查父菜单
+	query := r.db.Model(&entity.Menu{}).
+		Where("parent_id IS NULL")
 
 	if title != "" {
 		query = query.Where("title LIKE ?", "%"+title+"%")
@@ -27,17 +30,34 @@ func (r *menuRepository) PageList(offset, limit int, title string, status *int) 
 		query = query.Where("status = ?", *status)
 	}
 
-	err := query.Count(&total).Error
-	if err != nil {
-		return nil, 0, err
+	// 2️⃣ 统计父级总数
+	if err := query.Count(&total).Error; err != nil {
+		return nil, nil, 0, err
 	}
 
-	err = query.Order("sort ASC").Offset(offset).Limit(limit).Find(&menus).Error
-	if err != nil {
-		return nil, 0, err
+	// 3️⃣ 分页查父级
+	if err := query.Order("sort ASC").
+		Offset(offset).
+		Limit(limit).
+		Find(&parents).Error; err != nil {
+		return nil, nil, 0, err
 	}
 
-	return menus, total, nil
+	// 4️⃣ 查子菜单
+	if len(parents) > 0 {
+		var parentIDs []int
+		for _, p := range parents {
+			parentIDs = append(parentIDs, p.ID)
+		}
+
+		if err := r.db.Where("parent_id IN ?", parentIDs).
+			Order("sort ASC").
+			Find(&children).Error; err != nil {
+			return nil, nil, 0, err
+		}
+	}
+
+	return parents, children, total, nil
 }
 
 func (r *menuRepository) Create(menu *entity.Menu) error {

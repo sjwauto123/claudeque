@@ -20,16 +20,40 @@ func NewMenuService(menuRepo repository.MenuRepository) MenuService {
 func (s *menuService) GetMenuByID(id int) (*entity.Menu, error) {
 	return s.menuRepo.GetMenuByID(id)
 }
-func (s *menuService) PageList(req *request.MenuPageQueryRequest) ([]*entity.Menu, int64, error) {
+
+func (s *menuService) PageList(req *request.MenuPageQueryRequest) ([]*dto.MenuTreeNode, int64, error) {
 	if req.Page <= 0 {
 		req.Page = 1
 	}
 	if req.PageSize <= 0 || req.PageSize > 100 {
 		req.PageSize = 10
 	}
+
 	offset := (req.Page - 1) * req.PageSize
 
-	return s.menuRepo.PageList(offset, req.PageSize, req.Title, req.Status)
+	parents, children, total, err := s.menuRepo.PageList(offset, req.PageSize, req.Title, req.Status)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	// 组装树
+	childMap := make(map[int][]*dto.MenuTreeNode)
+
+	for _, c := range children {
+		node := convertToNode(c)
+		if c.ParentID != nil {
+			childMap[*c.ParentID] = append(childMap[*c.ParentID], node)
+		}
+	}
+
+	var result []*dto.MenuTreeNode
+	for _, p := range parents {
+		parentNode := convertToNode(p)
+		parentNode.Children = childMap[p.ID]
+		result = append(result, parentNode)
+	}
+
+	return result, total, nil
 }
 
 func (s *menuService) Create(req *request.CreateMenuRequest) error {
@@ -188,4 +212,16 @@ func (s *menuService) BuildMenuTree(menus []*entity.Menu) ([]*dto.MenuTreeNode, 
 	}
 
 	return roots, nil
+}
+func convertToNode(m *entity.Menu) *dto.MenuTreeNode {
+	return &dto.MenuTreeNode{
+		ID:       m.ID,
+		Title:    m.Title,
+		Type:     m.Type,
+		Status:   m.Status,
+		Icon:     m.Icon,
+		URI:      m.URI,
+		Sort:     m.Sort,
+		Children: []*dto.MenuTreeNode{},
+	}
 }

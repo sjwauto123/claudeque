@@ -5,7 +5,6 @@ import (
 )
 
 // RegisterRoutes 注册菜单管理路由
-
 func (ctrl *MenuController) RegisterRoutes(r *gin.RouterGroup) {
 	menuGroup := r.Group("/permissionManage/menus")
 	{
