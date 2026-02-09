@@ -139,8 +139,8 @@ func (ctrl *RoleController) GetRolePermissionByID(c *gin.Context) {
 	response.Success(c, tree)
 }
 func (ctrl *RoleController) UpdateRolePermission(c *gin.Context) {
-	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
+	idStr := c.Param("role_id")
+	roleID, err := strconv.Atoi(idStr)
 	if err != nil {
 		response.BadRequest(c, errors.GetMessage(errors.CodeInvalidParam))
 		return
@@ -152,17 +152,12 @@ func (ctrl *RoleController) UpdateRolePermission(c *gin.Context) {
 		return
 	}
 
-	// 安全校验：路径 ID 与请求体中 RoleID 一致
-	if id != int(req.RoleID) {
-		response.BadRequest(c, "角色ID不匹配")
-		return
-	}
-
-	err = ctrl.roleService.UpdateRolePermission(req.RoleID, req.PermIDs)
+	err = ctrl.roleService.UpdateRolePermission(roleID, &req)
 	if err != nil {
 		logger.Error("更新角色权限失败", zap.Error(err))
 		response.BizError(c, err)
 		return
 	}
+
 	response.Success(c, "权限更新成功")
 }

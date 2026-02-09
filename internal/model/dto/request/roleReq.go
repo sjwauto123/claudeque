@@ -22,8 +22,8 @@ type UpdateRoleRequest struct {
 	Slug   string `json:"slug" binding:"required"`
 }
 type UpdateRolePermissionRequest struct {
-	RoleID  int   `json:"role_id" binding:"required"`
-	PermIDs []int `json:"perm_ids" binding:"required"`
+	MenuIDs       []int `json:"menu_ids" binding:"required"`
+	PermissionIDs []int `json:"permission_ids" binding:"required"`
 }
 type BatchDeleteRole struct {
 	IDs []int `json:"ids" binding:"required,min=1"` // 接收角色 ID 列表

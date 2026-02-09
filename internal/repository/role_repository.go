@@ -82,73 +82,122 @@ func (r *roleRepository) Delete(id int) error {
 func (r *roleRepository) BatchDelete(ids []int) error {
 	return r.db.Where("id IN ?", ids).Delete(&entity.Role{}).Error
 }
-func (r *roleRepository) GetRolePermission(roleID int) (
+func (r *roleRepository) GetRolePermissionByID(roleID int) (
 	menus []entity.Menu,
 	permissions []entity.Permission,
-	permIDs []int,
+	permissionMenus []entity.PermissionMenu,
+	roleMenuIDs map[int]bool,
+	rolePermissionIDs map[int]bool,
 	err error,
 ) {
-	// 1. 查询菜单（catalogue/menu）
-	if err := r.db.
+
+	// 1. 所有菜单
+	if err = r.db.
 		Where("status = ?", 1).
 		Order("sort ASC").
 		Find(&menus).Error; err != nil {
-		return nil, nil, nil, err
+		return
 	}
 
-	// 2. 查询角色权限 ID
-	if err := r.db.
+	// 2. 所有权限
+	if err = r.db.
+		Where("status = ? AND type = ?", 1, "permission").
+		Order("sort ASC").
+		Find(&permissions).Error; err != nil {
+		return
+	}
+	// 3. 查询权限菜单关联
+	if err = r.db.
+		Find(&permissionMenus).Error; err != nil {
+		return
+	}
+
+	// 4. 角色菜单ID
+	var menuIDs []int
+	if err = r.db.
+		Model(&entity.RoleMenu{}).
+		Select("menu_id").
+		Where("role_id = ?", roleID).
+		Scan(&menuIDs).Error; err != nil {
+		return
+	}
+
+	roleMenuIDs = make(map[int]bool)
+	for _, id := range menuIDs {
+		roleMenuIDs[id] = true
+	}
+
+	// 5. 角色权限ID
+	var permIDs []int
+	if err = r.db.
 		Model(&entity.RolePermission{}).
 		Select("permission_id").
 		Where("role_id = ?", roleID).
 		Scan(&permIDs).Error; err != nil {
-		return nil, nil, nil, err
+		return
 	}
 
-	// 3. 查询权限（permission）
-	if err := r.db.
-		Where("status = ? AND type = ?", 1, "permission").
-		Order("sort ASC").
-		Find(&permissions).Error; err != nil {
-		return nil, nil, nil, err
+	rolePermissionIDs = make(map[int]bool)
+	for _, id := range permIDs {
+		rolePermissionIDs[id] = true
 	}
-
-	return menus, permissions, permIDs, nil
+	return
 }
 
-func (r *roleRepository) UpdateRolePermission(roleID int, permIDs []int) error {
-	tx := r.db.Begin()
-	defer func() {
-		if r := recover(); r != nil {
-			tx.Rollback()
-		} else if err := tx.Error; err != nil {
-			tx.Rollback()
-		} else {
-			tx.Commit()
-		}
-	}()
+func (r *roleRepository) UpdateRolePermission(
+	roleID int,
+	menuIDs []int,
+	permissionIDs []int,
+) error {
 
-	// 1. 删除旧权限
-	err := tx.Where("role_id = ?", roleID).Delete(&entity.RolePermission{}).Error
-	if err != nil {
-		return err
-	}
+	return r.db.Transaction(func(tx *gorm.DB) error {
 
-	// 2. 插入新权限（仅当 permIDs 非空）
-	if len(permIDs) > 0 {
-		var rolePerms []entity.RolePermission
-		for _, pid := range permIDs {
-			rolePerms = append(rolePerms, entity.RolePermission{
-				RoleID:       roleID,
-				PermissionID: pid,
-			})
-		}
-		err := tx.Create(&rolePerms).Error
-		if err != nil {
+		// 1. 除旧菜单
+		if err := tx.
+			Where("role_id = ?", roleID).
+			Delete(&entity.RoleMenu{}).Error; err != nil {
 			return err
 		}
-	}
-	return nil
+
+		// 2. 删除旧权限
+		if err := tx.
+			Where("role_id = ?", roleID).
+			Delete(&entity.RolePermission{}).Error; err != nil {
+			return err
+		}
+
+		// 3. 插入新菜单
+		if len(menuIDs) > 0 {
+			var roleMenus []entity.RoleMenu
+			for _, menuID := range menuIDs {
+				roleMenus = append(roleMenus, entity.RoleMenu{
+					RoleID: roleID,
+					MenuID: menuID,
+				})
+			}
+
+			if err := tx.Create(&roleMenus).Error; err != nil {
+				return err
+			}
+		}
+
+		// 4. 插入新权限
+		if len(permissionIDs) > 0 {
+			var rolePermissions []entity.RolePermission
+			for _, permID := range permissionIDs {
+				rolePermissions = append(rolePermissions, entity.RolePermission{
+					RoleID:       roleID,
+					PermissionID: permID,
+				})
+			}
+
+			if err := tx.Create(&rolePermissions).Error; err != nil {
+				return err
+			}
+		}
+
+		return nil
+	})
 }
 
 // ExistsByName 判断角色名是否存在

@@ -17,15 +17,17 @@ type RoleRepository interface {
 	Delete(id int) error
 	// BatchDelete 批量删除用户
 	BatchDelete(ids []int) error
-	// GetRolePermission 获取角色权限树
-	GetRolePermission(roleID int) (
+	// GetRolePermissionByID 获取角色权限树
+	GetRolePermissionByID(roleID int) (
 		menus []entity.Menu,
 		permissions []entity.Permission,
-		permIDs []int,
+		permissionMenus []entity.PermissionMenu,
+		roleMenuIDs map[int]bool,
+		rolePermissionIDs map[int]bool,
 		err error,
 	)
 	// UpdateRolePermission 更新角色权限
-	UpdateRolePermission(roleID int, permIDs []int) error
+	UpdateRolePermission(roleID int, menuIDs []int, permissionIDs []int) error
 
 	// ExistsByName 判断角色名是否存在
 	ExistsByName(name string) (bool, error)

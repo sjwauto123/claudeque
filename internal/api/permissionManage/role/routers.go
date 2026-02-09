@@ -12,7 +12,7 @@ func (ctrl *RoleController) RegisterRoutes(r *gin.RouterGroup) {
 		roleGroup.DELETE("/:id", ctrl.Delete)
 		roleGroup.DELETE("/batch", ctrl.BatchDelete)
 		roleGroup.GET("/role_perm/:id", ctrl.GetRolePermissionByID)
-		roleGroup.PUT("/role_perm", ctrl.UpdateRolePermission)
+		roleGroup.PUT("/role_perm/:role_id", ctrl.UpdateRolePermission)
 	}
 
 }

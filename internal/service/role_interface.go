@@ -2,7 +2,7 @@ package service
 
 import (
 	"cloudque/internal/model/dto/request"
-	"cloudque/internal/model/dto/response"
+	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 )
 
@@ -20,7 +20,7 @@ type RoleService interface {
 	// BatchDelete 批量删除用户
 	BatchDelete(ids []int) error
 	// GetRolePermissionByID 获取角色权限树
-	GetRolePermissionByID(roleID int) (*response.RolePermissionTree, error)
+	GetRolePermissionByID(roleID int) ([]*dto.RolePermissionNodeRes, error)
 	// UpdateRolePermission 更新角色权限
-	UpdateRolePermission(roleID int, permIDs []int) error
+	UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error
 }

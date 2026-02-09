@@ -6,7 +6,6 @@ import (
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
-	"strconv"
 	"strings"
 )
 
@@ -99,128 +98,75 @@ func (s *roleService) BatchDelete(ids []int) error {
 }
 
 // GetRolePermissionByID 根据id获取角色权限
-func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionTree, error) {
-	// Step 1: 从 Repository 获取原始数据
-	menus, permissions, permIDs, err := s.roleRepo.GetRolePermission(roleID)
+func (s *roleService) GetRolePermissionByID(roleID int) ([]*dto.RolePermissionNodeRes, error) {
+
+	menus, permissions, permissionMenus, roleMenuMap, rolePermissionMap, err :=
+		s.roleRepo.GetRolePermissionByID(roleID)
+
 	if err != nil {
 		return nil, err
 	}
 
-	// Step 2: 构建菜单树（业务逻辑）
-	menuMap := make(map[int]*dto.MenuTreeNodeRole)
+	// 1. 构建菜单节点 map
+	menuNodeMap := make(map[int]*dto.RolePermissionNodeRes)
+
 	for _, m := range menus {
-		node := &dto.MenuTreeNodeRole{
-			ID:       m.ID,
-			Title:    m.Title,
-			Name:     "",
-			Type:     "menu", // 或根据 m.Type 动态设为 "catalogue"
-			Checked:  contains(permIDs, m.ID),
-			Children: []*dto.MenuTreeNodeRole{},
+		menuNodeMap[m.ID] = &dto.RolePermissionNodeRes{
+			ID:         m.ID,
+			Title:      m.Title,
+			Checked:    roleMenuMap[m.ID],
+			Permission: []*dto.PermissionNodeRes{},
+			Children:   []*dto.RolePermissionNodeRes{},
 		}
-		menuMap[m.ID] = node
 	}
 
-	var roots []*dto.MenuTreeNodeRole
+	// 2. 构建 permission -> menuIDs 映射
+	permMenuMap := make(map[int][]int)
+
+	for _, pm := range permissionMenus {
+		permMenuMap[pm.PermissionID] = append(
+			permMenuMap[pm.PermissionID],
+			pm.MenuID,
+		)
+	}
+
+	// 3. 把权限挂到对应菜单
+	for _, p := range permissions {
+
+		permNode := &dto.PermissionNodeRes{
+			ID:      p.ID,
+			Name:    p.Name,
+			Slug:    p.Slug,
+			Checked: rolePermissionMap[p.ID],
+		}
+
+		menuIDs := permMenuMap[p.ID]
+
+		for _, menuID := range menuIDs {
+			if menuNode, ok := menuNodeMap[menuID]; ok {
+				menuNode.Permission = append(menuNode.Permission, permNode)
+			}
+		}
+	}
+
+	// 4. 构建树结构
+	var roots []*dto.RolePermissionNodeRes
+
 	for _, m := range menus {
-		node := menuMap[m.ID]
+		node := menuNodeMap[m.ID]
+
 		if m.ParentID == nil {
 			roots = append(roots, node)
-		} else if parentNode, exists := menuMap[*m.ParentID]; exists {
-			parentNode.Children = append(parentNode.Children, node)
-		}
-	}
-
-	// Step 3: 挂载权限节点（业务规则：权限通过 category 关联菜单）
-	permSet := make(map[int]bool)
-	for _, id := range permIDs {
-		permSet[id] = true
-	}
-
-	for _, p := range permissions {
-		parentID, ok := parseMenuIDFromCategory(p.Category)
-		if !ok {
-			continue
-		}
-		if parentNode, exists := menuMap[parentID]; exists {
-			permNode := dto.PermissionNode{
-				ID:         p.ID,
-				Name:       p.Name,
-				Category:   p.Category,
-				Slug:       p.Slug,
-				Type:       p.Type,
-				Status:     p.Status,
-				HTTPMethod: p.HTTPMethod,
-				HTTPPath:   p.HTTPPath,
-				Sort:       p.Sort,
-			}
-			parentNode.Permission = append(parentNode.Permission, permNode)
-		}
-	}
-
-	// Step 4: 构建 API 树（业务逻辑）
-	apiTree := buildAPITree(permSet, permissions)
-
-	return &dto.RolePermissionTree{
-		Permissions: roots,
-		API:         apiTree,
-	}, nil
-}
-
-// 辅助函数
-func contains(slice []int, val int) bool {
-	for _, v := range slice {
-		if v == val {
-			return true
-		}
-	}
-	return false
-}
-
-func parseMenuIDFromCategory(cat string) (int, bool) {
-	if strings.HasPrefix(cat, "menu_") {
-		idStr := strings.TrimPrefix(cat, "menu_")
-		id, err := strconv.ParseUint(idStr, 10, 32)
-		return int(id), err == nil
-	}
-	return 0, false
-}
-
-func buildAPITree(permSet map[int]bool, perms []entity.Permission) dto.APITree {
-	apiTree := dto.APITree{
-		Title:    "API权限",
-		Checked:  false,
-		Children: []*dto.APINode{},
-	}
-
-	grouped := make(map[string][]*dto.APINode)
-	for _, p := range perms {
-		if p.Type != "permission" {
-			continue
-		}
-		node := &dto.APINode{
-			HTTPPath: p.HTTPPath,
-			Checked:  permSet[p.ID],
-		}
-		grouped[p.HTTPPath] = append(grouped[p.HTTPPath], node)
-	}
-
-	for path, nodes := range grouped {
-		checked := true
-		for _, n := range nodes {
-			if !n.Checked {
-				checked = false
-				break
+		} else {
+			if parent, ok := menuNodeMap[*m.ParentID]; ok {
+				parent.Children = append(parent.Children, node)
 			}
 		}
-		apiTree.Children = append(apiTree.Children, &dto.APINode{
-			HTTPPath: path,
-			Checked:  checked,
-		})
 	}
 
-	return apiTree
+	return roots, nil
 }
 
-func (s *roleService) UpdateRolePermission(roleID int, permIDs []int) error {
-	return s.roleRepo.UpdateRolePermission(roleID, permIDs)
+func (s *roleService) UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error {
+	return s.roleRepo.UpdateRolePermission(roleID, req.MenuIDs, req.PermissionIDs)
 }

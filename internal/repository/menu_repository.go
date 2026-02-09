@@ -14,12 +14,13 @@ func NewMenuRepository(db *gorm.DB) MenuRepository {
 	return &menuRepository{db: db}
 }
 
-func (r *menuRepository) PageList(offset, limit int, title string, status *int) ([]*entity.Menu, []*entity.Menu, int64, error) {
+func (r *menuRepository) PageList(offset, limit int, title string, status *int) (
+	[]*entity.Menu, []*entity.Menu, int64, error) {
 	var parents []*entity.Menu
 	var children []*entity.Menu
 	var total int64
 
-	// 1️⃣ 只查父菜单
+	// 只查父菜单
 	query := r.db.Model(&entity.Menu{}).
 		Where("parent_id IS NULL")
 
@@ -30,12 +31,12 @@ func (r *menuRepository) PageList(offset, limit int, title string, status *int) 
 		query = query.Where("status = ?", *status)
 	}
 
-	// 2️⃣ 统计父级总数
+	// 统计父级总数
 	if err := query.Count(&total).Error; err != nil {
 		return nil, nil, 0, err
 	}
 
-	// 3️⃣ 分页查父级
+	// 分页查父级
 	if err := query.Order("sort ASC").
 		Offset(offset).
 		Limit(limit).
@@ -43,7 +44,7 @@ func (r *menuRepository) PageList(offset, limit int, title string, status *int) 
 		return nil, nil, 0, err
 	}
 
-	// 4️⃣ 查子菜单
+	// 查子菜单
 	if len(parents) > 0 {
 		var parentIDs []int
 		for _, p := range parents {
