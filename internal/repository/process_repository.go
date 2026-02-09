@@ -26,4 +26,11 @@ func (r *processRepository) DeleteByJobID(jobID int) error {
 // DeleteByPID 根据Pid删除进程
 func (r *processRepository) DeleteByPID(pid int) error {
 	return r.db.Where("pid = ?", pid).Delete(&entity.Process{}).Error
+
+}
+// 	FindAll() 获取全部进程
+func (r *processRepository) FindAll() ([]entity.Process, error) {
+	var processes []entity.Process
+	err := r.db.Find(&processes).Error
+	return processes, err
 }

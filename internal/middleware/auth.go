@@ -1,10 +1,13 @@
 package middleware
 
 import (
+	"log"
 	"strings"
 
+	"cloudque/internal/service"
 	"cloudque/pkg/jwt"
 	"cloudque/pkg/response"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -13,6 +16,8 @@ const (
 	ContextUserID = "user_id"
 	// ContextUsername 用户名 上下文键
 	ContextUsername = "username"
+	// ContextRoles 角色 上下文键
+	ContextRoles = "roles"
 )
 
 // Auth JWT 认证中间件
@@ -45,6 +50,54 @@ func Auth() gin.HandlerFunc {
 		// 将用户信息存入上下文
 		c.Set(ContextUserID, claims.GetUserID())
 		c.Set(ContextUsername, claims.GetUsername())
+		c.Set(ContextRoles, claims.GetRoles())
+
+		c.Next()
+	}
+}
+
+// RequirePermission 权限检查中间件
+func RequirePermission(authService service.AuthService, permission string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		// 1. 获取用户角色slug
+		rolesInterface, exists := c.Get(ContextRoles)
+		if !exists {
+			response.Forbidden(c, "无权访问")
+			c.Abort()
+			return
+		}
+		roles := rolesInterface.([]string)
+
+		// 2. 查到用户所有的权限
+		hasPermission := false
+		for _, roleSlug := range roles {
+			if roleSlug == "admin" {
+				hasPermission = true
+				break
+			}
+
+			perms, err := authService.GetPermissionsByRole(roleSlug)
+			if err != nil {
+				log.Printf("获取角色 %s 权限失败: %v", roleSlug, err)
+				continue
+			}
+
+			for _, p := range perms {
+				if p.Slug == permission {
+					hasPermission = true
+					break
+				}
+			}
+			if hasPermission {
+				break
+			}
+		}
+
+		if !hasPermission {
+			response.Forbidden(c, "权限不足")
+			c.Abort()
+			return
+		}
 
 		c.Next()
 	}
@@ -85,6 +138,7 @@ func OptionalAuth() gin.HandlerFunc {
 		if err == nil {
 			c.Set(ContextUserID, claims.GetUserID())
 			c.Set(ContextUsername, claims.GetUsername())
+			c.Set(ContextRoles, claims.GetRoles())
 		}
 
 		c.Next()

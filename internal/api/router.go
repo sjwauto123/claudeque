@@ -1,6 +1,9 @@
 package api
 
 import (
+	"cloudque/internal/api/operationLogs"
+	"cloudque/internal/api/system"
+	"cloudque/internal/api/v1/admin"
 	"cloudque/internal/api/v1/auth"
 	"cloudque/internal/api/v1/job"
 	"cloudque/internal/api/v1/queue"
@@ -14,14 +17,19 @@ import (
 
 // Router 路由
 type Router struct {
-	userCtrl  *user.Controller
-	authCtrl  *auth.Controller
 	jobCtrl   *job.Controller
 	queueCtrl *queue.Controller
+	operationLogCtrl *operationLogs.Controller
+	systemInfoCtrl   *system.Controller
+	userCtrl         *user.Controller
+	authCtrl         *auth.Controller
+	adminCtrl        *admin.Controller
 }
 
 // NewRouter 创建路由
 func NewRouter(
+	userLogService service.UserOperationLogService,
+	infoService service.SystemInfoService,
 	userService service.UserService,
 	authService service.AuthService,
 	jobService service.JobService,
@@ -30,8 +38,11 @@ func NewRouter(
 	repository repository.JobRepository,
 ) *Router {
 	return &Router{
-		userCtrl:  user.NewController(userService),
-		authCtrl:  auth.NewController(authService, userService),
+		userCtrl:         user.NewController(userService),
+		authCtrl:         auth.NewController(authService, userService),
+		adminCtrl:        admin.NewController(userService, userService, authService),
+		operationLogCtrl: operationLogs.NewController(userLogService, authService),
+		systemInfoCtrl:   system.NewController(infoService, authService),
 		jobCtrl:   job.NewController(jobService, operationLogSvc),
 		queueCtrl: queue.NewController(queueService, repository, operationLogSvc),
 	}
@@ -43,6 +54,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 	engine.Use(middleware.Recovery())
 	engine.Use(middleware.Logger())
 	engine.Use(middleware.CORS())
+	// 静态资源：上传文件
+	engine.Static("/uploads", "./uploads")
 
 	// 健康检查
 	engine.GET("/api/v1/health", func(c *gin.Context) {
@@ -62,9 +75,27 @@ func (r *Router) Setup(engine *gin.Engine) {
 	// API v1 路由组
 	v1 := engine.Group("/api/v1")
 	{
-		// 认证路由
-		r.authCtrl.RegisterRoutes(v1)
 		// 用户路由
 		r.userCtrl.RegisterRoutes(v1)
+
+		// 认证路由
+		r.authCtrl.RegisterRoutes(v1)
+
+		// 管理员路由
+		r.adminCtrl.RegisterRoutes(v1)
 	}
+
+	//API v2 路由组,用户操作日志输出
+	v2 := engine.Group("/api/operationLogs")
+
+	{
+		r.operationLogCtrl.RegisterRoutes(v2)
+	}
+
+	//API v3 路由组，展示系统信息
+	v3 := engine.Group("/api/system")
+	{
+		r.systemInfoCtrl.RegisterRoutes(v3)
+	}
+
 }

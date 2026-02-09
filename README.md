@@ -147,6 +147,7 @@ POST /api/v1/auth/refresh   # 刷新 Token
 GET /api/v1/user/profile    # 获取用户信息
 PUT /api/v1/user/profile    # 更新用户信息
 POST /api/v1/user/password  # 修改密码
+GET /api/v1/user/list       # 获取用户列表（分页）
 ```
 
 ### API 测试
@@ -178,6 +179,12 @@ curl http://localhost:8080/api/v1/user/profile \
   -H "Authorization: Bearer YOUR_TOKEN_HERE"
 ```
 
+#### 获取用户列表（需要 Token，分页）
+```bash
+curl "http://localhost:8080/api/v1/user/list?page=1&size=10" \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+```
+
 ## Makefile 命令
 
 ```bash
@@ -205,6 +212,7 @@ make help         # 显示帮助
 - ✅ JWT 认证
 - ✅ 统一响应格式
 - ✅ 统一错误处理
+- ✅ 分页查询支持
 - ✅ 结构化日志（Zap）
 - ✅ 日志轮转（Lumberjack）
 - ✅ 配置管理（Viper）

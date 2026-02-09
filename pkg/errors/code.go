@@ -26,6 +26,7 @@ const (
 	CodeUserDisabled       = 1004
 	CodeInvalidToken       = 1005
 	CodeTokenExpired       = 1006
+	CodeInvalidCaptcha     = 1007
 
 	// 参数错误 2xxx
 	CodeInvalidParam     = 2001
@@ -65,6 +66,7 @@ var codeMessages = map[int]string{
 	CodeUserDisabled:          "用户已被禁用",
 	CodeInvalidToken:          "无效的令牌",
 	CodeTokenExpired:          "令牌已过期",
+	CodeInvalidCaptcha:        "验证码无效",
 	CodeInvalidParam:          "参数错误",
 	CodeMissingParam:          "缺少必要参数",
 	CodeParamFormatError:      "参数格式错误",

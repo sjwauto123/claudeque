@@ -4,8 +4,9 @@ import "github.com/golang-jwt/jwt/v5"
 
 // CustomClaims 自定义 JWT Claims
 type CustomClaims struct {
-	UserID   int    `json:"user_id"`
-	Username string `json:"username"`
+	UserID   int      `json:"user_id"`
+	Username string   `json:"username"`
+	Roles    []string `json:"roles"`
 	jwt.RegisteredClaims
 }
 
@@ -17,4 +18,9 @@ func (c *CustomClaims) GetUserID() int {
 // GetUsername 获取用户名
 func (c *CustomClaims) GetUsername() string {
 	return c.Username
+}
+
+// GetRoles 获取用户角色
+func (c *CustomClaims) GetRoles() []string {
+	return c.Roles
 }

@@ -63,7 +63,7 @@ type ProductResponse struct {
 
 ### 步骤 3: 创建 Repository
 
-在 `internal/repository/interface.go` 定义接口：
+创建 `internal/repository/product_interface.go` 定义接口：
 
 ```go
 type ProductRepository interface {
@@ -105,7 +105,7 @@ func (r *productRepository) FindByID(id int) (*entity.Product, error) {
 
 ### 步骤 4: 创建 Service
 
-在 `internal/service/interface.go` 定义接口：
+创建 `internal/service/product_interface.go` 定义接口：
 
 ```go
 type ProductService interface {
@@ -357,7 +357,7 @@ func TestUserService_Register(t *testing.T) {
 ### 1. 查看日志
 
 ```bash
-tail -f logs/app.log
+tail -f operationLogs/app.log
 ```
 
 ### 2. 打印调试信息

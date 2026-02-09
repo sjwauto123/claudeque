@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cloudque/pkg/websocket"
 	"context"
 	"errors"
 	"fmt"
@@ -31,7 +32,8 @@ type App struct {
 	redis     *redis.Client
 	router    *api.Router
 	server    *http.Server
-	scheduler service.Scheduler // 任务调度器
+	scheduler service.Scheduler
+	pool    *websocket.ConnectionPool
 }
 
 // NewApp 创建应用实例
@@ -56,13 +58,16 @@ func (a *App) Initialize() error {
 		return err
 	}
 
-	// 4. 初始化依赖
+	// 4. 初始化 WebSocket连接池
+	a.pool = websocket.NewConnectionPool()
+
+	// 5. 初始化依赖
 	a.initDependencies()
 
-	// 5. 初始化路由
+	// 6. 初始化路由
 	a.initRouter()
 
-	// 6. 初始化服务器
+	// 7. 初始化服务器
 	a.initServer()
 
 	return nil
@@ -107,11 +112,14 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
+		&entity.OperationLog{},
+		&entity.BaseEntity{},
+		&entity.Process{},
 		&entity.User{},
 		&entity.Job{},
 		&entity.GpuCard{},
-		&entity.OperationLog{},
-		&entity.Process{},
+		&entity.Role{},
+		&entity.Permission{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
@@ -145,26 +153,66 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
-	userRepo := repository.NewUserRepository(a.mysqlDB)
-	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
 	operationLogRepo := repository.NewOperationLogRepository(a.mysqlDB)
 	processRepo := repository.NewProcessRepository(a.mysqlDB)
+	userRepo := repository.NewUserRepository(a.mysqlDB)
+	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
 	gpuRepo := repository.NewGpuRepository(a.mysqlDB)
 	gpuCache := repository.NewGpuCacheRepository(a.redis)
 	queueRepo := repository.NewQueueRepository(a.redis)
+	roleRepo := repository.NewRoleRepository(a.mysqlDB)
+	redisRepo := repository.NewRedisRepository()
 
 	// 创建 Service
-	userSvc := service.NewUserService(userRepo)
-	authSvc := service.NewAuthService(userRepo, userSvc)
 	operationLogSvc := service.NewOperationLogService(operationLogRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
+	userLogSvc := service.NewUserOperationLogService(operationLogRepo)
+	infoService := service.NewSystemInfoService(a.pool, processRepo)
+	userSvc := service.NewUserService(userRepo, redisRepo)
+	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo)
 	// 创建 Router
 	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, operationLogSvc, jobRepo)
+	a.router = api.NewRouter(userLogSvc, infoService, userSvc, authSvc)
+
+	// 启动日志限制定时任务
+	go a.startLogLimitTask(userLogSvc)
+}
+
+// startLogLimitTask 启动日志限制定时任务
+func (a *App) startLogLimitTask(adminLogSvc service.UserOperationLogService) {
+	// 日志保留数量限制
+	const logLimit int64 = 10000
+
+	// 立即执行一次
+	if err := adminLogSvc.LimitLogs(logLimit); err != nil {
+		logger.Errorf("日志限制失败: %v", err)
+	}
+
+	// 创建定时器，每天执行一次
+	ticker := time.NewTicker(24 * time.Hour)
+	defer ticker.Stop()
+
+	for {
+		<-ticker.C
+		if err := adminLogSvc.LimitLogs(logLimit); err != nil {
+			logger.Errorf("日志限制失败: %v", err)
+		} else {
+			logger.Info("操作日志限制执行成功，保留最近10000条日志")
+		}
+	}
+}
+
+// Shutdown 关闭应用
+func (a *App) Shutdown() {
+	// 关闭 ConnectionPool
+	if a.pool != nil {
+		a.pool.CloseAll()
+	}
 }
 
 // initRouter 初始化路由
@@ -203,7 +251,7 @@ func (a *App) Run() {
 			zap.String("addr", a.server.Addr),
 			zap.String("mode", a.cfg.App.Mode),
 		)
-		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logger.Fatal("HTTP 服务器启动失败", zap.Error(err))
 		}
 	}()

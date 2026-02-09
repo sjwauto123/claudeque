@@ -9,4 +9,6 @@ type ProcessRepository interface {
 	DeleteByJobID(jobID int) error
 	// DeleteByPID 根据Pid删除进程
 	DeleteByPID(pid int) error
+	// FindAll 获得所有进程
+	FindAll() ([]entity.Process, error)
 }

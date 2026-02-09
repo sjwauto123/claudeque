@@ -28,7 +28,7 @@ func InitRedis(cfg *config.RedisConfig) (*redis.Client, error) {
 
 	if err := client.Ping(ctx).Err(); err != nil {
 		logger.Error("Redis 连接失败", zap.Error(err))
-		return nil, fmt.Errorf("Redis 连接失败: %w", err)
+		return nil, fmt.Errorf("redis 连接失败: %w", err)
 	}
 
 	redisClient = client
@@ -43,7 +43,7 @@ func InitRedis(cfg *config.RedisConfig) (*redis.Client, error) {
 // GetRedis 获取 Redis 实例
 func GetRedis() *redis.Client {
 	if redisClient == nil {
-		panic("Redis 未初始化")
+		logger.Info("Redis 未初始化")
 	}
 	return redisClient
 }

@@ -254,6 +254,56 @@ Authorization: Bearer {token}
 }
 ```
 
+#### 获取用户列表（分页）
+
+```http
+GET /api/v1/user/list?page=1&size=10
+Authorization: Bearer {token}
+```
+
+**查询参数**:
+
+| 参数 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| page | int | 是 | 页码，从 1 开始 |
+| size | int | 是 | 每页大小，1-100 |
+
+**响应示例**:
+```json
+{
+  "code": 0,
+  "message": "成功",
+  "data": {
+    "list": [
+      {
+        "id": 1,
+        "username": "testuser",
+        "email": "test@example.com",
+        "nickname": "测试用户",
+        "avatar": "",
+        "status": 1,
+        "created_at": "2024-01-01T00:00:00Z",
+        "updated_at": "2024-01-01T00:00:00Z"
+      }
+    ],
+    "total": 100,
+    "page": 1,
+    "size": 10,
+    "total_page": 10
+  }
+}
+```
+
+**响应字段说明**:
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| list | array | 用户数据列表 |
+| total | int64 | 总记录数 |
+| page | int | 当前页码 |
+| size | int | 每页大小 |
+| total_page | int | 总页数 |
+
 ---
 
 ## 使用示例
@@ -273,6 +323,10 @@ curl -X POST http://localhost:8080/api/v1/auth/login \
 
 # 获取用户信息
 curl http://localhost:8080/api/v1/user/profile \
+  -H "Authorization: Bearer YOUR_TOKEN_HERE"
+
+# 获取用户列表（分页）
+curl "http://localhost:8080/api/v1/user/list?page=1&size=10" \
   -H "Authorization: Bearer YOUR_TOKEN_HERE"
 ```
 
@@ -302,6 +356,18 @@ const profile = await fetch('http://localhost:8080/api/v1/user/profile', {
 });
 
 const profileData = await profile.json();
+
+// 获取用户列表（分页）
+const users = await fetch('http://localhost:8080/api/v1/user/list?page=1&size=10', {
+  headers: {
+    'Authorization': `Bearer ${token}`,
+  },
+});
+
+const usersData = await users.json();
+console.log(usersData.data.list); // 用户列表
+console.log(usersData.data.total); // 总记录数
+console.log(usersData.data.total_page); // 总页数
 ```
 
 ### Python (requests)
@@ -324,6 +390,19 @@ profile = requests.get('http://localhost:8080/api/v1/user/profile', headers={
 })
 
 profile_data = profile.json()
+
+# 获取用户列表（分页）
+users = requests.get('http://localhost:8080/api/v1/user/list', params={
+    'page': 1,
+    'size': 10
+}, headers={
+    'Authorization': f'Bearer {token}',
+})
+
+users_data = users.json()
+print(users_data['data']['list'])  # 用户列表
+print(users_data['data']['total'])  # 总记录数
+print(users_data['data']['total_page'])  # 总页数
 ```
 
 ---
