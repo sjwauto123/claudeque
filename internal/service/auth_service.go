@@ -3,7 +3,10 @@ package service
 import (
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
+	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
+	"cloudque/pkg/captcha"
+	"cloudque/pkg/email"
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/jwt"
 	"cloudque/pkg/logger"
@@ -15,20 +18,21 @@ import (
 	"time"
 
 	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
-)
+	"context"
+	"fmt"
+	"math/rand"
+	"sort"
+	"time"
 
-const (
-	// RoleAdmin 管理员角色
-	RoleAdmin = 2
-	// RoleUser 普通用户角色
-	RoleUser = 1
+	"golang.org/x/crypto/bcrypt"
 )
 
 // authService 认证服务实现
 type authService struct {
-	userRepo       repository.UserRepository
-	userService    UserService
+	userRepo    repository.UserRepository
+	roleRepo    repository.RoleRepository
+	redisRepo   repository.RedisRepository
+	userService UserService
 	sessionRepo    repository.SessionRepository
 	sessionManager *ssh.SessionManager
 	sshServerHost  string        // SSH服务器地址
@@ -36,131 +40,25 @@ type authService struct {
 }
 
 // NewAuthService 创建认证服务
-func NewAuthService(userRepo repository.UserRepository, userService UserService, sessionRepo repository.SessionRepository, sessionManager *ssh.SessionManager) AuthService {
+func NewAuthService(userRepo repository.UserRepository, roleRepo repository.RoleRepository, redisRepo repository.RedisRepository, userService UserService,  sessionRepo repository.SessionRepository, sessionManager *ssh.SessionManager) AuthService {
 	return &authService{
-		userRepo:       userRepo,
-		userService:    userService,
+		userRepo:    userRepo,
+		roleRepo:    roleRepo,
+		redisRepo:   redisRepo,
+		userService: userService,
 		sessionRepo:    sessionRepo,
 		sessionManager: sessionManager,
 	}
 }
 
-// SetSSHServerHost 设置SSH服务器地址
-func (s *authService) SetSSHServerHost(host string) {
-	s.sshServerHost = host
-}
-
-// SetSSHTimeout 设置SSH连接超时
-func (s *authService) SetSSHTimeout(timeout time.Duration) {
-	s.sshTimeout = timeout
-}
-
-// verifySSHCredentials 通过SSH验证用户凭证
-func (s *authService) verifySSHCredentials(username, password string) (*server.Client, error) {
-	// 如果未配置SSH服务器，跳过验证
-	if s.sessionManager == nil {
-		logger.Warn("SSH会话管理器未配置，跳过SSH验证")
-		return nil, nil
-	}
-
-	// 获取服务器地址
-	serverHost := s.sshServerHost
-	if serverHost == "" {
-		return nil, fmt.Errorf("SSH服务器地址未配置")
-	}
-
-	// 获取超时时间
-	timeout := s.sshTimeout
-	if timeout == 0 {
-		timeout = 10 * time.Second
-	}
-
-	// 尝试连接SSH服务器验证凭证
-	sshConfig := &server.Config{
-		Host:     serverHost,
-		Username: username,
-		Password: password,
-		Timeout:  timeout,
-	}
-
-	client, err := server.NewClient(sshConfig)
-	if err != nil {
-		logger.Warn("SSH验证失败",
-			zap.String("username", username),
-			zap.String("server", serverHost),
-			zap.Error(err),
-		)
-		return nil, fmt.Errorf("SSH验证失败: %w", err)
-	}
-
-	logger.Info("SSH验证成功", zap.String("username", username))
-	return client, nil
-}
-
-// getSystemUserInfo 获取系统用户信息（HomeDir）
-func (s *authService) getSystemUserInfo(username string, sshClient *server.Client) (homeDir string, err error) {
-	// 如果有SSH客户端，通过远程命令获取
-	if sshClient != nil {
-		// 使用 getent passwd 命令获取用户信息
-		output, err := sshClient.ExecuteCommand(fmt.Sprintf("getent passwd %s", username))
-		if err != nil {
-			logger.Warn("获取远程系统用户信息失败", zap.String("username", username), zap.Error(err))
-			return "", nil // 不阻塞登录流程
-		}
-
-		// 解析输出
-		// getent passwd 输出格式: username:x:uid:gid:gecos:home:shell
-		parts := strings.Split(strings.TrimSpace(output), ":")
-		if len(parts) >= 6 {
-			homeDir = parts[5]
-		}
-		logger.Info("获取远程系统用户信息成功",
-			zap.String("username", username),
-			zap.String("home_dir", homeDir),
-		)
-		return homeDir, nil
-	}
-
-	// 如果服务运行在本地，使用 os/user 包获取
-	u, err := user.Lookup(username)
-	if err != nil {
-		logger.Warn("获取本地系统用户信息失败", zap.String("username", username), zap.Error(err))
-		return "", nil // 不阻塞登录流程
-	}
-
-	homeDir = u.HomeDir
-
-	logger.Info("获取本地系统用户信息成功",
-		zap.String("username", username),
-		zap.String("home_dir", homeDir),
-	)
-	return homeDir, nil
-}
-
-// saveUserCredentialsToRedis 将用户凭证存储到Redis
-func (s *authService) saveUserCredentialsToRedis(userID uint, username, password string) error {
-	if s.sessionRepo == nil {
-		logger.Warn("SessionRepository未配置，跳过凭证存储")
-		return nil
-	}
-
-	// 保存凭证，设置30分钟过期
-	expiresAt := time.Now().Add(30 * time.Minute)
-	if err := s.sessionRepo.SaveUserCredentials(userID, username, password, expiresAt); err != nil {
-		logger.Warn("存储用户凭证到Redis失败", zap.Error(err))
-		return err
-	}
-
-	logger.Info("用户凭证已存储到Redis",
-		zap.Uint("user_id", userID),
-		zap.Time("expires_at", expiresAt),
-	)
-	return nil
-}
-
 // Login 用户登录
 func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, error) {
-	// 查找用户
+	// 校验验证码
+	if !captcha.Verify(req.CaptchaID, req.Captcha) {
+		return nil, bizerrors.ErrInvalidCaptcha
+	}
+
+	// 查找用户并校验存在性
 	user, err := s.userRepo.FindByUsername(req.Username)
 	if err != nil {
 		return nil, err
@@ -169,7 +67,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		return nil, bizerrors.ErrInvalidCredentials
 	}
 
-	// 检查用户状态
+	// 检查用户状态是否启用
 	if user.Status != 1 {
 		return nil, bizerrors.ErrUserDisabled
 	}
@@ -237,11 +135,19 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		logger.Warn("存储用户凭证到Redis失败", zap.Error(err))
 	}
 
-	// 生成 Token
-	token, err := jwt.GenerateToken(user.ID, user.Username)
+	// 构建角色列表
+	roles := s.buildRoles(user)
+	// 聚合权限和菜单
+	permsDTO, menus := s.aggregate(user)
+	// 构建菜单树
+	menuNodes := buildMenuTree(menus)
+
+	// 生成 JWT
+	token, err := jwt.GenerateToken(user.ID, user.Username, roles)
 	if err != nil {
 		return nil, err
 	}
+
 
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {
@@ -288,13 +194,120 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		}
 	}
 
+	// 组装用户信息
 	// 构建响应
 	userResp := s.userService.GetUserResponse(user)
+	// 返回登录响应数据
 	return &dto.LoginResponse{
-		Token: token,
-		User:  *userResp,
+		Token:       token,
+		User:        *userResp,
+		Permissions: permsDTO,
+		MenusTree:   menuNodes,
 	}, nil
 }
+
+// 聚合角色
+func (s *authService) buildRoles(user *entity.User) []string {
+	roles := make([]string, 0, len(user.Roles))
+	for _, r := range user.Roles {
+		if r.Status == 1 {
+			roles = append(roles, r.Slug)
+		}
+	}
+	return roles
+}
+
+// 将权限和菜单聚合到map中，并以固定形式返回
+func (s *authService) aggregate(user *entity.User) ([]dto.Permission, []entity.Menu) {
+	permMap := make(map[int]entity.Permission)
+	menuMap := make(map[int]entity.Menu)
+	for _, r := range user.Roles {
+		if r.Status != 1 {
+			continue
+		}
+		role, err := s.roleRepo.FindBySlug(r.Slug)
+		if err != nil || role == nil {
+			continue
+		}
+		for _, p := range role.Permissions {
+			if p.Status == 1 {
+				permMap[p.ID] = p
+			}
+		}
+		for _, m := range role.Menus {
+			if m.Status == 1 {
+				menuMap[m.ID] = m
+			}
+		}
+	}
+	permsDTO := make([]dto.Permission, 0, len(permMap))
+	for _, p := range permMap {
+		permsDTO = append(permsDTO, dto.Permission{
+			ID:         p.ID,
+			Name:       p.Name,
+			Category:   p.Category,
+			Slug:       p.Slug,
+			Type:       p.Type,
+			Status:     p.Status,
+			HttpMethod: p.HttpMethod,
+			HttpPath:   p.HttpPath,
+			Sort:       p.Sort,
+			CreatedAt:  p.CreatedAt,
+			UpdatedAt:  p.UpdatedAt,
+		})
+	}
+	menus := make([]entity.Menu, 0, len(menuMap))
+	for _, m := range menuMap {
+		menus = append(menus, m)
+	}
+	return permsDTO, menus
+}
+
+// 构建菜单树
+func buildMenuTree(menus []entity.Menu) []dto.MenuNode {
+	nodeMap := make(map[int]*dto.MenuNode)
+	parentChildren := make(map[int][]dto.MenuNode)
+	for _, m := range menus {
+		nodeMap[m.ID] = &dto.MenuNode{
+			ID:       m.ID,
+			ParentID: m.ParentID,
+			Title:    m.Title,
+			Status:   m.Status,
+			Type:     m.Type,
+			Icon:     m.Icon,
+			URI:      m.URI,
+			Sort:     m.Sort,
+		}
+	}
+	for _, n := range nodeMap {
+		if n.ParentID != 0 {
+			parentChildren[n.ParentID] = append(parentChildren[n.ParentID], *n)
+		}
+	}
+	menuNodes := make([]dto.MenuNode, 0)
+	for id, n := range nodeMap {
+		if ch, ok := parentChildren[id]; ok {
+			sort.Slice(ch, func(i, j int) bool {
+				if ch[i].Sort == ch[j].Sort {
+					return ch[i].Title < ch[j].Title
+				}
+				return ch[i].Sort < ch[j].Sort
+			})
+			n.Children = ch
+		}
+		if n.ParentID == 0 || nodeMap[n.ParentID] == nil {
+			menuNodes = append(menuNodes, *n)
+		}
+	}
+	sort.Slice(menuNodes, func(i, j int) bool {
+		if menuNodes[i].Sort == menuNodes[j].Sort {
+			return menuNodes[i].Title < menuNodes[j].Title
+		}
+		return menuNodes[i].Sort < menuNodes[j].Sort
+	})
+	return menuNodes
+}
+
 
 // EnsureSSHSession 确保用户的SSH会话存在
 func (s *authService) EnsureSSHSession(userID uint) error {
@@ -370,6 +383,11 @@ func (s *authService) Logout(userID uint) error {
 	return nil
 }
 
+
+
+
+
+
 // RefreshToken 刷新 Token
 func (s *authService) RefreshToken(token string) (string, error) {
 	newToken, err := jwt.RefreshToken(token)
@@ -379,27 +397,39 @@ func (s *authService) RefreshToken(token string) (string, error) {
 	return newToken, nil
 }
 
-// RedisCredentials Redis中存储的用户凭证结构
-type RedisCredentials struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
-	Expires  int64  `json:"expires"`
+// SendEmailCode 发送邮箱验证码
+func (s *authService) SendEmailCode(emailStr string) error {
+	// 1. 生成6位随机数字
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+	code := fmt.Sprintf("%06d", rnd.Intn(1000000))
+
+	// 2. 存储到 Redis (有效期5分钟)
+	ctx := context.Background()
+	key := fmt.Sprintf("email_code:%s", emailStr)
+	err := s.redisRepo.Set(ctx, key, code, 5*time.Minute)
+	if err != nil {
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "缓存验证码失败", err)
+	}
+
+	// 3. 发送邮件
+	subject := "您的验证码"
+	body := fmt.Sprintf("<h1>您的验证码是: %s</h1><p>有效期5分钟，请勿泄露给他人。</p>", code)
+	if err := email.SendEmail(emailStr, subject, body); err != nil {
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "发送邮件失败", err)
+	}
+
+	return nil
 }
 
-// GetUserCredentialsFromRedis 从Redis获取用户凭证
-func (s *authService) GetUserCredentialsFromRedis(userID uint) (*RedisCredentials, error) {
-	if s.sessionRepo == nil {
-		return nil, fmt.Errorf("SessionRepository未配置")
-	}
-
-	creds, err := s.sessionRepo.GetUserCredentials(userID)
+// GetPermissionsByRole 根据角色 Slug 获取权限列表
+func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, error) {
+	role, err := s.roleRepo.FindBySlug(slug)
 	if err != nil {
-		return nil, fmt.Errorf("获取用户凭证失败: %w", err)
+		return nil, err
+	}
+	if role == nil {
+		return nil, bizerrors.New(bizerrors.CodeInvalidParam, "角色不存在")
 	}
 
-	return &RedisCredentials{
-		Username: creds.Username,
-		Password: creds.Password,
-		Expires:  creds.ExpiresAt.Unix(),
-	}, nil
+	return role.Permissions, nil
 }

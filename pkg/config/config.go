@@ -9,6 +9,7 @@ type Config struct {
 	JWT      JWTConfig      `mapstructure:"jwt"`
 	Log      LogConfig      `mapstructure:"log"`
 	CORS     CORSConfig     `mapstructure:"cors"`
+	Email    EmailConfig    `mapstructure:"email"`
 	Server   ServerConfig   `mapstructure:"server"`
 }
 
@@ -50,6 +51,14 @@ type RedisConfig struct {
 type JWTConfig struct {
 	Secret      string        `mapstructure:"secret"`
 	ExpireHours time.Duration `mapstructure:"expire_hours"`
+}
+
+// EmailConfig 邮件配置
+type EmailConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
 }
 
 // LogConfig 日志配置

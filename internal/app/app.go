@@ -42,9 +42,9 @@ func NewApp() *App {
 }
 
 // Initialize 初始化应用
-func (a *App) Initialize(configPath string) error {
+func (a *App) Initialize() error {
 	// 1. 加载配置
-	if err := a.initConfig(configPath); err != nil {
+	if err := a.initConfig(); err != nil {
 		return err
 	}
 
@@ -81,8 +81,8 @@ func (a *App) Initialize(configPath string) error {
 }
 
 // initConfig 加载配置
-func (a *App) initConfig(configPath string) error {
-	cfg, err := config.Load(configPath)
+func (a *App) initConfig() error {
+	cfg, err := config.Load("")
 	if err != nil {
 		return fmt.Errorf("加载配置失败: %w", err)
 	}
@@ -125,16 +125,11 @@ func (a *App) initDatabase() error {
 
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
-
-	// 临时修复：尝试删除旧字段 (如果存在)
-	// 忽略错误，因为如果字段不存在会报错
-	a.mysqlDB.Exec("ALTER TABLE operation_logs DROP COLUMN user_id")
-	a.mysqlDB.Exec("ALTER TABLE operation_logs DROP COLUMN ip_address")
-
 	if err := a.mysqlDB.AutoMigrate(
 		&entity.User{},
-		&entity.OperationLog{},
-		&entity.RequestLog{},
+		&entity.Role{},
+		&entity.Permission{},
+		&entity.Menu{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
@@ -155,12 +150,9 @@ func (a *App) initDatabase() error {
 func (a *App) initDependencies() {
 	// 创建 Repository
 	userRepo := repository.NewUserRepository(a.mysqlDB)
+	roleRepo := repository.NewRoleRepository(a.mysqlDB)
 	sessionRepo := repository.NewSessionRepository(a.redis)
-	logRepo := repository.NewLogRepository(a.mysqlDB)
-
-	// 如果将来需要使用通用 Redis 仓库，可以使用：
-	// redisRepo := repository.NewRedisRepository(a.redis)
-	// _ = redisRepo
+	redisRepo := repository.NewRedisRepository()
 
 	// 创建 SSH 会话管理器
 	var sessionManager *ssh.SessionManager
@@ -190,18 +182,17 @@ func (a *App) initDependencies() {
 	a.wsPool = websocket.NewConnectionPool()
 
 	// 创建 Service
-	userSvc := service.NewUserService(userRepo)
-	logSvc := service.NewLogService(logRepo)
-	authSvc := service.NewAuthService(userRepo, userSvc, sessionRepo, sessionManager)
+	userSvc := service.NewUserService(userRepo, redisRepo)
+	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
+
 	if a.cfg.Server.Enabled {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
 		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
 	}
 	fileSvc := service.NewFileService(sessionManager)
 	terminalSvc := service.NewTerminalService(sessionManager)
-
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc, fileSvc, terminalSvc, a.wsPool, sessionManager, logSvc)
+	a.router = api.NewRouter(userSvc, authSvc, fileSvc, terminalSvc, a.wsPool, sessionManager)
 }
 
 // initRouter 初始化路由
