@@ -86,14 +86,14 @@ func (s *scheduler) Stop() {
 	s.isRunning = false
 	s.mu.Unlock()
 
-	// 终止所有正在运行的任务
-	// 这里先调用 Terminate，会触发 MonitorJob 退出并执行清理逻辑
-	s.TerminateAllRunningJobs()
-
-	// 取消调度循环上下文
+	// 1立即取消上下文，停止 Run() 循环中的 Ticker 触发
 	s.cancel()
 
-	// 等待所有goroutine退出（包括 Run 和所有的 MonitorJob）
+	// 2. 终止所有正在运行的任务
+	// 这里会触发 MonitorJob 退出并执行清理逻辑
+	s.TerminateAllRunningJobs()
+
+	// 3. 等待所有goroutine退出（包括 Run 和所有的 MonitorJob）
 	s.wg.Wait()
 
 	logger.Info("任务调度器已停止")
@@ -122,7 +122,7 @@ func (s *scheduler) TerminateAllRunningJobs() {
 		}(jobID, jp)
 	}
 
-	// 等待所有清理任务完成，或者达到总超时
+	// 等待所有清理任务完成（或者达到总超时）
 	wg.Wait()
 }
 
@@ -131,7 +131,7 @@ func (s *scheduler) terminateSingleJob(jobID int, jp *JobProcess) {
 	logger.Info("正在终止残留任务", zap.Int("job_id", jobID))
 
 	if jp.cmd.Process != nil {
-		// 尝试发送 SIGTERM，优雅退出
+		// 尝试发送 SIGTERM ,优雅退出
 		if err := jp.cmd.Process.Signal(syscall.SIGTERM); err == nil {
 			// 如果信号发送成功，等待 MonitorJob 报告进程退出
 			select {
@@ -168,6 +168,14 @@ func (s *scheduler) Run() {
 
 // ProcessQueue 处理排队队列
 func (s *scheduler) ProcessQueue() {
+	// 检查调度器是否正在运行，如果正在停止，则不再处理新任务
+	s.mu.RLock()
+	if !s.isRunning {
+		s.mu.RUnlock()
+		return
+	}
+	s.mu.RUnlock()
+
 	// 获取队列头部的任务
 	item, err := s.queueSvc.Peek(s.ctx)
 	if err != nil {
@@ -389,7 +397,7 @@ func (s *scheduler) MonitorJob(jp *JobProcess) {
 	if err != nil {
 		// 如果进程被杀掉，err 会包含 exit status 1 等信息
 		status = entity.JobStatusFailed
-		logger.Info("任务执行结束,非正常退出", zap.Int("job_id", jobID), zap.Error(err))
+		logger.Info("任务执行结束（非正常退出）", zap.Int("job_id", jobID), zap.Error(err))
 	} else {
 		logger.Info("任务执行成功", zap.Int("job_id", jobID))
 	}

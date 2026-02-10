@@ -63,14 +63,6 @@ func (r *Router) Setup(engine *gin.Engine) {
 			"message": "CloudQue API is running",
 		})
 	})
-	// api 路由
-	task := engine.Group("/api")
-	{
-		// 任务路由
-		r.jobCtrl.JobsRoutes(task)
-		// 排队队列路由
-		r.queueCtrl.QueueRoutes(task)
-	}
 	// API v1 路由组
 	v1 := engine.Group("/api/v1")
 	{
@@ -83,18 +75,25 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// 管理员路由
 		r.adminCtrl.RegisterRoutes(v1)
 	}
-
 	//API v2 路由组,用户操作日志输出
 	v2 := engine.Group("/api/operationLogs")
 
 	{
 		r.operationLogCtrl.RegisterRoutes(v2)
 	}
-
 	//API v3 路由组，展示系统信息
 	v3 := engine.Group("/api/system")
 	{
 		r.systemInfoCtrl.RegisterRoutes(v3)
 	}
-
+	// api v4 路由组，展示任务信息
+	v4 := engine.Group("/api/job")
+	{
+		r.jobCtrl.JobsRoutes(v4)
+	}
+	// api v5 路由组，展示队列信息
+	v5 := engine.Group("/api/queue")
+	{
+		r.queueCtrl.QueueRoutes(v5)
+	}
 }

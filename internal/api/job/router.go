@@ -7,14 +7,13 @@ import (
 
 // JobsRoutes 任务路由
 func (ctrl *Controller) JobsRoutes(r *gin.RouterGroup) {
-	jobsGroup := r.Group("/job")
-	jobsGroup.Use(middleware.Auth())
-	jobsGroup.Use(middleware.RequirePermission(ctrl.authService, ""))
+	r.Use(middleware.Auth())
+	r.Use(middleware.RequirePermission(ctrl.authService, ""))
 	{
-		jobsGroup.POST("", ctrl.SubmitJob)
-		jobsGroup.GET("", ctrl.GetJobsList)
-		jobsGroup.GET("/wait", ctrl.GetWaitJobsList)
-		jobsGroup.GET("/stats", ctrl.GetStats)
-		jobsGroup.DELETE("/:id", ctrl.CancelJob)
+		r.POST("", ctrl.SubmitJob)
+		r.GET("", ctrl.GetJobsList)
+		r.GET("/wait", ctrl.GetWaitJobsList)
+		r.GET("/stats", ctrl.GetStats)
+		r.DELETE("/:id", ctrl.CancelJob)
 	}
 }
