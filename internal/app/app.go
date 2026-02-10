@@ -116,6 +116,7 @@ func (a *App) initDatabase() error {
 		&entity.User{},
 		&entity.Role{},
 		&entity.Permission{},
+		&entity.Menu{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
