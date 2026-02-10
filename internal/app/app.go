@@ -106,6 +106,9 @@ func (a *App) initDatabase() error {
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
 		&entity.User{},
+		&entity.Role{},
+		&entity.Permission{},
+		&entity.Menu{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
@@ -126,10 +129,12 @@ func (a *App) initDatabase() error {
 func (a *App) initDependencies() {
 	// 创建 Repository
 	userRepo := repository.NewUserRepository(a.mysqlDB)
+	roleRepo := repository.NewRoleRepository(a.mysqlDB)
+	redisRepo := repository.NewRedisRepository()
 
 	// 创建 Service
-	userSvc := service.NewUserService(userRepo)
-	authSvc := service.NewAuthService(userRepo, userSvc)
+	userSvc := service.NewUserService(userRepo, redisRepo)
+	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 
 	// 创建 Router
 	a.router = api.NewRouter(userSvc, authSvc)

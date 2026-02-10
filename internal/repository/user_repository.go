@@ -19,9 +19,9 @@ func NewUserRepository(db *gorm.DB) UserRepository {
 }
 
 // FindByID 根据 ID 查找用户
-func (r *userRepository) FindByID(id uint) (*entity.User, error) {
+func (r *userRepository) FindByID(id int) (*entity.User, error) {
 	var user entity.User
-	err := r.db.First(&user, id).Error
+	err := r.db.Preload("Roles").First(&user, id).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -34,7 +34,7 @@ func (r *userRepository) FindByID(id uint) (*entity.User, error) {
 // FindByUsername 根据用户名查找用户
 func (r *userRepository) FindByUsername(username string) (*entity.User, error) {
 	var user entity.User
-	err := r.db.Where("username = ?", username).First(&user).Error
+	err := r.db.Preload("Roles").Where("username = ?", username).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -47,7 +47,7 @@ func (r *userRepository) FindByUsername(username string) (*entity.User, error) {
 // FindByEmail 根据邮箱查找用户
 func (r *userRepository) FindByEmail(email string) (*entity.User, error) {
 	var user entity.User
-	err := r.db.Where("email = ?", email).First(&user).Error
+	err := r.db.Preload("Roles").Where("email = ?", email).First(&user).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -64,11 +64,15 @@ func (r *userRepository) Create(user *entity.User) error {
 
 // Update 更新用户
 func (r *userRepository) Update(user *entity.User) error {
-	return r.db.Save(user).Error
+
+	return r.db.Model(user).Select(
+		"username", "password", "avatar", "email",
+		"status", "priority", "multi_training", "cross_server", "updated_at",
+	).Updates(user).Error
 }
 
 // Delete 删除用户
-func (r *userRepository) Delete(id uint) error {
+func (r *userRepository) Delete(id int) error {
 	return r.db.Delete(&entity.User{}, id).Error
 }
 
@@ -83,7 +87,7 @@ func (r *userRepository) List(offset, limit int) ([]*entity.User, int64, error) 
 	}
 
 	// 分页查询
-	err := r.db.Order("created_at DESC").Offset(offset).Limit(limit).Find(&users).Error
+	err := r.db.Preload("Roles").Order("created_at DESC").Offset(offset).Limit(limit).Find(&users).Error
 	if err != nil {
 		return nil, 0, err
 	}
@@ -103,4 +107,32 @@ func (r *userRepository) ExistsByEmail(email string) (bool, error) {
 	var count int64
 	err := r.db.Model(&entity.User{}).Where("email = ?", email).Count(&count).Error
 	return count > 0, err
+}
+
+// AssignRoleByName 为用户分配指定角色（按名称）
+func (r *userRepository) AssignRoleByName(userID int, name string) error {
+	var role entity.Role
+	if err := r.db.Where("name = ?", name).First(&role).Error; err != nil {
+		return err
+	}
+	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
+	return r.db.Model(&user).Association("Roles").Append(&role)
+}
+
+// ClearRoles 清空用户的所有角色关联
+func (r *userRepository) ClearRoles(userID int) error {
+	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
+	return r.db.Model(&user).Association("Roles").Clear()
+}
+
+func (r *userRepository) ReplaceRolesByNames(userID int, names []string) error {
+	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
+	if len(names) == 0 {
+		return r.db.Model(&user).Association("Roles").Clear()
+	}
+	var roles []entity.Role
+	if err := r.db.Where("name IN ?", names).Find(&roles).Error; err != nil {
+		return err
+	}
+	return r.db.Model(&user).Association("Roles").Replace(&roles)
 }
