@@ -5,6 +5,8 @@ import (
 )
 
 type RoleRepository interface {
+	// FindBySlug 根据 Slug 查找角色（包含权限）
+	FindBySlug(slug string) (*entity.Role, error)
 	// GetRoleByID 根据 ID 获取用户信息
 	GetRoleByID(id int) (*entity.Role, error)
 	// PageList 分页查询用户列表
@@ -34,3 +36,5 @@ type RoleRepository interface {
 	// ExistsBySlug 判断角色标识是否存在
 	ExistsBySlug(slug string) (bool, error)
 }
+
+

@@ -1,6 +1,9 @@
 package api
 
 import (
+	"cloudque/internal/api/v1/admin"
+	"cloudque/internal/api/v1/auth"
+	"cloudque/internal/api/v1/user"
 	"cloudque/internal/api/permissionManage/menu"
 	"cloudque/internal/api/permissionManage/permission"
 	"cloudque/internal/api/permissionManage/role"
@@ -13,20 +16,28 @@ import (
 // Router 路由
 type Router struct {
 	roleCtrl *role.RoleController
-	apiCtrl  *permission.APIController // 新增API控制器
-	menuCtrl *menu.MenuController      // 新增菜单控制器
+	apiCtrl  *permission.APIController
+	menuCtrl *menu.MenuController
+	userCtrl  *user.Controller
+	authCtrl  *auth.Controller
+	adminCtrl *admin.Controller
 }
 
 // NewRouter 创建路由
 func NewRouter(
+	userService service.UserService,
+	authService service.AuthService,
 	roleService service.RoleService,
-	apiService service.APIService, // 新增API服务
-	menuService service.MenuService, // 新增菜单服务
+	apiService service.APIService,
+	menuService service.MenuService,
 ) *Router {
 	return &Router{
 		roleCtrl: role.NewRoleController(roleService),
-		apiCtrl:  permission.NewAPIController(apiService), // 新增API控制器初始化
-		menuCtrl: menu.NewMenuController(menuService),     // 新增菜单控制器初始化
+		apiCtrl:  permission.NewAPIController(apiService),
+		menuCtrl: menu.NewMenuController(menuService),
+		userCtrl:  user.NewController(userService),
+		authCtrl:  auth.NewController(authService, userService),
+		adminCtrl: admin.NewController(userService, userService, authService),
 	}
 }
 
@@ -36,6 +47,8 @@ func (r *Router) Setup(engine *gin.Engine) {
 	engine.Use(middleware.Recovery())
 	engine.Use(middleware.Logger())
 	engine.Use(middleware.CORS())
+	// 静态资源：上传文件
+	engine.Static("/uploads", "./uploads")
 
 	// 健康检查
 	engine.GET("/api/health", func(c *gin.Context) {
@@ -56,5 +69,10 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// 菜单管理路由
 		r.menuCtrl.RegisterRoutes(v1)
+		// 用户路由
+		r.userCtrl.RegisterRoutes(v1)
+
+		// 管理员路由
+		r.adminCtrl.RegisterRoutes(v1)
 	}
 }

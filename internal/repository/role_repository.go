@@ -17,6 +17,12 @@ func NewRoleRepository(db *gorm.DB) RoleRepository {
 func (r *roleRepository) GetRoleByID(id int) (*entity.Role, error) {
 	var role entity.Role
 	err := r.db.First(&role, id).Error
+
+// FindBySlug 根据 Slug 查找角色
+func (r *roleRepository) FindBySlug(slug string) (*entity.Role, error) {
+	var role entity.Role
+
+	err := r.db.Preload("Permissions").Preload("Permissions.Menus").Where("slug = ?", slug).First(&role).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil

@@ -108,36 +108,48 @@ func (a *App) initDatabase() error {
 		&entity.Role{},
 		&entity.Permission{},
 		&entity.Menu{},
+		&entity.User{},
+		&entity.Permission{},
+		&entity.Menu{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
 		logger.Info("数据库迁移完成")
 	}
 
+	// 初始化 Redis（可选）
+	rs, err := database.InitRedis(&a.cfg.Database.Redis)
+	if err != nil {
+		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
+	}
+	a.redis = rs
+
 	return nil
 }
 
-// initDependencies 初始化依赖
+// initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
+	userRepo := repository.NewUserRepository(a.mysqlDB)
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
-	apiRepo := repository.NewAPIRepository(a.mysqlDB)   // 新增API仓库
-	menuRepo := repository.NewMenuRepository(a.mysqlDB) // 新增菜单仓库
+	redisRepo := repository.NewRedisRepository()
+	menuRepo := repository.NewMenuRepository(a.mysqlDB)
 
 	// 创建 Service
+	userSvc := service.NewUserService(userRepo, redisRepo)
+	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 	roleSvc := service.NewRoleService(roleRepo)
-	apiSvc := service.NewAPIService(apiRepo)    // 新增API服务
-	menuSvc := service.NewMenuService(menuRepo) // 新增菜单服务
+	apiSvc := service.NewAPIService(apiRepo)
+	menuSvc := service.NewMenuService(menuRepo)
 
 	// 创建 Router（传入所有 Service）
-	a.router = api.NewRouter(roleSvc, apiSvc, menuSvc) // 更新路由初始化，添加菜单服务
+	a.router = api.NewRouter(roleSvc, apiSvc, menuSvc,userSvc, authSvc) // 更新路由初始化，添加菜单服务
 }
 
 // initRouter 初始化路由
 func (a *App) initRouter() {
 	// 设置 Gin 模式
 	gin.SetMode(a.cfg.App.Mode)
-	gin.SetMode("release")
 }
 
 // initServer 初始化 HTTP 服务器
