@@ -14,7 +14,6 @@ type Permission struct {
 	HttpMethod string `gorm:"type:varchar(10);comment:API请求方法" json:"http_method"`
 	HttpPath   string `gorm:"type:varchar(255);comment:API路径" json:"http_path"`
 	Sort       int    `gorm:"type:int;default:0;comment:菜单排序" json:"sort"`
-	Menus      []Menu `gorm:"many2many:admin_permission_menu;joinForeignKey:permission_id;JoinReferences:menu_id" json:"menus"`
 }
 
 func (Permission) TableName() string {

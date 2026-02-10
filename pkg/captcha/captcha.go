@@ -2,9 +2,10 @@ package captcha
 
 import (
 	"cloudque/pkg/logger"
-	"github.com/mojocn/base64Captcha"
 	"image/color"
 	"log"
+
+	"github.com/mojocn/base64Captcha"
 )
 
 // 使用默认的内存存储
@@ -47,7 +48,7 @@ func Verify(id, value string) bool {
 		return false
 	}
 
-	ok := store.Verify(id, value, false)
+	ok := store.Verify(id, value, true)
 	if !ok {
 		log.Println("【验证码无效】原因：store验证失败（ID不存在/值不匹配/已过期/已被删除）")
 	} else {
