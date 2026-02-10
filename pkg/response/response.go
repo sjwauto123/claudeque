@@ -9,7 +9,7 @@ import (
 // Response 统一响应结构
 type Response struct {
 	Code    int         `json:"code"`
-	Message string      `json:"message"`
+	Message string      `json:"msg"`
 	Data    interface{} `json:"data,omitempty"`
 }
 
@@ -94,21 +94,21 @@ type PageRequest struct {
 
 // PageResponse 分页响应结构
 type PageResponse struct {
-	List      interface{} `json:"list"`       // 数据列表
-	Total     int64       `json:"total"`      // 总记录数
-	Page      int         `json:"page"`       // 当前页码
-	Size      int         `json:"size"`       // 每页大小
-	TotalPage int         `json:"total_page"` // 总页数
+	List     interface{} `json:"list"`     // 数据列表
+	Total    int64       `json:"total"`    // 总记录数
+	Page     int         `json:"page"`     // 当前页码
+	PageSize int         `json:"pageSize"` // 每页大小
+	Pages    int         `json:"pages"`    // 总页数
 }
 
 // NewPageResponse 创建分页响应
-func NewPageResponse(list interface{}, total int64, page, size int) *PageResponse {
-	totalPage := int(math.Ceil(float64(total) / float64(size)))
+func NewPageResponse(list interface{}, total int64, page, pageSize int) *PageResponse {
+	pages := int(math.Ceil(float64(total) / float64(pageSize)))
 	return &PageResponse{
-		List:      list,
-		Total:     total,
-		Page:      page,
-		Size:      size,
-		TotalPage: totalPage,
+		List:     list,
+		Total:    total,
+		Page:     page,
+		PageSize: pageSize,
+		Pages:    pages,
 	}
 }
