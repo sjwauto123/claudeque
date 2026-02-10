@@ -8,12 +8,11 @@ import (
 // JobsRoutes 任务路由
 func (ctrl *Controller) JobsRoutes(r *gin.RouterGroup) {
 	r.Use(middleware.Auth())
-	r.Use(middleware.RequirePermission(ctrl.authService, ""))
 	{
-		r.POST("", ctrl.SubmitJob)
-		r.GET("", ctrl.GetJobsList)
-		r.GET("/wait", ctrl.GetWaitJobsList)
-		r.GET("/stats", ctrl.GetStats)
-		r.DELETE("/:id", ctrl.CancelJob)
+		r.POST("", middleware.RequirePermission(ctrl.authService, ""), ctrl.SubmitJob)
+		r.GET("", middleware.RequirePermission(ctrl.authService, ""), ctrl.GetJobsList)
+		r.GET("/wait", middleware.RequirePermission(ctrl.authService, ""), ctrl.GetWaitJobsList)
+		r.GET("/stats", middleware.RequirePermission(ctrl.authService, ""), ctrl.GetStats)
+		r.DELETE("/:id", middleware.RequirePermission(ctrl.authService, ""), ctrl.CancelJob)
 	}
 }

@@ -8,10 +8,9 @@ import (
 // QueueRoutes 队列路由
 func (ctrl *Controller) QueueRoutes(r *gin.RouterGroup) {
 	r.Use(middleware.Auth())
-	r.Use(middleware.RequirePermission(ctrl.authService, ""))
 	{
-		r.GET("", ctrl.GetQueue)
-		r.POST("", ctrl.ReorderQueue)
-		r.DELETE("/:jobId", ctrl.RemoveJob)
+		r.GET("", middleware.RequirePermission(ctrl.authService, ""), ctrl.GetQueue)
+		r.POST("", middleware.RequirePermission(ctrl.authService, ""), ctrl.ReorderQueue)
+		r.DELETE("/:jobId", middleware.RequirePermission(ctrl.authService, ""), ctrl.RemoveJob)
 	}
 }
