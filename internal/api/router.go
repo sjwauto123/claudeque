@@ -76,13 +76,13 @@ func (r *Router) Setup(engine *gin.Engine) {
 		r.adminCtrl.RegisterRoutes(v1)
 	}
 	//API v2 路由组,用户操作日志输出
-	v2 := engine.Group("/api/operationLogs")
+	v2 := engine.Group("/api")
 
 	{
 		r.operationLogCtrl.RegisterRoutes(v2)
 	}
 	//API v3 路由组，展示系统信息
-	v3 := engine.Group("/api/system")
+	v3 := engine.Group("/api")
 	{
 		r.systemInfoCtrl.RegisterRoutes(v3)
 	}

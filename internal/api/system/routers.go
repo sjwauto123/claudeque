@@ -8,5 +8,5 @@ import (
 func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	router.Use(middleware.Auth())
 	router.Use(middleware.RequirePermission(ctrl.authSvc, "getSystemInfo"))
-	router.GET("/cpuInfo", ctrl.HandleWebSocket)
+	router.GET("/system/cpuInfo", ctrl.HandleWebSocket)
 }
