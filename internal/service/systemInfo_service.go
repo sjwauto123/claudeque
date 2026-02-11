@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os/exec"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -141,9 +140,9 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 func getDiskInfo() (*response.CpuInfoResponse, error) {
 	// 获取主挂载点（Linux/macOS 用 "/", Windows 用 "C:\\")
 	mountPoint := "/"
-	if runtime.GOOS == "windows" {
-		mountPoint = "C:\\"
-	}
+	//if runtime.GOOS == "windows" {
+	//	mountPoint = "C:\\"
+	//}
 
 	usage, err := disk.Usage(mountPoint)
 	if err != nil {
