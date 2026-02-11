@@ -2,6 +2,7 @@ package admin
 
 import (
 	"cloudque/internal/model/dto/request"
+	dtoResp "cloudque/internal/model/dto/response"
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
 	"os/exec"
@@ -111,9 +112,36 @@ func (ctrl *Controller) ListUsers(c *gin.Context) {
 	response.Success(c, resp)
 }
 
+// ListRoleSimple 获取所有角色的名称与标识
+func (ctrl *Controller) ListRoleSimple(c *gin.Context) {
+	roles, err := ctrl.authService.GetAllRoles()
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	out := make([]dtoResp.RoleSimple, 0, len(roles))
+	for _, r := range roles {
+		out = append(out, dtoResp.RoleSimple{
+			Name: r.Name,
+			Slug: r.Slug,
+		})
+	}
+	response.Success(c, out)
+}
+
 // Restart 重启系统
 func (ctrl *Controller) Restart(c *gin.Context) {
 	cmd := exec.Command("sudo", "reboot", "now")
+	if err := cmd.Start(); err != nil {
+		response.InternalError(c, "failed to restart system")
+		return
+	}
+	response.Success(c, gin.H{"message": "restarting"})
+}
+
+// Shutdown 关闭系统
+func (ctrl *Controller) Shutdown(c *gin.Context) {
+	cmd := exec.Command("sudo", "shutdown", "now")
 	if err := cmd.Start(); err != nil {
 		response.InternalError(c, "failed to restart system")
 		return

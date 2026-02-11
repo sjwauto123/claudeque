@@ -4,6 +4,7 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/entity"
 	bizerrors "cloudque/pkg/errors"
+	"cloudque/pkg/utils"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -25,7 +26,8 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 		return bizerrors.New(bizerrors.CodeUserAlreadyExists, "邮箱已被注册")
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	pwd := utils.DecryptIfCryptoJS(req.Password)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -96,7 +98,8 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 	}
 
 	if req.Password != "" {
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		pwd := utils.DecryptIfCryptoJS(req.Password)
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err != nil {
 			return err
 		}

@@ -31,3 +31,12 @@ func (r *roleRepository) FindBySlug(slug string) (*entity.Role, error) {
 	}
 	return &role, nil
 }
+
+// ListAll 获取所有角色（仅名称与标识）
+func (r *roleRepository) ListAll() ([]entity.Role, error) {
+	var roles []entity.Role
+	if err := r.db.Model(&entity.Role{}).Select("id", "name", "slug", "status").Order("id ASC").Find(&roles).Error; err != nil {
+		return nil, err
+	}
+	return roles, nil
+}

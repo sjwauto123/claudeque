@@ -9,6 +9,7 @@ import (
 	"cloudque/pkg/email"
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/jwt"
+	"cloudque/pkg/utils"
 	"context"
 	"fmt"
 	"math/rand"
@@ -58,7 +59,8 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}
 
 	// 校验密码
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+	pwd := utils.DecryptIfCryptoJS(req.Password)
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 		return nil, bizerrors.ErrInvalidCredentials
 	}
 
@@ -232,4 +234,9 @@ func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, er
 	}
 
 	return role.Permissions, nil
+}
+
+// GetAllRoles 获取所有角色
+func (s *authService) GetAllRoles() ([]entity.Role, error) {
+	return s.roleRepo.ListAll()
 }

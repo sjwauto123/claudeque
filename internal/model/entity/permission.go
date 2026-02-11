@@ -9,7 +9,7 @@ type Permission struct {
 	Name       string `gorm:"type:varchar(50);not null;comment:权限名称" json:"name"`
 	Category   string `gorm:"type:varchar(50);not null;comment:API类别" json:"category"`
 	Slug       string `gorm:"type:varchar(50);uniqueIndex;not null;comment:权限唯一标识" json:"slug"`
-	Type       string `gorm:"type:int;default:1;comment:权限类型" json:"type"`
+	Type       string `gorm:"type:varchar(20);default:'';comment:权限类型" json:"type"`
 	Status     int    `gorm:"type:int;default:1;comment:0-禁用 1-启用" json:"status"`
 	HttpMethod string `gorm:"type:varchar(10);comment:API请求方法" json:"http_method"`
 	HttpPath   string `gorm:"type:varchar(255);comment:API路径" json:"http_path"`

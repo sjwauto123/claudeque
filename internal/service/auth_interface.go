@@ -16,4 +16,6 @@ type AuthService interface {
 	SendEmailCode(email string) error
 	// GetPermissionsByRole 根据角色 Slug 获取权限列表
 	GetPermissionsByRole(slug string) ([]entity.Permission, error)
+	// GetAllRoles 获取所有角色
+	GetAllRoles() ([]entity.Role, error)
 }
