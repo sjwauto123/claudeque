@@ -14,10 +14,11 @@ type Config struct {
 
 // AppConfig 应用配置
 type AppConfig struct {
-	Name    string `mapstructure:"name"`
-	Version string `mapstructure:"version"`
-	Mode    string `mapstructure:"mode"` // debug, release, test
-	Port    int    `mapstructure:"port"`
+	Name      string `mapstructure:"name"`
+	Version   string `mapstructure:"version"`
+	Mode      string `mapstructure:"mode"` // debug, release, test
+	Port      int    `mapstructure:"port"`
+	AESSecret string `mapstructure:"aes_secret"`
 }
 
 // DatabaseConfig 数据库配置

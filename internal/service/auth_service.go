@@ -9,6 +9,7 @@ import (
 	"cloudque/pkg/email"
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/jwt"
+	"cloudque/pkg/utils"
 	"context"
 	"fmt"
 	"math/rand"
@@ -38,12 +39,12 @@ func NewAuthService(userRepo repository.UserRepository, roleRepo repository.Role
 
 // Login 用户登录
 func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, error) {
-	// 验证验证码
+	// 校验验证码
 	if !captcha.Verify(req.CaptchaID, req.Captcha) {
 		return nil, bizerrors.ErrInvalidCaptcha
 	}
 
-	// 查找用户
+	// 查找用户并校验存在性
 	user, err := s.userRepo.FindByUsername(req.Username)
 	if err != nil {
 		return nil, err
@@ -52,24 +53,54 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		return nil, bizerrors.ErrInvalidCredentials
 	}
 
-	// 检查用户状态
+	// 检查用户状态是否启用
 	if user.Status != 1 {
 		return nil, bizerrors.ErrUserDisabled
 	}
 
-	// 验证密码
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+	// 校验密码
+	pwd := utils.DecryptIfCryptoJS(req.Password)
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 		return nil, bizerrors.ErrInvalidCredentials
 	}
 
+	// 构建角色列表
+	roles := s.buildRoles(user)
+	// 聚合权限和菜单
+	permsDTO, menus := s.aggregate(user)
+	// 构建菜单树
+	menuNodes := buildMenuTree(menus)
+
+	// 生成 JWT
+	token, err := jwt.GenerateToken(user.ID, user.Username, roles)
+	if err != nil {
+		return nil, err
+	}
+
+	// 组装用户信息
+	userResp := s.userService.GetUserResponse(user)
+	// 返回登录响应数据
+	return &dto.LoginResponse{
+		Token:       token,
+		User:        *userResp,
+		Permissions: permsDTO,
+		MenusTree:   menuNodes,
+	}, nil
+}
+
+// 聚合角色
+func (s *authService) buildRoles(user *entity.User) []string {
 	roles := make([]string, 0, len(user.Roles))
 	for _, r := range user.Roles {
 		if r.Status == 1 {
 			roles = append(roles, r.Slug)
 		}
 	}
+	return roles
+}
 
-	// 聚合用户权限（按角色去重，返回完整权限对象）
+// 将权限和菜单聚合到map中，并以固定形式返回
+func (s *authService) aggregate(user *entity.User) ([]dto.Permission, []entity.Menu) {
 	permMap := make(map[int]entity.Permission)
 	menuMap := make(map[int]entity.Menu)
 	for _, r := range user.Roles {
@@ -80,19 +111,17 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		if err != nil || role == nil {
 			continue
 		}
-
 		for _, p := range role.Permissions {
 			if p.Status == 1 {
 				permMap[p.ID] = p
-				for _, m := range p.Menus {
-					if m.Status == 1 {
-						menuMap[m.ID] = m
-					}
-				}
+			}
+		}
+		for _, m := range role.Menus {
+			if m.Status == 1 {
+				menuMap[m.ID] = m
 			}
 		}
 	}
-	//将entity转换为dto
 	permsDTO := make([]dto.Permission, 0, len(permMap))
 	for _, p := range permMap {
 		permsDTO = append(permsDTO, dto.Permission{
@@ -109,15 +138,16 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			UpdatedAt:  p.UpdatedAt,
 		})
 	}
-	//提取到切片中
 	menus := make([]entity.Menu, 0, len(menuMap))
 	for _, m := range menuMap {
 		menus = append(menus, m)
 	}
+	return permsDTO, menus
+}
 
-	//转换menu为树
+// 构建菜单树
+func buildMenuTree(menus []entity.Menu) []dto.MenuNode {
 	nodeMap := make(map[int]*dto.MenuNode)
-	//父菜单，值为子菜单
 	parentChildren := make(map[int][]dto.MenuNode)
 	for _, m := range menus {
 		nodeMap[m.ID] = &dto.MenuNode{
@@ -131,18 +161,14 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			Sort:     m.Sort,
 		}
 	}
-	//子菜单绑定到父菜单下
 	for _, n := range nodeMap {
 		if n.ParentID != 0 {
 			parentChildren[n.ParentID] = append(parentChildren[n.ParentID], *n)
 		}
 	}
-	//排序子节点，排树
 	menuNodes := make([]dto.MenuNode, 0)
 	for id, n := range nodeMap {
-		// 绑定子节点
 		if ch, ok := parentChildren[id]; ok {
-			// 子节点排序
 			sort.Slice(ch, func(i, j int) bool {
 				if ch[i].Sort == ch[j].Sort {
 					return ch[i].Title < ch[j].Title
@@ -151,33 +177,17 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			})
 			n.Children = ch
 		}
-
 		if n.ParentID == 0 || nodeMap[n.ParentID] == nil {
 			menuNodes = append(menuNodes, *n)
 		}
 	}
-	// 按根节点排序
 	sort.Slice(menuNodes, func(i, j int) bool {
 		if menuNodes[i].Sort == menuNodes[j].Sort {
 			return menuNodes[i].Title < menuNodes[j].Title
 		}
 		return menuNodes[i].Sort < menuNodes[j].Sort
 	})
-
-	// 生成 Token
-	token, err := jwt.GenerateToken(user.ID, user.Username, roles)
-	if err != nil {
-		return nil, err
-	}
-
-	// 构建响应
-	userResp := s.userService.GetUserResponse(user)
-	return &dto.LoginResponse{
-		Token:       token,
-		User:        *userResp,
-		Permissions: permsDTO,
-		MenusTree:   menuNodes,
-	}, nil
+	return menuNodes
 }
 
 // RefreshToken 刷新 Token
@@ -224,4 +234,9 @@ func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, er
 	}
 
 	return role.Permissions, nil
+}
+
+// GetAllRoles 获取所有角色
+func (s *authService) GetAllRoles() ([]entity.Role, error) {
+	return s.roleRepo.ListAll()
 }

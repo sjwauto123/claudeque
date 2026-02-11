@@ -9,6 +9,7 @@ type Role struct {
 	Slug   string `gorm:"type:varchar(50);uniqueIndex;not null;comment:角色唯一标识" json:"slug"`
 
 	Permissions []Permission `gorm:"many2many:admin_role_permissions;joinForeignKey:role_id;JoinReferences:permission_id" json:"permissions"`
+	Menus       []Menu       `gorm:"many2many:admin_role_menu;joinForeignKey:role_id;JoinReferences:menu_id" json:"menus"`
 }
 
 func (Role) TableName() string {

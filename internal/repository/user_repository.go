@@ -125,6 +125,7 @@ func (r *userRepository) ClearRoles(userID int) error {
 	return r.db.Model(&user).Association("Roles").Clear()
 }
 
+// ReplaceRolesByNames 更改用户角色
 func (r *userRepository) ReplaceRolesByNames(userID int, names []string) error {
 	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
 	if len(names) == 0 {
