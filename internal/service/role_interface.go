@@ -20,7 +20,7 @@ type RoleService interface {
 	// BatchDelete 批量删除用户
 	BatchDelete(ids []int) error
 	// GetRolePermissionByID 获取角色权限树
-	GetRolePermissionByID(roleID int) ([]*dto.RolePermissionNodeRes, error)
+	GetRolePermissionByID(roleID int) (*dto.RolePermissionResponse, error)
 	// UpdateRolePermission 更新角色权限
 	UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error
 }

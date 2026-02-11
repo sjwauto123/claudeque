@@ -98,73 +98,135 @@ func (s *roleService) BatchDelete(ids []int) error {
 }
 
 // GetRolePermissionByID 根据id获取角色权限
-func (s *roleService) GetRolePermissionByID(roleID int) ([]*dto.RolePermissionNodeRes, error) {
+// func (s *roleService) GetRolePermissionByID(roleID int) ([]*dto.RolePermissionNodeRes, error) {
+//
+//		menus, permissions, permissionMenus, roleMenuMap, rolePermissionMap, err :=
+//			s.roleRepo.GetRolePermissionByID(roleID)
+//
+//		if err != nil {
+//			return nil, err
+//		}
+//
+//		// 1. 构建菜单节点 map
+//		menuNodeMap := make(map[int]*dto.RolePermissionNodeRes)
+//
+//		for _, m := range menus {
+//			menuNodeMap[m.ID] = &dto.RolePermissionNodeRes{
+//				ID:         m.ID,
+//				Title:      m.Title,
+//				Checked:    roleMenuMap[m.ID],
+//				Permission: []*dto.PermissionNodeRes{},
+//				Children:   []*dto.RolePermissionNodeRes{},
+//			}
+//		}
+//
+//		// 2. 构建 permission -> menuIDs 映射
+//		permMenuMap := make(map[int][]int)
+//
+//		for _, pm := range permissionMenus {
+//			permMenuMap[pm.PermissionID] = append(
+//				permMenuMap[pm.PermissionID],
+//				pm.MenuID,
+//			)
+//		}
+//
+//		// 3. 把权限挂到对应菜单
+//		for _, p := range permissions {
+//
+//			permNode := &dto.PermissionNodeRes{
+//				ID:      p.ID,
+//				Name:    p.Name,
+//				Slug:    p.Slug,
+//				Checked: rolePermissionMap[p.ID],
+//			}
+//
+//			menuIDs := permMenuMap[p.ID]
+//
+//			for _, menuID := range menuIDs {
+//				if menuNode, ok := menuNodeMap[menuID]; ok {
+//					menuNode.Permission = append(menuNode.Permission, permNode)
+//				}
+//			}
+//		}
+//
+//		// 4. 构建树结构
+//		var roots []*dto.RolePermissionNodeRes
+//
+//		for _, m := range menus {
+//			node := menuNodeMap[m.ID]
+//
+//			if m.ParentID == 0 {
+//				roots = append(roots, node)
+//			} else {
+//				if parent, ok := menuNodeMap[m.ParentID]; ok {
+//					parent.Children = append(parent.Children, node)
+//				}
+//			}
+//		}
+//
+//		return roots, nil
+//	}
+func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionResponse, error) {
 
-	menus, permissions, permissionMenus, roleMenuMap, rolePermissionMap, err :=
+	menus, permissions, roleMenuMap, rolePermMap, err :=
 		s.roleRepo.GetRolePermissionByID(roleID)
-
 	if err != nil {
 		return nil, err
 	}
+	menuTree := s.buildMenuTree(menus, roleMenuMap)
+	apiGroups := s.buildApiPermissions(permissions, rolePermMap)
+	return &dto.RolePermissionResponse{
+		Menu: menuTree,
+		Api:  apiGroups,
+	}, nil
+}
 
-	// 1. 构建菜单节点 map
-	menuNodeMap := make(map[int]*dto.RolePermissionNodeRes)
+// 构建菜单树
+func (s *roleService) buildMenuTree(menus []entity.Menu, roleMenuMap map[int]bool) []*dto.MenuNodeRes {
+	nodeMap := make(map[int]*dto.MenuNodeRes)
 
 	for _, m := range menus {
-		menuNodeMap[m.ID] = &dto.RolePermissionNodeRes{
-			ID:         m.ID,
-			Title:      m.Title,
-			Checked:    roleMenuMap[m.ID],
-			Permission: []*dto.PermissionNodeRes{},
-			Children:   []*dto.RolePermissionNodeRes{},
+		nodeMap[m.ID] = &dto.MenuNodeRes{
+			ID:      m.ID,
+			Title:   m.Title,
+			Checked: roleMenuMap[m.ID],
 		}
 	}
-
-	// 2. 构建 permission -> menuIDs 映射
-	permMenuMap := make(map[int][]int)
-
-	for _, pm := range permissionMenus {
-		permMenuMap[pm.PermissionID] = append(
-			permMenuMap[pm.PermissionID],
-			pm.MenuID,
-		)
+	var roots []*dto.MenuNodeRes
+	for _, m := range menus {
+		node := nodeMap[m.ID]
+		if m.ParentID == 0 {
+			roots = append(roots, node)
+		} else if parent, ok := nodeMap[m.ParentID]; ok {
+			parent.Children = append(parent.Children, node)
+		}
 	}
+	return roots
+}
 
-	// 3. 把权限挂到对应菜单
-	for _, p := range permissions {
+// 构建权限api树
+func (s *roleService) buildApiPermissions(perms []entity.Permission, rolePermMap map[int]bool) []*dto.ApiPermissionGroupRes {
 
-		permNode := &dto.PermissionNodeRes{
+	groupMap := make(map[string][]*dto.ApiPermissionRes)
+
+	for _, p := range perms {
+		groupMap[p.Category] = append(groupMap[p.Category], &dto.ApiPermissionRes{
 			ID:      p.ID,
 			Name:    p.Name,
 			Slug:    p.Slug,
-			Checked: rolePermissionMap[p.ID],
-		}
-
-		menuIDs := permMenuMap[p.ID]
-
-		for _, menuID := range menuIDs {
-			if menuNode, ok := menuNodeMap[menuID]; ok {
-				menuNode.Permission = append(menuNode.Permission, permNode)
-			}
-		}
+			Checked: rolePermMap[p.ID],
+		})
 	}
 
-	// 4. 构建树结构
-	var roots []*dto.RolePermissionNodeRes
-
-	for _, m := range menus {
-		node := menuNodeMap[m.ID]
-
-		if m.ParentID == nil {
-			roots = append(roots, node)
-		} else {
-			if parent, ok := menuNodeMap[*m.ParentID]; ok {
-				parent.Children = append(parent.Children, node)
-			}
-		}
+	var res []*dto.ApiPermissionGroupRes
+	for category, list := range groupMap {
+		res = append(res, &dto.ApiPermissionGroupRes{
+			Category: category,
+			List:     list,
+		})
 	}
 
-	return roots, nil
+	return res
 }
 
 func (s *roleService) UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error {

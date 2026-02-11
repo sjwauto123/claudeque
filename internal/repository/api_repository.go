@@ -80,9 +80,6 @@ func (r *apiRepository) Update(api *entity.Permission) error {
 	if api.Slug != "" {
 		updates["slug"] = api.Slug
 	}
-	if api.Type != "" {
-		updates["type"] = api.Type
-	}
 	if api.Status != 0 {
 		updates["status"] = api.Status
 	}

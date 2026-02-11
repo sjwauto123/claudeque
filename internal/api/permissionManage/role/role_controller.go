@@ -119,24 +119,19 @@ func (ctrl *RoleController) BatchDelete(c *gin.Context) {
 }
 func (ctrl *RoleController) GetRolePermissionByID(c *gin.Context) {
 	idStr := c.Param("id")
-	id, err := strconv.Atoi(idStr)
+	roleID, err := strconv.Atoi(idStr)
 	if err != nil {
 		response.BadRequest(c, errors.GetMessage(errors.CodeInvalidParam))
 		return
 	}
 
-	tree, err := ctrl.roleService.GetRolePermissionByID(id)
+	res, err := ctrl.roleService.GetRolePermissionByID(roleID)
 	if err != nil {
-		logger.Error("获取角色权限失败", zap.Error(err))
 		response.BizError(c, err)
 		return
 	}
-	if tree == nil {
-		response.NotFound(c, errors.GetMessage(errors.CodeResourceNotFound))
-		return
-	}
 
-	response.Success(c, tree)
+	response.Success(c, res)
 }
 func (ctrl *RoleController) UpdateRolePermission(c *gin.Context) {
 	idStr := c.Param("role_id")

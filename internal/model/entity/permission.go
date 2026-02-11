@@ -4,14 +4,14 @@ import "time"
 
 type Permission struct {
 	BaseEntity
-	Name       string `gorm:"column:name;size:255;not null" json:"name"`
-	Category   string `gorm:"column:category;size:255" json:"category"`
-	Slug       string `gorm:"column:slug;size:50;not null" json:"slug"`
-	Type       string `gorm:"column:type;size:50" json:"type"` // "catalogue", "menu", "permission"
-	Sort       int    `gorm:"column:sort;size:11" json:"sort"`
-	Status     int    `gorm:"column:status;size:4;not null" json:"status"`    // 0=禁用, 1=启用
-	HTTPMethod string `gorm:"column:http_method;size:191" json:"http_method"` // e.g., "GET", "POST"
-	HTTPPath   string `gorm:"column:http_path" json:"http_path"`              // 支持通配符，如 "/api/v1/users/*"
+	Name       string `gorm:"not null;comment:权限名称" json:"name"`
+	Category   string `gorm:"not null;comment:权限类别" json:"category"`
+	Slug       string `gorm:"uniqueIndex;not null;comment:权限唯一标识" json:"slug"`
+	Type       string `gorm:"comment:权限类型" json:"type"`
+	Status     int    `gorm:"default:1;comment:0-禁用 1-启用" json:"status"`
+	HTTPMethod string `gorm:"column:http_method;size:191" json:"http_method"`
+	HTTPPath   string `gorm:"column:http_path" json:"http_path"`
+	Sort       int    `gorm:"default:1;comment:菜单排序" json:"sort"`
 }
 
 func (Permission) TableName() string {

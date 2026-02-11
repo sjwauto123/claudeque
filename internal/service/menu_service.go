@@ -41,8 +41,8 @@ func (s *menuService) PageList(req *request.MenuPageQueryRequest) ([]*dto.MenuTr
 
 	for _, c := range children {
 		node := convertToNode(c)
-		if c.ParentID != nil {
-			childMap[*c.ParentID] = append(childMap[*c.ParentID], node)
+		if c.ParentID != 0 {
+			childMap[c.ParentID] = append(childMap[c.ParentID], node)
 		}
 	}
 
@@ -88,7 +88,7 @@ func (s *menuService) Create(req *request.CreateMenuRequest) error {
 		Icon:     req.Icon,
 		URI:      req.URI,
 		Sort:     req.Sort,
-		ParentID: req.ParentID,
+		ParentID: *req.ParentID,
 	}
 
 	err = s.menuRepo.Create(menu)
@@ -136,7 +136,7 @@ func (s *menuService) Update(req *request.UpdateMenuRequest) error {
 	if req.Sort != nil {
 		menu.Sort = *req.Sort
 	}
-	if req.ParentID != nil {
+	if req.ParentID != 0 {
 		menu.ParentID = req.ParentID
 	}
 
@@ -204,9 +204,9 @@ func (s *menuService) BuildMenuTree(menus []*entity.Menu) ([]*dto.MenuTreeNode, 
 	var roots []*dto.MenuTreeNode
 	for _, m := range menus {
 		node := menuMap[m.ID]
-		if m.ParentID == nil {
+		if m.ParentID == 0 {
 			roots = append(roots, node)
-		} else if parentNode, exists := menuMap[*m.ParentID]; exists {
+		} else if parentNode, exists := menuMap[m.ParentID]; exists {
 			parentNode.Children = append(parentNode.Children, node)
 		}
 	}

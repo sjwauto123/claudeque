@@ -21,10 +21,10 @@ type UserResponse struct {
 
 // LoginResponse 登录响应
 type LoginResponse struct {
-	Token       string       `json:"token"`
-	User        UserResponse `json:"user"`
-	Permissions []Permission `json:"permissions"`
-	MenusTree   []MenuNode   `json:"menus_tree"`
+	Token       string               `json:"token"`
+	User        UserResponse         `json:"user"`
+	Permissions []PermissionResponse `json:"permissions"`
+	MenusTree   []MenuNode           `json:"menus_tree"`
 }
 
 // UserInfoResponse 用户信息响应

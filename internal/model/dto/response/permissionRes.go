@@ -2,7 +2,7 @@ package response
 
 import "time"
 
-type Permission struct {
+type PermissionResponse struct {
 	ID         int       `json:"id"`
 	Name       string    `json:"name"`
 	Category   string    `json:"category"`
@@ -14,4 +14,16 @@ type Permission struct {
 	Sort       int       `json:"sort"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
+}
+
+type ApiPermissionRes struct {
+	ID      int    `json:"id"`
+	Name    string `json:"name"`
+	Slug    string `json:"slug"`
+	Checked bool   `json:"checked"`
+}
+
+type ApiPermissionGroupRes struct {
+	Category string              `json:"category"`
+	List     []*ApiPermissionRes `json:"list"`
 }

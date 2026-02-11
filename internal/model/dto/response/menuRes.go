@@ -3,7 +3,7 @@ package response
 // MenuResponse 菜单响应结构
 type MenuResponse struct {
 	ID        int    `json:"id"`
-	ParentID  *int   `json:"parent_id,omitempty"`
+	ParentID  int    `json:"parent_id,omitempty"`
 	Title     string `json:"title"`
 	Type      string `json:"type"`   // catalogue/menu/button
 	Status    int    `json:"status"` // 0=停用, 1=启用
@@ -26,20 +26,9 @@ type MenuTreeNode struct {
 	Children []*MenuTreeNode `json:"children,omitempty"`
 }
 
-// MenuWithPermissionResponse 带权限信息的菜单响应
-type MenuWithPermissionResponse struct {
-	MenuResponse
-	Permission *PermissionResponse `json:"permission,omitempty"`
-}
-
-// PermissionResponse 权限响应结构
-type PermissionResponse struct {
-	ID       int    `json:"id"`
-	Name     string `json:"name"`
-	Slug     string `json:"slug"`
-	Type     string `json:"type"`   // catalogue/menu/button
-	Status   int    `json:"status"` // 0=停用, 1=启用
-	HTTPPath string `json:"http_path,omitempty"`
-	Sort     int    `json:"sort"`
-	Category string `json:"category,omitempty"`
+type MenuNodeRes struct {
+	ID       int            `json:"id"`
+	Title    string         `json:"title"`
+	Checked  bool           `json:"checked"`
+	Children []*MenuNodeRes `json:"children,omitempty"`
 }

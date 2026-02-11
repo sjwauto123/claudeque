@@ -17,6 +17,14 @@ func NewRoleRepository(db *gorm.DB) RoleRepository {
 func (r *roleRepository) GetRoleByID(id int) (*entity.Role, error) {
 	var role entity.Role
 	err := r.db.First(&role, id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &role, nil
+}
 
 // FindBySlug 根据 Slug 查找角色
 func (r *roleRepository) FindBySlug(slug string) (*entity.Role, error) {
@@ -64,7 +72,6 @@ func (r *roleRepository) Create(role *entity.Role) error {
 }
 
 func (r *roleRepository) Update(role *entity.Role) error {
-	// 避免更新created_at引起mysql报错, 所以只修改需要更新的字段
 	updates := make(map[string]interface{})
 	if role.Name != "" {
 		updates["name"] = role.Name
@@ -72,7 +79,7 @@ func (r *roleRepository) Update(role *entity.Role) error {
 	if role.Slug != "" {
 		updates["slug"] = role.Slug
 	}
-	if role.Status != 0 { // 假设 0 是无效状态
+	if role.Status != 0 {
 		updates["status"] = role.Status
 	}
 	updates["updated_at"] = time.Now()
@@ -88,68 +95,118 @@ func (r *roleRepository) Delete(id int) error {
 func (r *roleRepository) BatchDelete(ids []int) error {
 	return r.db.Where("id IN ?", ids).Delete(&entity.Role{}).Error
 }
+
+//func (r *roleRepository) GetRolePermissionByID(roleID int) (
+//	menus []entity.Menu,
+//	permissions []entity.Permission,
+//	permissionMenus []entity.PermissionMenu,
+//	roleMenuIDs map[int]bool,
+//	rolePermissionIDs map[int]bool,
+//	err error,
+//) {
+//
+//	// 1. 所有菜单
+//	if err = r.db.
+//		Where("status = ?", 1).
+//		Order("sort ASC").
+//		Find(&menus).Error; err != nil {
+//		return
+//	}
+//
+//	// 2. 所有权限
+//	if err = r.db.
+//		Where("status = ? AND type = ?", 1, "permission").
+//		Order("sort ASC").
+//		Find(&permissions).Error; err != nil {
+//		return
+//	}
+//	// 3. 查询权限菜单关联
+//	if err = r.db.
+//		Find(&permissionMenus).Error; err != nil {
+//		return
+//	}
+//
+//	// 4. 角色菜单ID
+//	var menuIDs []int
+//	if err = r.db.
+//		Model(&entity.RoleMenu{}).
+//		Select("menu_id").
+//		Where("role_id = ?", roleID).
+//		Scan(&menuIDs).Error; err != nil {
+//		return
+//	}
+//
+//	roleMenuIDs = make(map[int]bool)
+//	for _, id := range menuIDs {
+//		roleMenuIDs[id] = true
+//	}
+//
+//	// 5. 角色权限ID
+//	var permIDs []int
+//	if err = r.db.
+//		Model(&entity.RolePermission{}).
+//		Select("permission_id").
+//		Where("role_id = ?", roleID).
+//		Scan(&permIDs).Error; err != nil {
+//		return
+//	}
+//
+//	rolePermissionIDs = make(map[int]bool)
+//	for _, id := range permIDs {
+//		rolePermissionIDs[id] = true
+//	}
+//	return
+//}
+
 func (r *roleRepository) GetRolePermissionByID(roleID int) (
 	menus []entity.Menu,
-	permissions []entity.Permission,
-	permissionMenus []entity.PermissionMenu,
-	roleMenuIDs map[int]bool,
-	rolePermissionIDs map[int]bool,
+	perms []entity.Permission,
+	roleMenuMap map[int]bool,
+	rolePermMap map[int]bool,
 	err error,
 ) {
 
-	// 1. 所有菜单
+	// 1. 菜单
 	if err = r.db.
 		Where("status = ?", 1).
-		Order("sort ASC").
+		Order("sort asc").
 		Find(&menus).Error; err != nil {
 		return
 	}
 
-	// 2. 所有权限
+	// 2. API 权限
 	if err = r.db.
-		Where("status = ? AND type = ?", 1, "permission").
-		Order("sort ASC").
-		Find(&permissions).Error; err != nil {
-		return
-	}
-	// 3. 查询权限菜单关联
-	if err = r.db.
-		Find(&permissionMenus).Error; err != nil {
+		Where("status = ?", 1).
+		Order("sort asc").
+		Find(&perms).Error; err != nil {
 		return
 	}
 
-	// 4. 角色菜单ID
+	// 3. 角色菜单
 	var menuIDs []int
-	if err = r.db.
-		Model(&entity.RoleMenu{}).
+	r.db.Model(&entity.RoleMenu{}).
 		Select("menu_id").
 		Where("role_id = ?", roleID).
-		Scan(&menuIDs).Error; err != nil {
-		return
-	}
+		Scan(&menuIDs)
 
-	roleMenuIDs = make(map[int]bool)
+	roleMenuMap = make(map[int]bool)
 	for _, id := range menuIDs {
-		roleMenuIDs[id] = true
+		roleMenuMap[id] = true
 	}
 
-	// 5. 角色权限ID
+	// 4. 角色权限
 	var permIDs []int
-	if err = r.db.
-		Model(&entity.RolePermission{}).
+	r.db.Model(&entity.RolePermission{}).
 		Select("permission_id").
 		Where("role_id = ?", roleID).
-		Scan(&permIDs).Error; err != nil {
-		return
-	}
+		Scan(&permIDs)
 
-	rolePermissionIDs = make(map[int]bool)
+	rolePermMap = make(map[int]bool)
 	for _, id := range permIDs {
-		rolePermissionIDs[id] = true
+		rolePermMap[id] = true
 	}
 	return
 }
-
 func (r *roleRepository) UpdateRolePermission(
 	roleID int,
 	menuIDs []int,

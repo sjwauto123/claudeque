@@ -134,6 +134,7 @@ func (a *App) initDependencies() {
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
 	redisRepo := repository.NewRedisRepository()
 	menuRepo := repository.NewMenuRepository(a.mysqlDB)
+	apiRepo := repository.NewAPIRepository(a.mysqlDB)
 
 	// 创建 Service
 	userSvc := service.NewUserService(userRepo, redisRepo)
@@ -143,7 +144,7 @@ func (a *App) initDependencies() {
 	menuSvc := service.NewMenuService(menuRepo)
 
 	// 创建 Router（传入所有 Service）
-	a.router = api.NewRouter(roleSvc, apiSvc, menuSvc,userSvc, authSvc) // 更新路由初始化，添加菜单服务
+	a.router = api.NewRouter(userSvc, authSvc, roleSvc, apiSvc, menuSvc) // 更新路由初始化，添加菜单服务
 }
 
 // initRouter 初始化路由

@@ -77,8 +77,6 @@ func (s *apiService) Create(req *request.CreateAPIRequest) error {
 		HTTPPath:   req.HTTPPath,
 		Sort:       req.Sort,
 	}
-	// api默认为permission类型
-	api.Type = "permission"
 
 	// 6. 保存到数据库
 	err = s.apiRepo.Create(api)
@@ -132,10 +130,6 @@ func (s *apiService) Update(req *request.UpdateAPIRequest) error {
 	}
 	if req.Sort != nil {
 		api.Sort = *req.Sort
-	}
-	if req.Type != "" {
-		// 默认为permission类型
-		api.Type = "permission"
 	}
 
 	// 4. 调用Repository层更新数据

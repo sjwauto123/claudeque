@@ -22,10 +22,9 @@ type RoleRepository interface {
 	// GetRolePermissionByID 获取角色权限树
 	GetRolePermissionByID(roleID int) (
 		menus []entity.Menu,
-		permissions []entity.Permission,
-		permissionMenus []entity.PermissionMenu,
-		roleMenuIDs map[int]bool,
-		rolePermissionIDs map[int]bool,
+		perms []entity.Permission,
+		roleMenuMap map[int]bool,
+		rolePermMap map[int]bool,
 		err error,
 	)
 	// UpdateRolePermission 更新角色权限
@@ -36,5 +35,3 @@ type RoleRepository interface {
 	// ExistsBySlug 判断角色标识是否存在
 	ExistsBySlug(slug string) (bool, error)
 }
-
-

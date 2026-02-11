@@ -80,30 +80,19 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		if err != nil || role == nil {
 			continue
 		}
-
-		for _, p := range role.Permissions {
-			if p.Status == 1 {
-				permMap[p.ID] = p
-				for _, m := range p.Menus {
-					if m.Status == 1 {
-						menuMap[m.ID] = m
-					}
-				}
-			}
-		}
 	}
 	//将entity转换为dto
-	permsDTO := make([]dto.Permission, 0, len(permMap))
+	permsDTO := make([]dto.PermissionResponse, 0, len(permMap))
 	for _, p := range permMap {
-		permsDTO = append(permsDTO, dto.Permission{
+		permsDTO = append(permsDTO, dto.PermissionResponse{
 			ID:         p.ID,
 			Name:       p.Name,
 			Category:   p.Category,
 			Slug:       p.Slug,
 			Type:       p.Type,
 			Status:     p.Status,
-			HttpMethod: p.HttpMethod,
-			HttpPath:   p.HttpPath,
+			HttpMethod: p.HTTPMethod,
+			HttpPath:   p.HTTPPath,
 			Sort:       p.Sort,
 			CreatedAt:  p.CreatedAt,
 			UpdatedAt:  p.UpdatedAt,

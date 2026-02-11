@@ -31,7 +31,7 @@ type UpdateMenuRequest struct {
 	Icon     string `json:"icon" binding:"omitempty,max=50"`
 	URI      string `json:"uri" binding:"omitempty,min=1,max=50"`
 	Sort     *int   `json:"sort" binding:"omitempty"`
-	ParentID *int   `json:"parent_id" binding:"omitempty"`
+	ParentID int    `json:"parent_id" binding:"omitempty"`
 }
 
 // BatchDeleteMenuRequest 批量删除菜单请求

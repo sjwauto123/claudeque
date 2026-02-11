@@ -86,7 +86,7 @@ func (r *menuRepository) Update(menu *entity.Menu) error {
 	if menu.Sort != 0 {
 		updates["sort"] = menu.Sort
 	}
-	if menu.ParentID != nil {
+	if menu.ParentID != 0 {
 		updates["parent_id"] = menu.ParentID
 	}
 
