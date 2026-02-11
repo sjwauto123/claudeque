@@ -4,23 +4,24 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
-	"os/exec"
 	"strconv"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Controller struct {
-	adminService service.AdminService
-	userService  service.UserService
-	authService  service.AuthService
+	adminService        service.AdminService
+	userService         service.UserService
+	authService         service.AuthService
+	userOperationLogSer service.UserOperationLogService
 }
 
-func NewController(adminService service.AdminService, userService service.UserService, authService service.AuthService) *Controller {
+func NewController(adminService service.AdminService, userService service.UserService, authService service.AuthService, userOperationLogSer service.UserOperationLogService) *Controller {
 	return &Controller{
-		adminService: adminService,
-		userService:  userService,
-		authService:  authService,
+		adminService:        adminService,
+		userService:         userService,
+		authService:         authService,
+		userOperationLogSer: userOperationLogSer,
 	}
 }
 
@@ -109,14 +110,4 @@ func (ctrl *Controller) ListUsers(c *gin.Context) {
 		return
 	}
 	response.Success(c, resp)
-}
-
-// Restart 重启系统
-func (ctrl *Controller) Restart(c *gin.Context) {
-	cmd := exec.Command("sudo", "reboot", "now")
-	if err := cmd.Start(); err != nil {
-		response.InternalError(c, "failed to restart system")
-		return
-	}
-	response.Success(c, gin.H{"message": "restarting"})
 }

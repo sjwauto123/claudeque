@@ -2,13 +2,13 @@ package service
 
 import (
 	"cloudque/internal/model/dto/response"
-	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/websocket"
 	"encoding/json"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -23,14 +23,11 @@ import (
 
 // ResourceCollector 资源收集器
 type ResourceCollector struct {
-	Pool          *websocket.ConnectionPool
-	ProcRepo      repository.ProcessRepository
-	Done          chan struct{}
-	Once          sync.Once
-	processCache  []entity.Process
-	cacheExpiry   time.Time
-	cacheDuration time.Duration
-	mutex         sync.RWMutex
+	Pool     *websocket.ConnectionPool
+	ProcRepo repository.ProcessRepository
+	Done     chan struct{}
+	Once     sync.Once
+	mutex    sync.RWMutex
 }
 
 type systemInfoService struct {
@@ -67,10 +64,9 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID uint) {
 // NewResourceCollector 创建资源收集器
 func NewResourceCollector(pool *websocket.ConnectionPool, procRepo repository.ProcessRepository) *ResourceCollector {
 	return &ResourceCollector{
-		Pool:          pool,
-		ProcRepo:      procRepo,
-		Done:          make(chan struct{}),
-		cacheDuration: 20 * time.Second, // 缓存10秒
+		Pool:     pool,
+		ProcRepo: procRepo,
+		Done:     make(chan struct{}),
 	}
 }
 
@@ -145,9 +141,9 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 func getDiskInfo() (*response.CpuInfoResponse, error) {
 	// 获取主挂载点（Linux/macOS 用 "/", Windows 用 "C:\\")
 	mountPoint := "/"
-	//if runtime.GOOS == "windows" {
-	//	mountPoint = "C:\\"
-	//}
+	if runtime.GOOS == "windows" {
+		mountPoint = "C:\\"
+	}
 
 	usage, err := disk.Usage(mountPoint)
 	if err != nil {
@@ -236,73 +232,23 @@ func GetNvidiaGPUInfo() ([]response.GPUInfoResponse, error) {
 
 // collectProcessInfo 收集进程信息
 func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoResponse, error) {
-	// 从缓存或数据库获取进程信息
-	processes, err := rc.getProcessesFromCache()
-	if err != nil {
-		return nil, fmt.Errorf("查询进程信息失败: %w", err)
-	}
-
+	// 从redis获取进程信息
+	//processes, err := rc.getProcessesFromCache()
+	//if err != nil {
+	//	return nil, fmt.Errorf("查询进程信息失败: %w", err)
+	//}
+	processes := []int{3188, 6132, 32133, 20700, 22360}
 	var processInfos []response.ProcessInfoResponse
 	for _, p := range processes {
-		// 检查进程是否存在,检查每个进程是否真的在运行
-		if isProcessRunning(p.PID) {
-			// 通过本地命令获取进程的详细信息
-			info, err := getProcessDetails(p.PID)
-			fmt.Println("获取的进程详情：", info)
-			if err == nil {
-				processInfos = append(processInfos, info)
-			}
+		// 通过本地命令获取进程的详细信息
+		info, err := getProcessDetails(p)
+		fmt.Println("获取的进程详情：", info)
+		if err == nil {
+			processInfos = append(processInfos, info)
 		}
 	}
 
 	return processInfos, nil
-}
-
-// getProcessesFromCache 从缓存或数据库获取进程信息
-func (rc *ResourceCollector) getProcessesFromCache() ([]entity.Process, error) {
-	rc.mutex.RLock()
-	cacheValid := time.Now().Before(rc.cacheExpiry)
-	cachedProcesses := rc.processCache
-	rc.mutex.RUnlock()
-
-	if cacheValid && len(cachedProcesses) > 0 {
-		logger.Info("使用缓存的进程信息")
-		return cachedProcesses, nil
-	}
-
-	// 缓存过期，从数据库查询
-	logger.Info("从数据库查询进程信息")
-	processes, err := rc.ProcRepo.FindAll()
-	if err != nil {
-		return nil, err
-	}
-
-	// 更新缓存
-	rc.mutex.Lock()
-	rc.processCache = processes
-	rc.cacheExpiry = time.Now().Add(rc.cacheDuration)
-	rc.mutex.Unlock()
-	return processes, nil
-}
-
-// isProcessRunning 检查进程是否正在运行
-func isProcessRunning(pid int) bool {
-	// 跨平台检查进程是否存在
-	p, err := process.NewProcess(int32(pid))
-	if err != nil {
-		return false
-	}
-
-	// 尝试不同的方法检查进程状态
-	// 在Windows上，Status()方法可能不可用，尝试使用其他方法
-	//if runtime.GOOS == "windows" {
-	//	// 在Windows上，尝试获取进程名称
-	//	_, err = p.Name()
-	//	return err == nil
-	//} else {
-	// 在Linux上，使用Status()方法
-	_, err = p.Status()
-	return err == nil
 }
 
 // getProcessDetails 获取进程的详细信息

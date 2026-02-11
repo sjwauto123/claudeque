@@ -9,15 +9,48 @@ import (
 )
 
 type Controller struct {
-	userOperationLogSer service.UserOperationLogService
-	authService         service.AuthService
+	adminOperationLogSer service.AdminOperationLogService
+	userOperationLogSer  service.UserOperationLogService
+	authService          service.AuthService
 }
 
-func NewController(userOperationLogCon service.UserOperationLogService, authService service.AuthService) *Controller {
+func NewController(
+	adminOperationLogSer service.AdminOperationLogService,
+	userOperationLogSer service.UserOperationLogService,
+	authService service.AuthService,
+) *Controller {
 	return &Controller{
-		userOperationLogSer: userOperationLogCon,
-		authService:         authService,
+		adminOperationLogSer: adminOperationLogSer,
+		userOperationLogSer:  userOperationLogSer,
+		authService:          authService,
 	}
+}
+
+func (ctrl *Controller) GetAdminLogs(c *gin.Context) {
+	var req request.AdminLogsRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.BadRequest(c, "请求参数错误")
+		return
+	}
+
+	page := req.Page
+	if page < 1 {
+		page = 1
+	}
+	size := req.Size
+	if size < 1 {
+		size = 10
+	}
+	if size > 100 {
+		size = 100
+	}
+
+	data, err := ctrl.adminOperationLogSer.GetAdminLogs(&req)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, data)
 }
 
 func (ctrl *Controller) GetUserLogs(c *gin.Context) {
@@ -73,5 +106,4 @@ func (ctrl *Controller) GetUserLogs(c *gin.Context) {
 	}
 
 	response.Success(c, data)
-
 }

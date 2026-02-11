@@ -12,15 +12,17 @@ import (
 
 // Controller 认证控制器
 type Controller struct {
-	authService service.AuthService
-	userService service.UserService
+	authService             service.AuthService
+	userService             service.UserService
+	userOperationLogService service.UserOperationLogService
 }
 
 // NewController 创建认证控制器
-func NewController(authService service.AuthService, userService service.UserService) *Controller {
+func NewController(authService service.AuthService, userService service.UserService, userOperationLogService service.UserOperationLogService) *Controller {
 	return &Controller{
-		authService: authService,
-		userService: userService,
+		authService:             authService,
+		userService:             userService,
+		userOperationLogService: userOperationLogService,
 	}
 }
 

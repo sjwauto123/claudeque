@@ -3,10 +3,8 @@
 package system
 
 import (
-	"cloudque/internal/middleware"
 	"cloudque/internal/service"
 	"cloudque/pkg/logger"
-	"cloudque/pkg/response"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -20,26 +18,28 @@ var upgrader = websocket.Upgrader{
 }
 
 type Controller struct {
-	syInfoSvc service.SystemInfoService
-	authSvc   service.AuthService
+	syInfoSvc               service.SystemInfoService
+	authSvc                 service.AuthService
+	userOperationLogService service.UserOperationLogService
 }
 
-func NewController(svc service.SystemInfoService, authSvc service.AuthService) *Controller {
+func NewController(svc service.SystemInfoService, authSvc service.AuthService, userOperationLogService service.UserOperationLogService) *Controller {
 	return &Controller{
-		syInfoSvc: svc,
-		authSvc:   authSvc,
+		syInfoSvc:               svc,
+		authSvc:                 authSvc,
+		userOperationLogService: userOperationLogService,
 	}
 }
 
 func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 
-	value, exists := c.Get(middleware.ContextUserID)
-	if !exists {
-		response.BadRequest(c, "未找到用户信息")
-		return
-	}
+	//value, exists := c.Get(middleware.ContextUserID)
+	//if !exists {
+	//	response.BadRequest(c, "未找到用户信息")
+	//	return
+	//}
 
-	userID := value.(uint)
+	userID := 1
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
@@ -49,5 +49,5 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 		return
 	}
 	// 处理WebSocket连接
-	ctrl.syInfoSvc.HandleSyMessage(conn, userID)
+	ctrl.syInfoSvc.HandleSyMessage(conn, uint(userID))
 }

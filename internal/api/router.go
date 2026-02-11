@@ -8,6 +8,7 @@ import (
 	"cloudque/internal/api/v1/user"
 	"cloudque/internal/middleware"
 	"cloudque/internal/service"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -22,18 +23,20 @@ type Router struct {
 
 // NewRouter 创建路由
 func NewRouter(
-	userLogService service.UserOperationLogService,
+	userOperationLogService service.UserOperationLogService,
+	adminOperationLogService service.AdminOperationLogService,
 	infoService service.SystemInfoService,
 	userService service.UserService,
 	authService service.AuthService,
+
 	// 新增
 ) *Router {
 	return &Router{
-		userCtrl:         user.NewController(userService),
-		authCtrl:         auth.NewController(authService, userService),
-		adminCtrl:        admin.NewController(userService, userService, authService),
-		operationLogCtrl: operationLogs.NewController(userLogService, authService),
-		systemInfoCtrl:   system.NewController(infoService, authService),
+		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),
+		userCtrl:         user.NewController(userService, userOperationLogService),
+		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
+		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService),
+		systemInfoCtrl:   system.NewController(infoService, authService, userOperationLogService),
 	}
 }
 
@@ -68,7 +71,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 	}
 
 	//API v2 路由组,用户操作日志输出
-	v2 := engine.Group("/api")
+	v2 := engine.Group("/api/operationLogs")
 
 	{
 		r.operationLogCtrl.RegisterRoutes(v2)

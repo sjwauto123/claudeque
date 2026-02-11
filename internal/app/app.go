@@ -110,7 +110,7 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
-		&entity.OperationLog{},
+		&entity.UserOperationLog{},
 		&entity.BaseEntity{},
 		&entity.Process{},
 		&entity.User{},
@@ -123,58 +123,29 @@ func (a *App) initDatabase() error {
 		logger.Info("数据库迁移完成")
 	}
 
-	initRedis, err := database.InitRedis(&a.cfg.Database.Redis)
-	if err != nil {
-		return fmt.Errorf("redis 初始化失败: %w", err)
-	}
-	a.redis = initRedis
 	return nil
 }
 
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
-	operationLogRepo := repository.NewOperationLogRepository(a.mysqlDB)
+	userLogRepo := repository.NewUserOperationLogRepository(a.mysqlDB)
+	adminLogRepo := repository.NewAdminOperationLogRepository(a.mysqlDB)
 	processRepo := repository.NewProcessRepository(a.mysqlDB)
 	userRepo := repository.NewUserRepository(a.mysqlDB)
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
 	redisRepo := repository.NewRedisRepository()
 
 	// 创建 Service
-	userLogSvc := service.NewUserOperationLogService(operationLogRepo)
+	userLogSvc := service.NewUserOperationLogService(userLogRepo)
+	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
 	infoService := service.NewSystemInfoService(a.pool, processRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo)
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, infoService, userSvc, authSvc)
+	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc)
 
-	// 启动日志限制定时任务
-	go a.startLogLimitTask(userLogSvc)
-}
-
-// startLogLimitTask 启动日志限制定时任务
-func (a *App) startLogLimitTask(adminLogSvc service.UserOperationLogService) {
-	// 日志保留数量限制
-	const logLimit int64 = 10000
-
-	// 立即执行一次
-	if err := adminLogSvc.LimitLogs(logLimit); err != nil {
-		logger.Errorf("日志限制失败: %v", err)
-	}
-
-	// 创建定时器，每天执行一次
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		if err := adminLogSvc.LimitLogs(logLimit); err != nil {
-			logger.Errorf("日志限制失败: %v", err)
-		} else {
-			logger.Info("操作日志限制执行成功，保留最近10000条日志")
-		}
-	}
 }
 
 // Shutdown 关闭应用

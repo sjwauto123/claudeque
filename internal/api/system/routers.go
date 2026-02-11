@@ -6,7 +6,9 @@ import (
 )
 
 func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
-	router.Use(middleware.Auth())
-	router.Use(middleware.RequirePermission(ctrl.authSvc, "getSystemInfo"))
-	router.GET("/system/cpuInfo", ctrl.HandleWebSocket)
+	//router.Use(middleware.Auth())
+	//router.Use(middleware.RequirePermission(ctrl.authSvc, "getSystemInfo"))
+	router.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
+
+	router.GET("/system/cpuInfo", middleware.WithOperation("获取系统信息"), ctrl.HandleWebSocket)
 }

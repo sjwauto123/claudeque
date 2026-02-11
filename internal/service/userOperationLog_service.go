@@ -10,10 +10,10 @@ import (
 )
 
 type userOperationLogService struct {
-	userOperationLogRep repository.OperationLogRepository
+	userOperationLogRep repository.UserOperationLogRepository
 }
 
-func NewUserOperationLogService(userLogRep repository.OperationLogRepository) UserOperationLogService {
+func NewUserOperationLogService(userLogRep repository.UserOperationLogRepository) UserOperationLogService {
 	return &userOperationLogService{userOperationLogRep: userLogRep}
 }
 func (u *userOperationLogService) GetUserLogs(r *request.UserLogsRequest, start time.Time, end time.Time) (interface{}, error) {
@@ -30,32 +30,7 @@ func (u *userOperationLogService) GetUserLogs(r *request.UserLogsRequest, start 
 	return response.NewPageResponse(logs, total, r.Page, r.Size), nil
 }
 
-// LimitLogs 限制日志数量
-func (u *userOperationLogService) LimitLogs(limit int64) error {
-	err := u.userOperationLogRep.LimitLogs(limit)
-	if err != nil {
-		return errors.NewWithErr(errors.CodeInternalError, "限制日志数量失败", err)
-	}
-	return nil
-}
-
-func (u *userOperationLogService) CreateLog(username, actionType, object, description string, success bool) error {
-	status := 0
-	if !success {
-		status = 1
-	}
-
-	log := &entity.OperationLog{
-		Username:    username,
-		ActionType:  actionType,
-		Object:      object,
-		Description: description,
-		Status:      status,
-	}
-
-	err := u.userOperationLogRep.CreateLog(log)
-	if err != nil {
-		return errors.NewWithErr(errors.CodeInternalError, "创建操作日志失败", err)
-	}
-	return nil
+// CreateLog 创建操作日志
+func (u *userOperationLogService) CreateLog(log *entity.UserOperationLog) error {
+	return u.userOperationLogRep.CreateLog(log)
 }
