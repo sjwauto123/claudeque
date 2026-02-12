@@ -11,6 +11,8 @@ import (
 type JobRepository interface {
 	// GetJobList 获取任务列表
 	GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error)
+	// GetWaitJobList 获取正在排队的任务列表
+	GetWaitJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error)
 	// Create 新建任务
 	Create(job *entity.Job) error
 	// GetByID 根据ID获得任务信息
@@ -20,7 +22,7 @@ type JobRepository interface {
 	// GetQueueJobsByIDs 通过任务id获取任务信息
 	GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJobDBRow, error)
 	// GetQueueJobListFiltered 按队列顺序、条件筛选、分页获取排队任务
-	GetQueueJobListFiltered(orderedJobIDs []int, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error)
+	GetQueueJobListFiltered(orderedJobIDs []int, req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
 }

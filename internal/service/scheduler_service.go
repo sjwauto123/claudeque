@@ -25,6 +25,7 @@ type scheduler struct {
 	queueSvc    QueueService
 	gpuSvc      GpuService
 	processRepo repository.ProcessRepository
+	procCache   repository.ProcessCacheRepository
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -41,18 +42,26 @@ type scheduler struct {
 type JobProcess struct {
 	cmd     *exec.Cmd
 	jobID   int
+	jobName string
 	cardIDs []int
 	done    chan struct{}
 }
 
 // NewScheduler 创建调度器
-func NewScheduler(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc GpuService, processRepo repository.ProcessRepository) Scheduler {
+func NewScheduler(
+	jobRepo repository.JobRepository,
+	queueSvc QueueService,
+	gpuSvc GpuService,
+	processRepo repository.ProcessRepository,
+	procCache repository.ProcessCacheRepository,
+) Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &scheduler{
 		jobRepo:     jobRepo,
 		queueSvc:    queueSvc,
 		gpuSvc:      gpuSvc,
 		processRepo: processRepo,
+		procCache:   procCache,
 		ctx:         ctx,
 		cancel:      cancel,
 		runningJobs: make(map[int]*JobProcess),
@@ -71,7 +80,7 @@ func (s *scheduler) Start() {
 	s.isRunning = true
 
 	s.wg.Add(1)
-	go s.Run()
+	go s.run()
 
 	logger.Info("任务调度器已启动")
 }
@@ -86,11 +95,11 @@ func (s *scheduler) Stop() {
 	s.isRunning = false
 	s.mu.Unlock()
 
-	// 1立即取消上下文，停止 Run() 循环中的 Ticker 触发
+	// 立即取消上下文，停止 Run() 循环中的 Ticker 触发
 	s.cancel()
 
-	// 2. 终止所有正在运行的任务
-	// 这里会触发 MonitorJob 退出并执行清理逻辑
+	// 终止所有正在运行的任务
+	// 触发 MonitorJob 退出并执行清理逻辑
 	s.TerminateAllRunningJobs()
 
 	// 3. 等待所有goroutine退出（包括 Run 和所有的 MonitorJob）
@@ -149,8 +158,8 @@ func (s *scheduler) terminateSingleJob(jobID int, jp *JobProcess) {
 	logger.Info("残留任务清理完成", zap.Int("job_id", jobID))
 }
 
-// Run 调度器主循环
-func (s *scheduler) Run() {
+// run 调度器主循环
+func (s *scheduler) run() {
 	defer s.wg.Done()
 
 	ticker := time.NewTicker(3 * time.Second)
@@ -161,13 +170,13 @@ func (s *scheduler) Run() {
 		case <-s.ctx.Done():
 			return
 		case <-ticker.C:
-			s.ProcessQueue()
+			s.processQueue()
 		}
 	}
 }
 
-// ProcessQueue 处理排队队列
-func (s *scheduler) ProcessQueue() {
+// processQueue 处理排队队列
+func (s *scheduler) processQueue() {
 	// 检查调度器是否正在运行，如果正在停止，则不再处理新任务
 	s.mu.RLock()
 	if !s.isRunning {
@@ -205,63 +214,71 @@ func (s *scheduler) ProcessQueue() {
 	// 检查任务状态
 	if job.Status != entity.JobStatusQueued && job.Status != entity.JobStatusWaitingGpu {
 		// 任务状态异常，从队列移除
-		logger.Warn("任务状态异常，从队列移除",
-			zap.Int("job_id", job.ID),
-			zap.Int("status", job.Status))
+		logger.Warn("任务状态异常，从队列移除", zap.Int("job_id", job.ID), zap.Int("status", job.Status))
 		if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
 			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
 		}
 		return
 	}
 
-	// 检查是否有足够的空闲显卡
-	idleCount, err := s.gpuSvc.GetIdleCount(s.ctx)
-	if err != nil {
-		logger.Error("获取空闲显卡数量失败", zap.Error(err))
-		return
-	}
-
-	if idleCount < job.GpuCount {
-		// 显卡不足，更新任务状态为等待显卡
-		if job.Status != entity.JobStatusWaitingGpu {
-			if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusWaitingGpu); err != nil {
-				logger.Error("更新任务状态失败", zap.Error(err))
+	// 解析任务需要的显卡 ID
+	var cardIDs []int
+	if job.GpuIDs != "" {
+		idStrs := strings.Split(job.GpuIDs, ",")
+		for _, s := range idStrs {
+			id, err := strconv.Atoi(strings.TrimSpace(s))
+			if err != nil {
+				logger.Warn("解析任务显卡ID失败", zap.Error(err), zap.Int("job_id", job.ID), zap.String("gpu_ids", job.GpuIDs))
+				continue
 			}
+			cardIDs = append(cardIDs, id)
 		}
-		logger.Debug("等待足够显卡",
-			zap.Int("job_id", job.ID),
-			zap.Int("need", job.GpuCount),
-			zap.Int("idle", idleCount))
-		return
 	}
 
-	// 执行任务
-	if err := s.ExecuteJob(job); err != nil {
-		logger.Error("执行任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-		// 更新任务状态为失败
-		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
-			logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
-		// 从队列移除
-		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
+	if len(cardIDs) == 0 {
+		logger.Warn("任务未指定显卡ID", zap.Int("job_id", job.ID))
+		if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
 			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return
 	}
 
-	// 从队列移除
-	if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
-		logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
+	// 检查显卡是否可用
+	available, err := s.gpuSvc.CheckAvailable(s.ctx, cardIDs)
+	if err != nil {
+		logger.Error("检查显卡状态失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
+		return
+	}
+
+	if !available {
+		// 显卡不可用，更新任务状态为等待显卡
+		if job.Status != entity.JobStatusWaitingGpu {
+			if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusWaitingGpu); err != nil {
+				logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
+			}
+		}
+		return
+	}
+
+	// 显卡可用，执行任务
+	if err := s.executeJob(job, cardIDs); err != nil {
+		logger.Error("启动任务失败", zap.Error(err), zap.Int("job_id", job.ID))
+		// 如果启动失败，状态在 executeJob 内部已经处理
+		return
+	}
+
+	// 启动成功，从队列移除
+	if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
+		logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
 	}
 }
 
-// ExecuteJob 执行任务
-func (s *scheduler) ExecuteJob(job *entity.Job) error {
+// executeJob 执行任务
+func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	logger.Info("开始执行任务", zap.Int("job_id", job.ID), zap.String("name", job.Name))
 
 	// 占用显卡
-	cardIDs, err := s.gpuSvc.AcquireCards(s.ctx, job.GpuCount, job.ID)
-	if err != nil {
+	if err := s.gpuSvc.AcquireCards(s.ctx, cardIDs, job.ID); err != nil {
 		return fmt.Errorf("占用显卡失败: %w", err)
 	}
 
@@ -289,13 +306,20 @@ func (s *scheduler) ExecuteJob(job *entity.Job) error {
 	cmd := exec.Command("python", "-u", scriptPath)
 	cmd.Dir = filepath.Dir(scriptPath)
 
+	// 获取显存中的显卡信息以获取其当前的系统索引
+	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
+	if err != nil {
+		logger.Error("获取显卡详情失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
+		return fmt.Errorf("获取显卡详情失败: %w", err)
+	}
+
 	// 设置环境变量，指定使用的GPU
-	gpuIDs := make([]string, len(cardIDs))
-	for i, id := range cardIDs {
-		gpuIDs[i] = strconv.Itoa(id - 1)
+	gpuIndices := make([]string, len(cards))
+	for i, card := range cards {
+		gpuIndices[i] = strconv.Itoa(card.Index)
 	}
 	cmd.Env = append(os.Environ(),
-		"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIDs, ","),
+		"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
 		"JOB_ID="+strconv.Itoa(job.ID),
 		"PYTHONUNBUFFERED=1",
 	)
@@ -315,6 +339,7 @@ func (s *scheduler) ExecuteJob(job *entity.Job) error {
 	jp := &JobProcess{
 		cmd:     cmd,
 		jobID:   job.ID,
+		jobName: job.Name,
 		cardIDs: cardIDs,
 		done:    make(chan struct{}),
 	}
@@ -335,9 +360,14 @@ func (s *scheduler) ExecuteJob(job *entity.Job) error {
 		}
 	}
 
-	// 启动goroutine监控任务执行状态
+	// 写入进程缓存
+	if err := s.procCache.CreatePid(s.ctx, pid, job.Name); err != nil {
+		logger.Warn("写入进程缓存失败", zap.Error(err), zap.String("job_name", job.Name), zap.Int("pid", pid))
+	}
+
+	// 监控进程
 	s.wg.Add(1)
-	go s.MonitorJob(jp)
+	go s.monitorJob(jp)
 
 	logger.Info("任务已启动",
 		zap.Int("job_id", job.ID),
@@ -347,10 +377,11 @@ func (s *scheduler) ExecuteJob(job *entity.Job) error {
 	return nil
 }
 
-// MonitorJob 监控任务执行状态
-func (s *scheduler) MonitorJob(jp *JobProcess) {
+// monitorJob 监控任务执行状态
+func (s *scheduler) monitorJob(jp *JobProcess) {
 	jobID := jp.jobID
 	cardIDs := jp.cardIDs
+	jobName := jp.jobName
 
 	defer s.wg.Done()
 	defer close(jp.done)
@@ -363,9 +394,23 @@ func (s *scheduler) MonitorJob(jp *JobProcess) {
 		// 释放显卡和清理进程表使用 Background，确保在程序关闭时也能执行成功
 		cleanupCtx := context.Background()
 
-		// 从进程表中删除
-		if err := s.processRepo.DeleteByJobID(jobID); err != nil {
-			logger.Warn("删除进程记录失败", zap.Error(err), zap.Int("job_id", jobID))
+		// 删除进程缓存
+		if err := s.procCache.DelPid(cleanupCtx, jobName); err != nil {
+			logger.Warn("删除进程缓存失败", zap.Error(err), zap.String("job_Name", jobName))
+		}
+
+		// 更新进程表，记录结束时间
+		now := time.Now()
+		processes, err := s.processRepo.FindActiveByJobID(jobID)
+		if err == nil {
+			for _, p := range processes {
+				p.EndedAt = &now
+				if err := s.processRepo.Update(&p); err != nil {
+					logger.Warn("更新进程结束时间失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", p.PID))
+				}
+			}
+		} else {
+			logger.Warn("查询活跃进程记录失败", zap.Error(err), zap.Int("job_id", jobID))
 		}
 
 		// 释放显卡
@@ -407,5 +452,5 @@ func (s *scheduler) MonitorJob(jp *JobProcess) {
 	}
 
 	// 尝试调度下一个任务
-	go s.ProcessQueue()
+	go s.processQueue()
 }

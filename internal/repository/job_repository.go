@@ -2,15 +2,17 @@ package repository
 
 import (
 	"errors"
+	"fmt"
 	"strconv"
 	"strings"
 
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
+	"time"
+
 	"github.com/redis/go-redis/v9"
 	"gorm.io/gorm"
-	"time"
 )
 
 type jobRepository struct {
@@ -24,24 +26,41 @@ func NewJobRepository(db *gorm.DB, rs *redis.Client) JobRepository {
 }
 
 // GetJobList 获取任务列表
-func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
-	var (
-		list  []response.JobResponse
-		total int64
-	)
+func (r *jobRepository) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
+	return r.getJobListWithFilters(req, startTime, endTime, userID, req.Status)
+}
+
+// GetWaitJobList 获取正在排队的任务列表
+func (r *jobRepository) GetWaitJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
+	statusFilter := []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu}
+	return r.getJobListWithFilters(req, startTime, endTime, userID, statusFilter)
+}
+
+// getJobListWithFilters 内部公共方法：根据过滤条件获取任务列表
+func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int, statusFilter interface{}) ([]response.JobResponse, int64, int, int, error) {
+	list := make([]response.JobResponse, 0)
+	var total int64
 
 	baseDB := r.db.Table("jobs j").
 		Where("j.user_id = ?", userID)
 
+	// 状态过滤
+	if statusFilter != nil {
+		switch v := statusFilter.(type) {
+		case int:
+			if v > 0 {
+				baseDB = baseDB.Where("j.status = ?", v)
+			}
+		case []int:
+			if len(v) > 0 {
+				baseDB = baseDB.Where("j.status IN ?", v)
+			}
+		}
+	}
+
 	// 条件
 	if req.Id > 0 {
 		baseDB = baseDB.Where("j.id = ?", req.Id)
-	}
-	if req.Status > 0 {
-		baseDB = baseDB.Where("j.status = ?", req.Status)
-	} else if req.Status == 0 {
-		// 默认显示排队中(1)和等待资源(6)的任务
-		baseDB = baseDB.Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
 	}
 	if req.Name != "" {
 		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
@@ -70,11 +89,7 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 			0 AS count
 		`).
 		Joins(`
-			LEFT JOIN (
-				SELECT current_job_id,
-					   GROUP_CONCAT(name ORDER BY id SEPARATOR ',') AS card
-				FROM gpu_cards
-				GROUP BY current_job_id
+			LEFT JOIN (SELECT current_job_id,GROUP_CONCAT(name ORDER BY id SEPARATOR ',') AS card FROM gpu_cards GROUP BY current_job_id
 			) g ON g.current_job_id = j.id
 		`).
 		Order("j.created_at DESC").
@@ -90,7 +105,7 @@ func (r jobRepository) GetJobList(req request.JobListRequest, startTime time.Tim
 }
 
 // Create 创建任务
-func (r jobRepository) Create(job *entity.Job) error {
+func (r *jobRepository) Create(job *entity.Job) error {
 	if err := r.db.Create(job).Error; err != nil {
 		return err
 	}
@@ -98,11 +113,11 @@ func (r jobRepository) Create(job *entity.Job) error {
 }
 
 // GetByID 根据ID获取任务
-func (r jobRepository) GetByID(id int) (*entity.Job, error) {
+func (r *jobRepository) GetByID(id int) (*entity.Job, error) {
 	var job entity.Job
 	if err := r.db.First(&job, id).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+			return nil, fmt.Errorf("任务id为：%d 的任务不存在", id)
 		}
 		return nil, err
 	}
@@ -110,7 +125,7 @@ func (r jobRepository) GetByID(id int) (*entity.Job, error) {
 }
 
 // UpdateStatus 更新任务状态
-func (r jobRepository) UpdateStatus(id int, status int) error {
+func (r *jobRepository) UpdateStatus(id int, status int) error {
 	now := time.Now()
 	updates := map[string]interface{}{"status": status}
 
@@ -126,7 +141,7 @@ func (r jobRepository) UpdateStatus(id int, status int) error {
 }
 
 // GetQueueJobsByIDs 通过任务id获取任务信息
-func (r jobRepository) GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJobDBRow, error) {
+func (r *jobRepository) GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJobDBRow, error) {
 	if len(jobIDs) == 0 {
 		return map[int]response.QueueJobDBRow{}, nil
 	}
@@ -159,7 +174,7 @@ func (r jobRepository) GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJo
 }
 
 // GetQueueJobListFiltered 按队列顺序、条件筛选、分页获取排队任务
-func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error) {
+func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error) {
 	if len(orderedJobIDs) == 0 {
 		return []response.QueueJobDBRow{}, 0, nil
 	}
@@ -175,13 +190,10 @@ func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request.
 		`).
 		Joins("LEFT JOIN users u ON u.id = j.user_id").
 		Where("j.id IN ?", orderedJobIDs)
-
+	// 只查排队的和等待显卡的
+	baseDB = baseDB.Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
 	if req.Id > 0 {
 		baseDB = baseDB.Where("j.id = ?", req.Id)
-	}
-	if req.Status == 0 {
-		// 默认显示排队中(1)和等待资源(6)的任务
-		baseDB = baseDB.Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
 	}
 	if req.Name != "" {
 		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
@@ -221,7 +233,7 @@ func (r jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request.
 }
 
 // GetStats 获取任务统计
-func (r jobRepository) GetStats() (*response.JobStatsResponse, error) {
+func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	var result response.JobStatsResponse
 	var total, running, queued, exception int64
 
@@ -235,7 +247,7 @@ func (r jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	}
 	result.Running = int(running)
 
-	if err := r.db.Model(&entity.Job{}).Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu}).Count(&queued).Error; err != nil {
+	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu}).Count(&queued).Error; err != nil {
 		return nil, err
 	}
 	result.Queued = int(queued)

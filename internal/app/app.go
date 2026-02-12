@@ -4,12 +4,13 @@ import (
 	"cloudque/pkg/websocket"
 	"context"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"cloudque/internal/api"
 	"cloudque/internal/model/entity"
@@ -153,7 +154,6 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
-	operationLogRepo := repository.NewOperationLogRepository(a.mysqlDB)
 	processRepo := repository.NewProcessRepository(a.mysqlDB)
 	userRepo := repository.NewUserRepository(a.mysqlDB)
 	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
@@ -162,47 +162,19 @@ func (a *App) initDependencies() {
 	queueRepo := repository.NewQueueRepository(a.redis)
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
 	redisRepo := repository.NewRedisRepository()
+	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
 
 	// 创建 Service
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
-	userLogSvc := service.NewUserOperationLogService(operationLogRepo)
-	infoService := service.NewSystemInfoService(a.pool, processRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo)
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 
 	// 创建调度器
-	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo)
+	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo)
-
-	// 启动日志限制定时任务
-	go a.startLogLimitTask(userLogSvc)
-}
-
-// startLogLimitTask 启动日志限制定时任务
-func (a *App) startLogLimitTask(adminLogSvc service.UserOperationLogService) {
-	// 日志保留数量限制
-	const logLimit int64 = 10000
-
-	// 立即执行一次
-	if err := adminLogSvc.LimitLogs(logLimit); err != nil {
-		logger.Errorf("日志限制失败: %v", err)
-	}
-
-	// 创建定时器，每天执行一次
-	ticker := time.NewTicker(24 * time.Hour)
-	defer ticker.Stop()
-
-	for {
-		<-ticker.C
-		if err := adminLogSvc.LimitLogs(logLimit); err != nil {
-			logger.Errorf("日志限制失败: %v", err)
-		} else {
-			logger.Info("操作日志限制执行成功，保留最近10000条日志")
-		}
-	}
+	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc)
 }
 
 // Shutdown 关闭应用

@@ -1,14 +1,16 @@
 package service
 
 import (
+	"cloudque/internal/model/dto/response"
 	"context"
-	"errors"
 	"fmt"
 
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
+	"cloudque/pkg/logger"
+	"cloudque/pkg/utils"
 
-	"gorm.io/gorm"
+	"go.uber.org/zap"
 )
 
 // GpuService GPU管理服务
@@ -22,69 +24,93 @@ func NewGpuService(gpuRepo repository.GpuRepository, gpuCache repository.GpuCach
 	return &gpuService{gpuRepo: gpuRepo, gpuCache: gpuCache}
 }
 
-const (
-	totalGpuCount = 4 // 总显卡数量
-)
-
 // InitializeGpus 初始化GPU卡片
-// 只补齐缺失的GPU，不修改现有状态（防止进程重启时丢失正在运行的任务状态）
 func (s *gpuService) InitializeGpus(ctx context.Context) error {
-	for i := 0; i < totalGpuCount; i++ {
-		name := fmt.Sprintf("gpu-%d", i)
-		_, err := s.gpuRepo.FindByName(ctx, name)
+	return s.SyncGpuCards(ctx)
+}
+
+// SyncGpuCards 从系统同步GPU信息到数据库
+func (s *gpuService) SyncGpuCards(ctx context.Context) error {
+	logger.Info("开始同步系统GPU信息")
+
+	gpus, err := utils.GetGpuInfo()
+	if err != nil {
+		return fmt.Errorf("获取系统GPU信息失败: %w", err)
+	}
+
+	if len(gpus) == 0 {
+		logger.Warn("未检测到系统GPU")
+		return nil
+	}
+
+	var cards []entity.GpuCard
+	for _, info := range gpus {
+		cards = append(cards, entity.GpuCard{
+			UUID:    info.UUID,
+			Name:    info.Name,
+			Index:   info.Index,
+			GpuType: info.Type,
+			Memory:  info.Memory,
+			Status:  entity.GpuStatusIdle,
+		})
+	}
+
+	if err := s.gpuRepo.SyncCards(ctx, cards); err != nil {
+		return fmt.Errorf("同步GPU信息到数据库失败: %w", err)
+	}
+
+	// 初始化缓存状态，确保数据库与缓存一致
+	for _, card := range cards {
+		dbCard, err := s.gpuRepo.FindByUUID(ctx, card.UUID)
 		if err == nil {
-			continue
+			if dbCard.Status == entity.GpuStatusIdle {
+				_ = s.gpuCache.SetIdle(ctx, dbCard.ID)
+			} else if dbCard.Status == entity.GpuStatusBusy && dbCard.CurrentJobID != nil {
+				_ = s.gpuCache.SetBusy(ctx, dbCard.ID, *dbCard.CurrentJobID)
+			}
 		}
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return fmt.Errorf("查询 GPU %s 失败: %w", name, err)
-		}
-		gpu := entity.GpuCard{
-			Name:   name,
-			Status: entity.GpuStatusIdle,
-		}
-		if err := s.gpuRepo.Create(ctx, &gpu); err != nil {
-			return fmt.Errorf("创建GPU-%d失败: %w", i, err)
-		}
-		// 使用缓存层设置状态
-		if err := s.gpuCache.SetIdle(ctx, gpu.ID); err != nil {
-			return fmt.Errorf("初始化GPU-%d缓存失败: %w", i, err)
+	}
+
+	logger.Info("系统GPU信息同步完成", zap.Int("count", len(gpus)))
+	return nil
+}
+
+// GetGpuCardsByIDs 根据ID列表获取显卡信息
+func (s *gpuService) GetGpuCardsByIDs(ctx context.Context, ids []int) ([]entity.GpuCard, error) {
+	return s.gpuRepo.GetByIDs(ctx, ids)
+}
+
+// CheckAvailable 检查显卡是否可用
+func (s *gpuService) CheckAvailable(ctx context.Context, cardIDs []int) (bool, error) {
+	// 优先尝试从缓存检查
+	available, err := s.gpuCache.CheckAvailable(ctx, cardIDs)
+	if err == nil && !available {
+		// 缓存明确显示不可用，直接返回
+		return false, nil
+	}
+	// 如果缓存显示可用或者查询缓存出错，则回退到数据库进行准确检查
+	return s.gpuRepo.CheckAvailable(ctx, cardIDs)
+}
+
+// AcquireCards 占用指定的显卡
+func (s *gpuService) AcquireCards(ctx context.Context, cardIDs []int, jobID int) error {
+	if len(cardIDs) == 0 {
+		return fmt.Errorf("未指定显卡")
+	}
+	// 调用 Repository 执行数据库事务
+	err := s.gpuRepo.Acquire(ctx, cardIDs, jobID)
+	if err != nil {
+		return err
+	}
+
+	for _, cardID := range cardIDs {
+		// 更新Redis缓存
+		if err := s.gpuCache.SetBusy(ctx, cardID, jobID); err != nil {
+			logger.Warn("更新GPU缓存失败", zap.Int("card_id", cardID), zap.Error(err))
 		}
 	}
 
 	return nil
-}
-
-// GetIdleCount 获取空闲显卡数量
-func (s *gpuService) GetIdleCount(ctx context.Context) (int, error) {
-	count, err := s.gpuRepo.GetIdleCount(ctx)
-	if err != nil {
-		return 0, fmt.Errorf("统计空闲显卡失败: %w", err)
-	}
-	return int(count), nil
-}
-
-// AcquireCards 占用指定数量的显卡
-func (s *gpuService) AcquireCards(ctx context.Context, count int, jobID int) ([]int, error) {
-	if count <= 0 || count > totalGpuCount {
-		return nil, fmt.Errorf("显卡数量必须在1-%d之间", totalGpuCount)
-	}
-	// 调用 Repository 执行数据库事务
-	cards, err := s.gpuRepo.Acquire(ctx, count, jobID)
-	if err != nil {
-		return nil, err
-	}
-
-	cardIDs := make([]int, len(cards))
-	for i, card := range cards {
-		cardIDs[i] = card.ID
-		// 更新Redis缓存
-		if err := s.gpuCache.SetBusy(ctx, card.ID, jobID); err != nil {
-			// 记录错误但不必回滚数据库，缓存可以容忍短暂不一致或通过过期修复
-			fmt.Printf("Warning: Failed to update cache for gpu-%d: %v\n", card.ID, err)
-		}
-	}
-
-	return cardIDs, nil
 }
 
 // ReleaseCards 释放指定显卡
@@ -103,4 +129,19 @@ func (s *gpuService) ReleaseCards(ctx context.Context, cardIDs []int) error {
 		}
 	}
 	return nil
+}
+
+func (r *gpuService) GetGpus(ctx context.Context) (response.Gpus, error) {
+	gpus, total, err := r.gpuRepo.GetGpus(ctx)
+	if err != nil {
+		return response.Gpus{}, err
+	}
+	for i := range gpus {
+		gpus[i].Gb = gpus[i].Memory / 1024
+	}
+	gpuAll := response.Gpus{
+		List:  gpus,
+		Total: total,
+	}
+	return gpuAll, nil
 }

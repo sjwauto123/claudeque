@@ -16,7 +16,7 @@ type QueueService interface {
 	// Remove 出队
 	Remove(ctx context.Context, jobID int) error
 	// GetQueuePage 分页查询，按条件检索，返回完整排队任务信息
-	GetQueuePage(ctx context.Context, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error)
+	GetQueuePage(ctx context.Context, req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error)
 	// MoveBefore 更新排队
 	MoveBefore(ctx context.Context, jobID int, beforeJobID int) error
 	// GetFrontCount 返回某个任务前方排队数量

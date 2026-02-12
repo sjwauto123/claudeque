@@ -4,14 +4,16 @@ import (
 	"context"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/pkg/logger"
-	"go.uber.org/zap"
 	"time"
+
+	"go.uber.org/zap"
 )
 
 // jobService 任务服务实现
@@ -43,6 +45,17 @@ func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time,
 	return s.jobRepo.GetJobList(req, startTime, endTime, userID)
 }
 
+// GetWaitJobList 获取正在排队的任务列表
+func (s *jobService) GetWaitJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
+	if req.PageSize <= 0 {
+		req.PageSize = 5
+	}
+	if req.PageSize > 100 {
+		req.PageSize = 100
+	}
+	return s.jobRepo.GetWaitJobList(req, startTime, endTime, userID)
+}
+
 // SubmitJob 提交任务
 func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error) {
 	// 获取用户优先级
@@ -56,13 +69,20 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		priority = user.Priority
 	}
 
+	// 转换 GPU ID 数组为逗号分隔字符串
+	gpuIDStrs := make([]string, len(req.GpuIDs))
+	for i, id := range req.GpuIDs {
+		gpuIDStrs[i] = strconv.Itoa(id)
+	}
+	gpuIDs := strings.Join(gpuIDStrs, ",")
+
 	// 创建任务记录
 	job := &entity.Job{
 		Name:        req.Name,
 		Description: req.Description,
 		UserId:      userID,
 		FilePath:    req.FilePath,
-		GpuCount:    req.GpuCount,
+		GpuIDs:      gpuIDs,
 		Status:      entity.JobStatusPending,
 	}
 
@@ -93,7 +113,6 @@ func (s *jobService) CancelJob(ctx context.Context, jobID int, userID int) error
 	if err != nil {
 		return fmt.Errorf("获取任务失败: %w", err)
 	}
-
 	if job == nil {
 		return fmt.Errorf("任务不存在")
 	}

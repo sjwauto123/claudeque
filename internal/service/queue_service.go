@@ -42,7 +42,7 @@ func (s *queueService) Enqueue(ctx context.Context, jobID int, priority int) err
 	return s.queueRepo.Add(ctx, jobID, score)
 }
 
-// Peek scheduler的方法
+// Peek 获取队列第一个任务的信息
 func (s *queueService) Peek(ctx context.Context) (*entity.Item, error) {
 	jobID, score, err := s.queueRepo.Peek(ctx)
 	if err != nil {
@@ -65,7 +65,7 @@ func (s *queueService) Remove(ctx context.Context, jobID int) error {
 }
 
 // GetQueuePage 分页查询，按条件检索，返回完整排队任务信息
-func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error) {
+func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error) {
 	members, err := s.queueRepo.Range(ctx, 0, -1)
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -121,13 +121,16 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.JobListRequ
 
 // MoveBefore 更新排队
 func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID int) error {
-	// 获取 beforeJob 的 rank
+	//  获取移动前的队首任务
+	oldHeadID, _, err := s.queueRepo.Peek(ctx)
+	if err != nil {
+		return err
+	}
+	// 计算新分数
 	rank, err := s.queueRepo.Rank(ctx, beforeJobID)
 	if err != nil {
 		return err
 	}
-
-	// 获取 beforeJob 的 score
 	beforeScore, err := s.queueRepo.Score(ctx, beforeJobID)
 	if err != nil {
 		return err
@@ -135,21 +138,42 @@ func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID in
 
 	var newScore float64
 	if rank == 0 {
-		// 插到最前面
 		newScore = beforeScore - float64(PriorityGap)
 	} else {
-		// 拿前一个元素
 		prevs, err := s.queueRepo.RangeWithScores(ctx, rank-1, rank-1)
 		if err != nil {
 			return err
 		}
 		prevScore := prevs[0].Score
-		// 取中点
 		newScore = (prevScore + beforeScore) / 2
 	}
+	// 执行移动操作
+	if err := s.queueRepo.Add(ctx, jobID, newScore); err != nil {
+		return err
+	}
+	// 如果任务被移出了队首，或者之前的队首被挤到了后面,我们需要将不再处于队首且状态为 "等待显卡" 的任务重置为 "排队中"
+	if oldHeadID != 0 {
+		s.fixJobStatusIfMovedFromHead(ctx, oldHeadID)
+	}
+	// 检查被移动的任务本身
+	s.fixJobStatusIfMovedFromHead(ctx, jobID)
+	return nil
+}
 
-	// 更新 score
-	return s.queueRepo.Add(ctx, jobID, newScore)
+// fixJobStatusIfMovedFromHead 如果任务不再是队首，将其状态从 "等待显卡" 重置为 "排队中"
+func (s *queueService) fixJobStatusIfMovedFromHead(ctx context.Context, jobID int) {
+	rank, err := s.queueRepo.Rank(ctx, jobID)
+	if err != nil {
+		return // 不在队列中或 Redis 错误
+	}
+	// 如果不在队首
+	if rank > 0 {
+		job, err := s.jobRepo.GetByID(jobID)
+		if err == nil && job != nil && job.Status == entity.JobStatusWaitingGpu {
+			// 重置为排队中，让调度器在它再次到达队首时重新触发资源检查
+			_ = s.jobRepo.UpdateStatus(jobID, entity.JobStatusQueued)
+		}
+	}
 }
 
 // GetFrontCount 返回某个任务前方排队数量

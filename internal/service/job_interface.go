@@ -11,6 +11,8 @@ import (
 type JobService interface {
 	// GetJobList 获取任务列表
 	GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error)
+	// GetWaitJobList 获取正在排队的任务列表
+	GetWaitJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error)
 	// SubmitJob 提交任务
 	SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error)
 	// CancelJob 取消任务排队

@@ -2,9 +2,7 @@ package api
 
 import (
 	"cloudque/internal/api/job"
-	"cloudque/internal/api/operationLogs"
 	"cloudque/internal/api/queue"
-	"cloudque/internal/api/system"
 	"cloudque/internal/api/v1/admin"
 	"cloudque/internal/api/v1/auth"
 	"cloudque/internal/api/v1/user"
@@ -17,33 +15,28 @@ import (
 
 // Router 路由
 type Router struct {
-	jobCtrl          *job.Controller
-	queueCtrl        *queue.Controller
-	operationLogCtrl *operationLogs.Controller
-	systemInfoCtrl   *system.Controller
-	userCtrl         *user.Controller
-	authCtrl         *auth.Controller
-	adminCtrl        *admin.Controller
+	jobCtrl   *job.Controller
+	queueCtrl *queue.Controller
+	userCtrl  *user.Controller
+	authCtrl  *auth.Controller
+	adminCtrl *admin.Controller
 }
 
 // NewRouter 创建路由
 func NewRouter(
-	userLogService service.UserOperationLogService,
-	infoService service.SystemInfoService,
 	userService service.UserService,
 	authService service.AuthService,
 	jobService service.JobService,
 	queueService service.QueueService,
 	repository repository.JobRepository,
+	gpuService service.GpuService,
 ) *Router {
 	return &Router{
-		userCtrl:         user.NewController(userService),
-		authCtrl:         auth.NewController(authService, userService),
-		adminCtrl:        admin.NewController(userService, userService, authService),
-		operationLogCtrl: operationLogs.NewController(userLogService, authService),
-		systemInfoCtrl:   system.NewController(infoService, authService),
-		jobCtrl:          job.NewController(jobService, userLogService, authService),
-		queueCtrl:        queue.NewController(queueService, repository, userLogService, authService),
+		userCtrl:  user.NewController(userService),
+		authCtrl:  auth.NewController(authService, userService),
+		adminCtrl: admin.NewController(userService, userService, authService),
+		jobCtrl:   job.NewController(jobService, authService, gpuService),
+		queueCtrl: queue.NewController(queueService, repository, authService),
 	}
 }
 
@@ -75,17 +68,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// 管理员路由
 		r.adminCtrl.RegisterRoutes(v1)
 	}
-	//API v2 路由组,用户操作日志输出
-	v2 := engine.Group("/api")
 
-	{
-		r.operationLogCtrl.RegisterRoutes(v2)
-	}
-	//API v3 路由组，展示系统信息
-	v3 := engine.Group("/api")
-	{
-		r.systemInfoCtrl.RegisterRoutes(v3)
-	}
 	// api v4 路由组，展示任务信息
 	v4 := engine.Group("/api/job")
 	{

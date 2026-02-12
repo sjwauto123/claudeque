@@ -3,73 +3,43 @@ package job
 import (
 	"cloudque/internal/middleware"
 	"cloudque/internal/model/dto/request"
+	dtoResponse "cloudque/internal/model/dto/response"
 	"cloudque/internal/service"
-	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"cloudque/pkg/utils"
+	"time"
+
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 )
 
 // Controller 任务控制器
 type Controller struct {
-	jobService      service.JobService
-	operationLogSvc service.UserOperationLogService
-	authService     service.AuthService
+	jobService  service.JobService
+	authService service.AuthService
+	gpuService  service.GpuService
 }
 
 // NewController 创建任务控制器
-func NewController(jobService service.JobService, operationLogSvc service.UserOperationLogService, authService service.AuthService) *Controller {
+func NewController(jobService service.JobService, authService service.AuthService, gpuService service.GpuService) *Controller {
 	return &Controller{
-		jobService:      jobService,
-		operationLogSvc: operationLogSvc,
-		authService:     authService,
+		jobService:  jobService,
+		authService: authService,
+		gpuService:  gpuService,
 	}
 }
 
 // GetJobsList 获取任务列表
 func (ctrl *Controller) GetJobsList(c *gin.Context) {
-	var j request.JobListRequest
-	if err := c.ShouldBindQuery(&j); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-	userID := middleware.GetUserID(c)
-	startTime, err := utils.ParseTime(j.StartTime)
-	if err != nil {
-		response.BadRequest(c, "开始时间格式错误")
-		return
-	}
-
-	endTime, err := utils.ParseTime(j.EndTime)
-	if err != nil {
-		response.BadRequest(c, "截至时间格式错误")
-		return
-	}
-
-	list, total, page, pageSize, err := ctrl.jobService.GetJobList(j, startTime, endTime, userID)
-	if err != nil {
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	if err := ctrl.jobService.EnrichJobList(c.Request.Context(), list); err != nil {
-		response.Error(c, 500, err.Error())
-		return
-	}
-
-	resp := response.NewPageResponse(
-		list,
-		total,
-		page,
-		pageSize,
-	)
-
-	response.Success(c, resp)
+	ctrl.handleJobList(c, ctrl.jobService.GetJobList)
 }
 
 // GetWaitJobsList 获取排队中的任务列表
 func (ctrl *Controller) GetWaitJobsList(c *gin.Context) {
+	ctrl.handleJobList(c, ctrl.jobService.GetWaitJobList)
+}
+
+// handleJobList 内部公共方法：处理任务列表请求
+func (ctrl *Controller) handleJobList(c *gin.Context, fetchFunc func(request.JobListRequest, time.Time, time.Time, int) ([]dtoResponse.JobResponse, int64, int, int, error)) {
 	var j request.JobListRequest
 	if err := c.ShouldBindQuery(&j); err != nil {
 		response.BadRequest(c, err.Error())
@@ -88,7 +58,7 @@ func (ctrl *Controller) GetWaitJobsList(c *gin.Context) {
 		return
 	}
 
-	list, total, page, pageSize, err := ctrl.jobService.GetJobList(j, startTime, endTime, userID)
+	list, total, page, pageSize, err := fetchFunc(j, startTime, endTime, userID)
 	if err != nil {
 		response.InternalError(c, err.Error())
 		return
@@ -118,21 +88,13 @@ func (ctrl *Controller) SubmitJob(c *gin.Context) {
 	}
 
 	userID := middleware.GetUserID(c)
-	username := middleware.GetUsername(c)
 
 	job, err := ctrl.jobService.SubmitJob(c.Request.Context(), req, userID)
 	if err != nil {
-		if err := ctrl.operationLogSvc.CreateLog(username, "提交任务", req.FilePath, err.Error(), false); err != nil {
-			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
-		}
 		response.InternalError(c, err.Error())
 		return
 	}
 
-	description := "任务名称: " + req.Name + ", 显卡数量: " + utils.IntToString(req.GpuCount)
-	if err := ctrl.operationLogSvc.CreateLog(username, "提交任务", req.FilePath, description, true); err != nil {
-		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
-	}
 	response.Success(c, job)
 }
 
@@ -151,33 +113,11 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 	}
 
 	userID := middleware.GetUserID(c)
-	username := middleware.GetUsername(c)
-
-	job, err := ctrl.jobService.GetJobByID(jobID)
-	if err != nil {
-		if err := ctrl.operationLogSvc.CreateLog(username, "取消任务", "", err.Error(), false); err != nil {
-			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
-		}
-		response.InternalError(c, err.Error())
-		return
-	}
-
-	filePath := ""
-	if job != nil {
-		filePath = job.FilePath
-	}
-
 	if err := ctrl.jobService.CancelJob(c.Request.Context(), jobID, userID); err != nil {
-		if err := ctrl.operationLogSvc.CreateLog(username, "取消任务", filePath, err.Error(), false); err != nil {
-			logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
-		}
 		response.InternalError(c, err.Error())
 		return
 	}
 
-	if err := ctrl.operationLogSvc.CreateLog(username, "取消任务", filePath, "成功", true); err != nil {
-		logger.Warn("记录操作日志失败", zap.Error(err), zap.String("username", username))
-	}
 	response.Success(c, nil)
 }
 
@@ -189,4 +129,13 @@ func (ctrl *Controller) GetStats(c *gin.Context) {
 		return
 	}
 	response.Success(c, stats)
+}
+
+func (ctrl *Controller) GetGpus(c *gin.Context) {
+	gpus, err := ctrl.gpuService.GetGpus(c)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, gpus)
 }
