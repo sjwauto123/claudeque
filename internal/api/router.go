@@ -1,9 +1,9 @@
 package api
 
 import (
-	"cloudque/internal/api/v1/admin"
-	"cloudque/internal/api/v1/auth"
-	"cloudque/internal/api/v1/user"
+	"cloudque/internal/api/admin"
+	"cloudque/internal/api/auth"
+	"cloudque/internal/api/user"
 	"cloudque/internal/middleware"
 	"cloudque/internal/service"
 
