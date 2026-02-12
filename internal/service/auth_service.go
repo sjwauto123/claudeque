@@ -93,9 +93,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			Status:     p.Status,
 			HttpMethod: p.HTTPMethod,
 			HttpPath:   p.HTTPPath,
-			Sort:       p.Sort,
-			CreatedAt:  p.CreatedAt,
-			UpdatedAt:  p.UpdatedAt,
 		})
 	}
 	//提取到切片中
@@ -105,11 +102,11 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}
 
 	//转换menu为树
-	nodeMap := make(map[int]*dto.MenuNode)
+	nodeMap := make(map[int]*dto.MenuTreeNode)
 	//父菜单，值为子菜单
-	parentChildren := make(map[int][]dto.MenuNode)
+	parentChildren := make(map[int][]*dto.MenuTreeNode)
 	for _, m := range menus {
-		nodeMap[m.ID] = &dto.MenuNode{
+		nodeMap[m.ID] = &dto.MenuTreeNode{
 			ID:       m.ID,
 			ParentID: m.ParentID,
 			Title:    m.Title,
@@ -117,17 +114,16 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			Type:     m.Type,
 			Icon:     m.Icon,
 			URI:      m.URI,
-			Sort:     m.Sort,
 		}
 	}
 	//子菜单绑定到父菜单下
 	for _, n := range nodeMap {
 		if n.ParentID != 0 {
-			parentChildren[n.ParentID] = append(parentChildren[n.ParentID], *n)
+			parentChildren[n.ParentID] = append(parentChildren[n.ParentID], n)
 		}
 	}
 	//排序子节点，排树
-	menuNodes := make([]dto.MenuNode, 0)
+	menuNodes := make([]dto.MenuTreeNode, 0)
 	for id, n := range nodeMap {
 		// 绑定子节点
 		if ch, ok := parentChildren[id]; ok {

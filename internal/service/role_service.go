@@ -182,17 +182,17 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionResp
 }
 
 // 构建菜单树
-func (s *roleService) buildMenuTree(menus []entity.Menu, roleMenuMap map[int]bool) []*dto.MenuNodeRes {
-	nodeMap := make(map[int]*dto.MenuNodeRes)
+func (s *roleService) buildMenuTree(menus []entity.Menu, roleMenuMap map[int]bool) []*dto.MenuNodeResponse {
+	nodeMap := make(map[int]*dto.MenuNodeResponse)
 
 	for _, m := range menus {
-		nodeMap[m.ID] = &dto.MenuNodeRes{
+		nodeMap[m.ID] = &dto.MenuNodeResponse{
 			ID:      m.ID,
 			Title:   m.Title,
 			Checked: roleMenuMap[m.ID],
 		}
 	}
-	var roots []*dto.MenuNodeRes
+	var roots []*dto.MenuNodeResponse
 	for _, m := range menus {
 		node := nodeMap[m.ID]
 		if m.ParentID == 0 {

@@ -24,7 +24,7 @@ type LoginResponse struct {
 	Token       string               `json:"token"`
 	User        UserResponse         `json:"user"`
 	Permissions []PermissionResponse `json:"permissions"`
-	MenusTree   []MenuNode           `json:"menus_tree"`
+	MenusTree   []MenuTreeNode       `json:"menus_tree"`
 }
 
 // UserInfoResponse 用户信息响应

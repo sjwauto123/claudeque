@@ -1,7 +1,7 @@
 package response
 
 type RolePermissionResponse struct {
-	Menu []*MenuNodeRes           `json:"menu"`
+	Menu []*MenuNodeResponse      `json:"menu"`
 	Api  []*ApiPermissionGroupRes `json:"api"`
 }
 

@@ -216,6 +216,7 @@ func (s *menuService) BuildMenuTree(menus []*entity.Menu) ([]*dto.MenuTreeNode, 
 func convertToNode(m *entity.Menu) *dto.MenuTreeNode {
 	return &dto.MenuTreeNode{
 		ID:       m.ID,
+		ParentID: m.ParentID,
 		Title:    m.Title,
 		Type:     m.Type,
 		Status:   m.Status,
