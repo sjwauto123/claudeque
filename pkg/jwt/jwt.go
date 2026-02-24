@@ -65,3 +65,8 @@ func RefreshToken(tokenString string) (string, error) {
 
 	return GenerateToken(claims.UserID, claims.Username, claims.Roles)
 }
+
+// GetRoles 获取用户角色
+func (c *CustomClaims) GetRoles() []string {
+	return c.Roles
+}
