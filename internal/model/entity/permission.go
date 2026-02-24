@@ -6,7 +6,7 @@ import (
 
 type Permission struct {
 	BaseEntity
-	Name       string `gorm:"type:varchar(50);not null;comment:权限名称" json:"name"`
+	Name       string `gorm:"type:varchar(50);not null;comment:权                                           限名称" json:"name"`
 	Category   string `gorm:"type:varchar(50);not null;comment:API类别" json:"category"`
 	Slug       string `gorm:"type:varchar(50);uniqueIndex;not null;comment:权限唯一标识" json:"slug"`
 	Type       string `gorm:"type:int;default:1;comment:权限类型" json:"type"`

@@ -20,14 +20,13 @@ import (
 
 // FileService 文件服务接口
 type FileService interface {
-	GetFileList(userID uint, req *request.FileListRequest) (*dto.FilesListData, error)
-	UploadFile(userID uint, file multipart.File, header *multipart.FileHeader, targetPath string) (*dto.FileUploadData, error)
-	DownloadFile(userID uint, path string) (io.ReadCloser, string, error)
-	DeleteFile(userID uint, path string) error
-	UnzipFile(userID uint, req *request.UnzipRequest) error
-	GetDiskUsage(userID uint, path string) (*dto.DiskUsageData, error)
-	Chmod(userID uint, req *request.ChmodRequest) error
-	CalculateSize(userID uint, path string) (int64, string, float64, error)
+	GetFileList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
+	UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error)
+	DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, error)
+	DeleteFile(userID int, path string, isRootMode bool) error
+	UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error
+	GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error)
+	CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error)
 }
 
 // fileService 文件服务实现
@@ -43,12 +42,12 @@ func NewFileService(sessionManager *ssh.SessionManager) FileService {
 }
 
 // getSftpClient 获取用户的SFTP客户端
-func (s *fileService) getSftpClient(userID uint) (*sftp.Client, error) {
+func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, error) {
 	if s.sessionManager == nil {
 		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
 	}
 
-	session, err := s.sessionManager.GetSession(userID)
+	session, err := s.sessionManager.GetSession(userID, isRoot)
 	if err != nil {
 		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
 	}
@@ -61,11 +60,11 @@ func (s *fileService) getSftpClient(userID uint) (*sftp.Client, error) {
 }
 
 // getSSHClient 获取用户的SSH客户端
-func (s *fileService) getSSHClient(userID uint) (*xssh.Client, error) {
+func (s *fileService) getSSHClient(userID int, isRoot bool) (*xssh.Client, error) {
 	if s.sessionManager == nil {
 		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
 	}
-	session, err := s.sessionManager.GetSession(userID)
+	session, err := s.sessionManager.GetSession(userID, isRoot)
 	if err != nil {
 		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
 	}
@@ -73,8 +72,8 @@ func (s *fileService) getSSHClient(userID uint) (*xssh.Client, error) {
 }
 
 // executeSSHCommand 执行SSH命令
-func (s *fileService) executeSSHCommand(userID uint, cmd string) (string, error) {
-	client, err := s.getSSHClient(userID)
+func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (string, error) {
+	client, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		return "", err
 	}
@@ -96,26 +95,52 @@ func (s *fileService) executeSSHCommand(userID uint, cmd string) (string, error)
 	return stdout.String(), nil
 }
 
-// GetFileList 获取文件列表
-func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*dto.FilesListData, error) {
-	// 确定实际要操作的用户 ID
-	opUserID := userID
-	if req.TargetUserID > 0 {
-		// 管理员权限检查逻辑：
-		// 1. 获取当前用户
-		// 2. 检查角色是否为管理员
-		// 这里为了保持逻辑内聚，我们通过 sessionManager 获取当前用户的 session 来判断
-		currentSession, err := s.sessionManager.GetSession(userID)
-		if err != nil || !currentSession.IsRoot() {
-			// 如果当前用户不是 root 且没有管理员标识，拒绝访问他人目录
-			// 注意：这里 IsRoot() 是判断 SSH 连接是否为 root，
-			// 在实际业务中，可能还需要检查数据库里的 User.RoleID
-			return nil, errors.New(errors.CodeForbidden, "没有权限查看其他用户的目录")
+// resolvePath 解析路径并应用权限隔离
+func (s *fileService) resolvePath(userID int, path string, isRootMode bool) (string, error) {
+	session, err := s.sessionManager.GetSession(userID, isRootMode)
+	if err != nil {
+		return "", err
+	}
+	//
+	//管理员模式:只需要处理为空的情况，不需要验证路径直接返回
+	if isRootMode {
+		//防止所传path为空的情况
+		if path == "" || path == "." {
+			return "/", nil
 		}
-		opUserID = req.TargetUserID
+		return path, nil
 	}
 
-	client, err := s.getSftpClient(opUserID)
+	// 用户模式：限制在 /home/{username}
+	homeDir := "/home/" + session.Username
+	//防止所传path为空的情况
+	if path == "" || path == "." || path == "/" {
+		return homeDir, nil
+	}
+
+	// 如果路径已经是绝对路径且不在家目录下，或者包含 .. 试图越权，则纠正或拒绝
+	//先进行标准化处理，再判断是否满足条件
+	cleanPath := filepath.Clean(path)
+	if strings.HasPrefix(cleanPath, homeDir) {
+		return cleanPath, nil
+	}
+
+	// 拼接到家目录下
+	finalPath := filepath.ToSlash(filepath.Join(homeDir, path))
+	//二次确认
+	if !strings.HasPrefix(finalPath, homeDir) {
+		return "", fmt.Errorf("越权访问被拒绝")
+	}
+
+	return finalPath, nil
+}
+
+// GetFileList 获取文件列表
+func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error) {
+	opUserID := userID
+
+	//启动对应的ftpclient
+	client, err := s.getSftpClient(opUserID, isRootMode)
 	if err != nil {
 		return nil, err
 	}
@@ -127,38 +152,32 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 		req.PageSize = 100
 	}
 
-	path := req.Path
-	if path == "" || path == "." {
-		// 检查是否为 root 用户，如果是则默认从 / 开始
-		session, err := s.sessionManager.GetSession(opUserID)
-		if err == nil && session.IsRoot() {
-			path = "/"
-		} else if path == "" {
-			path = "." // Default to home/current
-		}
+	//解析出权限正确的路径
+	path, err := s.resolvePath(opUserID, req.Path, isRootMode)
+	if err != nil {
+		return nil, err
 	}
 
-	// Resolve real path to return in breadcrumb
+	//传化为真实可用的路径
 	realPath, err := client.RealPath(path)
 	if err != nil {
 		return nil, fmt.Errorf("无法解析路径: %v", err)
 	}
 
+	//读取目标目录下的所有文件和目录
 	entries, err := client.ReadDir(realPath)
 	if err != nil {
 		return nil, fmt.Errorf("读取目录失败: %v", err)
 	}
 
-	// Filter and separate
 	var dirs []*dto.DirectoryItem
 	var files []*dto.FileItem
 
-	// Build UID -> Username map
+	// 构建 UID -> Username 映射
+	//获取对应系统中文件的真正用户名，而不是uid，用来返回文件所有者
 	uidToName := make(map[uint32]string)
 
-	// Fetch /etc/passwd to map UIDs to names
-	// Try getent first, then cat /etc/passwd
-	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd")
+	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", isRootMode)
 	if err == nil {
 		lines := strings.Split(passwdOut, "\n")
 		for _, line := range lines {
@@ -174,7 +193,6 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 	}
 
 	for _, entry := range entries {
-		// Skip hidden files if needed? keeping them for now.
 		if req.Keyword != "" && !strings.Contains(entry.Name(), req.Keyword) {
 			continue
 		}
@@ -189,7 +207,6 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 					owner = fmt.Sprintf("%d", stat.UID)
 				}
 			} else {
-				// Fallback if Sys() is not *sftp.FileStat (unlikely for sftp client)
 				owner = "unknown"
 			}
 		} else {
@@ -214,7 +231,7 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 		}
 	}
 
-	// Sort: Dirs first (alphabetical), then Files (alphabetical)
+	//
 	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
 	sort.Slice(files, func(i, j int) bool { return files[i].Filename < files[j].Filename })
 
@@ -222,6 +239,10 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 	totalDirs := len(dirs)
 	totalFiles := len(files)
 	total := totalDirs + totalFiles
+	pages := total / req.PageSize
+	if total%req.PageSize != 0 {
+		pages++
+	}
 
 	start := (req.Page - 1) * req.PageSize
 
@@ -266,6 +287,7 @@ func (s *fileService) GetFileList(userID uint, req *request.FileListRequest) (*d
 		FileList:      files,
 		DirectoryList: dirs,
 		Total:         total,
+		Pages:         pages,
 		Page:          req.Page,
 		PageSize:      req.PageSize,
 	}, nil
@@ -302,16 +324,21 @@ func buildBreadcrumb(path string) []*dto.BreadcrumbItem {
 }
 
 // UploadFile 上传文件
-func (s *fileService) UploadFile(userID uint, file multipart.File, header *multipart.FileHeader, targetPath string) (*dto.FileUploadData, error) {
-	client, err := s.getSftpClient(userID)
+func (s *fileService) UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error) {
+	client, err := s.getSftpClient(userID, isRootMode)
+	if err != nil {
+		return nil, err
+	}
+
+	path, err := s.resolvePath(userID, targetPath, isRootMode)
 	if err != nil {
 		return nil, err
 	}
 
 	// Ensure target directory exists
-	_ = client.MkdirAll(targetPath)
+	_ = client.MkdirAll(path)
 
-	remotePath := filepath.ToSlash(filepath.Join(targetPath, header.Filename))
+	remotePath := filepath.ToSlash(filepath.Join(path, header.Filename))
 	dst, err := client.Create(remotePath)
 	if err != nil {
 		return nil, fmt.Errorf("创建远程文件失败: %v", err)
@@ -328,52 +355,70 @@ func (s *fileService) UploadFile(userID uint, file multipart.File, header *multi
 }
 
 // DownloadFile 下载文件
-func (s *fileService) DownloadFile(userID uint, path string) (io.ReadCloser, string, error) {
-	client, err := s.getSftpClient(userID)
+func (s *fileService) DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, error) {
+	client, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
 		return nil, "", err
 	}
 
-	f, err := client.Open(path)
+	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+	if err != nil {
+		return nil, "", err
+	}
+
+	f, err := client.Open(resolvedPath)
 	if err != nil {
 		return nil, "", fmt.Errorf("打开文件失败: %v", err)
 	}
 
-	return f, filepath.Base(path), nil
+	return f, filepath.Base(resolvedPath), nil
 }
 
 // DeleteFile 删除文件或目录
-func (s *fileService) DeleteFile(userID uint, path string) error {
+func (s *fileService) DeleteFile(userID int, path string, isRootMode bool) error {
+	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+	if err != nil {
+		return err
+	}
+
 	// 使用 rm -rf 强制删除，支持文件和目录
-	// Escape path to prevent command injection somewhat, though sftp is safer.
-	// Simple escaping for single quotes
-	safePath := "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+	safePath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
 	cmd := fmt.Sprintf("rm -rf %s", safePath)
 
-	_, err := s.executeSSHCommand(userID, cmd)
+	_, err = s.executeSSHCommand(userID, cmd, isRootMode)
 	return err
 }
 
 // UnzipFile 解压文件
-func (s *fileService) UnzipFile(userID uint, req *request.UnzipRequest) error {
-	// unzip -o <path> -d <targetPath>
-	// Check if unzip is installed? Assuming yes.
+func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error {
+	resolvedPath, err := s.resolvePath(userID, req.Path, isRootMode)
+	if err != nil {
+		return err
+	}
+	resolvedTarget, err := s.resolvePath(userID, req.TargetPath, isRootMode)
+	if err != nil {
+		return err
+	}
 
-	safePath := "'" + strings.ReplaceAll(req.Path, "'", "'\\''") + "'"
-	safeTarget := "'" + strings.ReplaceAll(req.TargetPath, "'", "'\\''") + "'"
+	safePath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
+	safeTarget := "'" + strings.ReplaceAll(resolvedTarget, "'", "'\\''") + "'"
 
 	cmd := fmt.Sprintf("unzip -o %s -d %s", safePath, safeTarget)
-	_, err := s.executeSSHCommand(userID, cmd)
+	_, err = s.executeSSHCommand(userID, cmd, isRootMode)
 	return err
 }
 
 // GetDiskUsage 计算目录大小
-func (s *fileService) GetDiskUsage(userID uint, path string) (*dto.DiskUsageData, error) {
-	// du -sb <path> | awk '{print $1}'
-	safePath := "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+func (s *fileService) GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error) {
+	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+	if err != nil {
+		return nil, err
+	}
+
+	safePath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
 	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
 
-	output, err := s.executeSSHCommand(userID, cmd)
+	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		return nil, err
 	}
@@ -383,7 +428,7 @@ func (s *fileService) GetDiskUsage(userID uint, path string) (*dto.DiskUsageData
 
 	// Get filesystem usage percentage
 	cmdUsage := fmt.Sprintf("df --output=pcent %s | tail -1 | tr -dc '0-9'", safePath)
-	outputUsage, _ := s.executeSSHCommand(userID, cmdUsage)
+	outputUsage, _ := s.executeSSHCommand(userID, cmdUsage, isRootMode)
 	usage, _ := strconv.ParseFloat(strings.TrimSpace(outputUsage), 64)
 
 	return &dto.DiskUsageData{
@@ -392,32 +437,25 @@ func (s *fileService) GetDiskUsage(userID uint, path string) (*dto.DiskUsageData
 	}, nil
 }
 
-// Chmod 修改权限
-func (s *fileService) Chmod(userID uint, req *request.ChmodRequest) error {
-	// 使用 chmod 命令
-	safePath := "'" + strings.ReplaceAll(req.Path, "'", "'\\''") + "'"
-	safeMode := "'" + strings.ReplaceAll(req.Mode, "'", "'\\''") + "'"
-
-	cmd := fmt.Sprintf("chmod %s %s", safeMode, safePath)
-	_, err := s.executeSSHCommand(userID, cmd)
-	return err
-}
-
 // CalculateSize 计算目录或文件大小
-func (s *fileService) CalculateSize(userID uint, path string) (int64, string, float64, error) {
-	// 防止命令注入，对路径进行转义
-	quotedPath := "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error) {
+	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+	if err != nil {
+		return 0, "", 0, err
+	}
+
+	quotedPath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
 
 	// 1. 使用 du -sb 计算字节大小
 	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", quotedPath)
-	out, err := s.executeSSHCommand(userID, cmd)
+	out, err := s.executeSSHCommand(userID, cmd, isRootMode)
 
 	var bytes int64
 
 	if err != nil {
 		// 如果 du -sb 失败，尝试 du -sk (千字节)
 		cmd = fmt.Sprintf("du -sk %s | awk '{print $1}'", quotedPath)
-		out, err = s.executeSSHCommand(userID, cmd)
+		out, err = s.executeSSHCommand(userID, cmd, isRootMode)
 		if err != nil {
 			return 0, "", 0, err
 		}
@@ -437,9 +475,8 @@ func (s *fileService) CalculateSize(userID uint, path string) (int64, string, fl
 	}
 
 	// 2. 使用 df 获取磁盘总大小和可用空间，计算占比
-	// df -B1 <path> | tail -1 | awk '{print $2}' (Total size in bytes)
 	cmdTotal := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $2}'", quotedPath)
-	outTotal, err := s.executeSSHCommand(userID, cmdTotal)
+	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
 
 	var usagePercent float64
 	if err == nil {

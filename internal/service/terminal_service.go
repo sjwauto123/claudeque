@@ -20,12 +20,12 @@ func NewTerminalService(sessionManager *ssh.SessionManager) TerminalService {
 }
 
 // getSSHClient 获取用户的SSH客户端
-func (s *terminalService) getSSHClient(userID uint) (*server.Client, error) {
+func (s *terminalService) getSSHClient(userID int, isRoot bool) (*server.Client, error) {
 	if s.sessionManager == nil {
 		return nil, pkgerrors.New(pkgerrors.CodeInternalError, "SSH会话管理器未初始化")
 	}
 
-	session, err := s.sessionManager.GetSession(userID)
+	session, err := s.sessionManager.GetSession(userID, isRoot)
 	if err != nil {
 		return nil, pkgerrors.New(pkgerrors.CodeInternalError, "获取SSH会话失败，请重新登录")
 	}
@@ -34,8 +34,8 @@ func (s *terminalService) getSSHClient(userID uint) (*server.Client, error) {
 }
 
 // RunInteractiveSession 运行交互式会话（PTY 透传）
-func (s *terminalService) RunInteractiveSession(userID uint, stdin io.Reader, stdout, stderr io.Writer) error {
-	sshClient, err := s.getSSHClient(userID)
+func (s *terminalService) RunInteractiveSession(userID int, stdin io.Reader, stdout, stderr io.Writer, isRoot bool) error {
+	sshClient, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		return err
 	}
@@ -43,8 +43,8 @@ func (s *terminalService) RunInteractiveSession(userID uint, stdin io.Reader, st
 }
 
 // ResizePTY 调整窗口大小
-func (s *terminalService) ResizePTY(userID uint, cols, rows int) error {
-	sshClient, err := s.getSSHClient(userID)
+func (s *terminalService) ResizePTY(userID int, cols, rows int, isRoot bool) error {
+	sshClient, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		return err
 	}

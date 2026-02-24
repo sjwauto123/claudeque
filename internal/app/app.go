@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -156,18 +157,20 @@ func (a *App) initDependencies() {
 
 	// 创建 SSH 会话管理器
 	var sessionManager *ssh.SessionManager
+	var sshConfig *ssh.Config
 	if a.cfg.Server.Enabled {
 		logger.Info("初始化SSH会话管理器",
 			zap.String("host", a.cfg.Server.Host),
 			zap.String("base_path", a.cfg.Server.BasePath),
 			zap.Duration("session_timeout", a.cfg.Server.SessionTimeout),
 		)
-		sessionManager = ssh.NewSessionManager(&ssh.Config{
+		sshConfig = &ssh.Config{
 			ServerHost:     a.cfg.Server.Host,
 			RootUsername:   a.cfg.Server.RootUsername,
 			Timeout:        a.cfg.Server.Timeout,
 			SessionTimeout: a.cfg.Server.SessionTimeout,
-		}, logger.GetLogger())
+		}
+		sessionManager = ssh.NewSessionManager(sshConfig, logger.GetLogger())
 		a.sessionManager = sessionManager
 
 		// 启动会话超时清理定时器
@@ -176,6 +179,9 @@ func (a *App) initDependencies() {
 		}
 	} else {
 		logger.Info("SSH服务器未启用，文件和终端功能将受限")
+		sessionManager = nil
+		sshConfig = nil
+		a.sessionManager = nil
 	}
 
 	// 创建 WebSocket 连接池
@@ -183,7 +189,7 @@ func (a *App) initDependencies() {
 
 	// 创建 Service
 	userSvc := service.NewUserService(userRepo, redisRepo)
-	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
+	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc, sessionRepo, sessionManager, sshConfig)
 
 	if a.cfg.Server.Enabled {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
@@ -226,7 +232,7 @@ func (a *App) Run() {
 			zap.String("addr", a.server.Addr),
 			zap.String("mode", a.cfg.App.Mode),
 		)
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatal("HTTP 服务器启动失败", zap.Error(err))
 		}
 	}()

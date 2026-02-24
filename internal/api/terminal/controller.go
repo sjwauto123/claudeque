@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -19,15 +20,13 @@ import (
 type Controller struct {
 	terminalService service.TerminalService
 	authService     service.AuthService
-	logService      service.LogService
 }
 
 // NewController 创建终端控制器
-func NewController(terminalService service.TerminalService, authService service.AuthService, logService service.LogService) *Controller {
+func NewController(terminalService service.TerminalService, authService service.AuthService) *Controller {
 	return &Controller{
 		terminalService: terminalService,
 		authService:     authService,
-		logService:      logService,
 	}
 }
 
@@ -63,10 +62,16 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return
 	}
 
-	// 确保 SSH 会话存在 (支持会话恢复)
-	if err := ctrl.authService.EnsureSSHSession(userID); err != nil {
-		// 如果无法恢复会话（例如 Redis 中也没有凭证），则无法建立终端连接
-		// WebSocket 握手阶段返回错误比较麻烦，通常直接关闭连接或返回 403
+	// 判断身份：根据 URL 路径决定是 root 终端还是普通用户终端
+	// 默认兼容旧路径为普通用户终端
+	isRoot := false
+	path := c.Request.URL.Path
+	if strings.Contains(path, "/root/ws") {
+		isRoot = true
+	}
+
+	// 确保对应身份的 SSH 会话存在 (支持会话恢复)
+	if err := ctrl.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -85,12 +90,6 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return nil
 	})
 
-	// 记录终端连接日志
-	ctrl.logService.CreateLog(claims.GetUsername(), "TerminalConnect", "Terminal connected")
-	defer func() {
-		ctrl.logService.CreateLog(claims.GetUsername(), "TerminalDisconnect", "Terminal disconnected")
-	}()
-
 	stdinReader, stdinWriter := io.Pipe()
 	stdoutReader, stdoutWriter := io.Pipe()
 	stderrReader, stderrWriter := io.Pipe()
@@ -102,7 +101,7 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		defer wg.Done()
 		defer stdoutWriter.Close()
 		defer stderrWriter.Close()
-		sessionErr = ctrl.terminalService.RunInteractiveSession(userID, stdinReader, stdoutWriter, stderrWriter)
+		sessionErr = ctrl.terminalService.RunInteractiveSession(userID, stdinReader, stdoutWriter, stderrWriter, isRoot)
 	}()
 
 	type inboundMsg struct {
@@ -178,7 +177,7 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		case "ping":
 			sendJSON(map[string]any{"type": "pong"})
 		case "resize":
-			_ = ctrl.terminalService.ResizePTY(userID, in.Cols, in.Rows)
+			_ = ctrl.terminalService.ResizePTY(userID, in.Cols, in.Rows, isRoot)
 		case "close":
 			_ = stdinWriter.Close()
 			goto end

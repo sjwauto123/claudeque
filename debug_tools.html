@@ -70,6 +70,14 @@
             <input type="text" id="ws-url" value="ws://localhost:8080/api/terminal/ws" placeholder="ws://localhost:8080/api/terminal/ws">
         </div>
         <div class="config-row">
+            <label>用户名:</label>
+            <input type="text" id="login-username" value="flandern" placeholder="请输入用户名">
+        </div>
+        <div class="config-row">
+            <label>密码:</label>
+            <input type="password" id="login-password" value="20041211wzwaicjW." placeholder="请输入密码">
+        </div>
+        <div class="config-row">
             <label>Token:</label>
             <input type="text" id="auth-token" placeholder="输入 JWT Token (登录获取)">
             <button onclick="loginAndGetToken()">模拟登录并获取 Token</button>
@@ -246,9 +254,12 @@
     }
 
     async function loginAndGetToken() {
-        const username = prompt("请输入用户名:", "flandern");
-        const password = prompt("请输入密码:", "20041211wzwaicjW.");
-        if (!username || !password) return;
+        const username = document.getElementById('login-username').value;
+        const password = document.getElementById('login-password').value;
+        if (!username || !password) {
+            alert("请输入用户名和密码");
+            return;
+        }
 
         const apiBase = document.getElementById('api-base').value;
         try {

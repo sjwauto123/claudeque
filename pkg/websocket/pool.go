@@ -20,7 +20,7 @@ const (
 
 // SessionMetadata 会话元数据
 type SessionMetadata struct {
-	UserID      uint
+	UserID      int
 	SessionType string // "terminal" or "files" or "ws"
 	CreatedAt   int64
 }
@@ -37,19 +37,19 @@ type Client struct {
 // ConnectionPool WebSocket连接池（优化版：读写分离、心跳检测）
 type ConnectionPool struct {
 	// userID -> { client -> struct{} }
-	userClients map[uint]map[*Client]struct{}
+	userClients map[int]map[*Client]struct{}
 	mu          sync.RWMutex
 }
 
 // NewConnectionPool 创建连接池
 func NewConnectionPool() *ConnectionPool {
 	return &ConnectionPool{
-		userClients: make(map[uint]map[*Client]struct{}),
+		userClients: make(map[int]map[*Client]struct{}),
 	}
 }
 
 // Add 创建并添加一个新客户端
-func (p *ConnectionPool) Add(userID uint, conn *websocket.Conn, metadata *SessionMetadata) *Client {
+func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *SessionMetadata) *Client {
 	client := &Client{
 		Pool:     p,
 		Conn:     conn,
@@ -133,7 +133,7 @@ func (c *Client) WritePump() {
 }
 
 // SendToUser 发送消息给指定用户的所有客户端
-func (p *ConnectionPool) SendToUser(userID uint, data []byte) {
+func (p *ConnectionPool) SendToUser(userID int, data []byte) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 

@@ -38,17 +38,17 @@ func NewSessionRepository(redisClient *redis.Client) SessionRepository {
 }
 
 // getSessionKey 获取会话键
-func (r *sessionRepository) getSessionKey(userID uint) string {
+func (r *sessionRepository) getSessionKey(userID int) string {
 	return fmt.Sprintf("%s%d", sessionKeyPrefix, userID)
 }
 
 // getCredsKey 获取凭证键
-func (r *sessionRepository) getCredsKey(userID uint) string {
+func (r *sessionRepository) getCredsKey(userID int) string {
 	return fmt.Sprintf("%s%d", credsKeyPrefix, userID)
 }
 
 // SaveSession 保存会话元数据
-func (r *sessionRepository) SaveSession(userID uint, username string, isRoot bool, createdAt time.Time) error {
+func (r *sessionRepository) SaveSession(userID int, username string, isRoot bool, createdAt time.Time) error {
 	if r.redis == nil {
 		// Redis不可用时不报错，静默处理
 		return nil
@@ -83,9 +83,9 @@ func (r *sessionRepository) SaveSession(userID uint, username string, isRoot boo
 }
 
 // GetSessionInfo 获取会话信息
-func (r *sessionRepository) GetSessionInfo(userID uint) (*SessionInfo, error) {
+func (r *sessionRepository) GetSessionInfo(userID int) (*SessionInfo, error) {
 	if r.redis == nil {
-		return nil, fmt.Errorf("Redis不可用")
+		return nil, fmt.Errorf("redis不可用")
 	}
 
 	key := r.getSessionKey(userID)
@@ -106,7 +106,7 @@ func (r *sessionRepository) GetSessionInfo(userID uint) (*SessionInfo, error) {
 }
 
 // DeleteSession 删除会话元数据
-func (r *sessionRepository) DeleteSession(userID uint) error {
+func (r *sessionRepository) DeleteSession(userID int) error {
 	if r.redis == nil {
 		return nil
 	}
@@ -186,7 +186,7 @@ func (r *sessionRepository) ListActiveSessions() ([]*SessionInfo, error) {
 }
 
 // UpdateLastUsed 更新最后使用时间
-func (r *sessionRepository) UpdateLastUsed(userID uint, lastUsedAt time.Time) error {
+func (r *sessionRepository) UpdateLastUsed(userID int, lastUsedAt time.Time) error {
 	if r.redis == nil {
 		return nil
 	}
@@ -217,7 +217,7 @@ func (r *sessionRepository) UpdateLastUsed(userID uint, lastUsedAt time.Time) er
 }
 
 // SaveUserCredentials 保存用户SSH凭证（用于终端重连）
-func (r *sessionRepository) SaveUserCredentials(userID uint, username, password string, expiresAt time.Time) error {
+func (r *sessionRepository) SaveUserCredentials(userID int, username, password string, expiresAt time.Time) error {
 	if r.redis == nil {
 		return nil
 	}
@@ -251,7 +251,7 @@ func (r *sessionRepository) SaveUserCredentials(userID uint, username, password 
 }
 
 // GetUserCredentials 获取用户SSH凭证
-func (r *sessionRepository) GetUserCredentials(userID uint) (*UserCredentials, error) {
+func (r *sessionRepository) GetUserCredentials(userID int) (*UserCredentials, error) {
 	if r.redis == nil {
 		return nil, fmt.Errorf("Redis不可用")
 	}
@@ -280,7 +280,7 @@ func (r *sessionRepository) GetUserCredentials(userID uint) (*UserCredentials, e
 }
 
 // DeleteUserCredentials 删除用户SSH凭证
-func (r *sessionRepository) DeleteUserCredentials(userID uint) error {
+func (r *sessionRepository) DeleteUserCredentials(userID int) error {
 	if r.redis == nil {
 		return nil
 	}

@@ -5,7 +5,6 @@ import (
 	"strings"
 
 	"cloudque/internal/service"
-	"cloudque/internal/repository"
 	"cloudque/pkg/jwt"
 	"cloudque/pkg/response"
 
@@ -72,11 +71,13 @@ func RequirePermission(authService service.AuthService, permission string) gin.H
 		// 2. 查到用户所有的权限
 		hasPermission := false
 		for _, roleSlug := range roles {
+			//超级管理员，所有权限都有，不需要再判断权限
 			if roleSlug == "admin" {
 				hasPermission = true
 				break
 			}
 
+			//对每个角色的每个权限进行判断，有需要的权限直接break，不用再找
 			perms, err := authService.GetPermissionsByRole(roleSlug)
 			if err != nil {
 				log.Printf("获取角色 %s 权限失败: %v", roleSlug, err)
@@ -118,30 +119,4 @@ func GetUsername(c *gin.Context) string {
 		return username.(string)
 	}
 	return ""
-}
-
-// OptionalAuth 可选的 JWT 认证中间件
-func OptionalAuth() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.Next()
-			return
-		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.Next()
-			return
-		}
-
-		claims, err := jwt.ParseToken(parts[1])
-		if err == nil {
-			c.Set(ContextUserID, claims.GetUserID())
-			c.Set(ContextUsername, claims.GetUsername())
-			c.Set(ContextRoles, claims.GetRoles())
-		}
-
-		c.Next()
-	}
 }

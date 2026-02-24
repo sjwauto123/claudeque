@@ -21,7 +21,7 @@ type Config struct {
 // UserSession 用户SSH会话
 type UserSession struct {
 	Client     *server.Client // SSH客户端
-	UserID     uint           // 用户ID
+	UserID     int            // 用户ID
 	Username   string         // SSH用户名
 	CreatedAt  time.Time      // 创建时间
 	LastUsedAt time.Time      // 最后使用时间
@@ -63,10 +63,15 @@ func (s *UserSession) Close() error {
 // SessionManager SSH会话管理器
 type SessionManager struct {
 	cfg      *Config
-	sessions map[uint]*UserSession // 用户ID到会话的映射
-	mu       sync.RWMutex          // 会话映射锁
+	sessions map[string]*UserSession // 用户ID+身份到会话的映射，key格式: "userID:isRoot"
+	mu       sync.RWMutex            // 会话映射锁
 	logger   *zap.Logger
 	stopChan chan struct{} // 停止通道
+}
+
+// getSessionKey 生成会话唯一标识
+func (sm *SessionManager) getSessionKey(userID int, isRoot bool) string {
+	return fmt.Sprintf("%d:%v", userID, isRoot)
 }
 
 // GetRootUsername 获取Root用户名
@@ -74,11 +79,26 @@ func (sm *SessionManager) GetRootUsername() string {
 	return sm.cfg.RootUsername
 }
 
+// SetTimeout 设置SSH连接超时
+func (sm *SessionManager) SetTimeout(timeout time.Duration) {
+	if sm.cfg != nil {
+		sm.cfg.Timeout = timeout
+	}
+}
+
+// GetTimeout 获取SSH连接超时
+func (sm *SessionManager) GetTimeout() time.Duration {
+	if sm.cfg != nil {
+		return sm.cfg.Timeout
+	}
+	return 0 // 或者返回一个默认值，例如 time.Second * 30
+}
+
 // NewSessionManager 创建SSH会话管理器
 func NewSessionManager(cfg *Config, logger *zap.Logger) *SessionManager {
 	return &SessionManager{
 		cfg:      cfg,
-		sessions: make(map[uint]*UserSession),
+		sessions: make(map[string]*UserSession),
 		logger:   logger,
 		stopChan: make(chan struct{}),
 	}
@@ -89,7 +109,7 @@ func NewSessionManager(cfg *Config, logger *zap.Logger) *SessionManager {
 // username: 用户名（普通用户使用用户自己的用户名，管理员使用root）
 // password: SSH密码
 // isRoot: 是否使用管理员账户连接
-func (sm *SessionManager) CreateSession(userID uint, username, password string, isRoot bool) (*UserSession, error) {
+func (sm *SessionManager) CreateSession(userID int, username, password string, isRoot bool) (*UserSession, error) {
 	// 构建SSH用户名
 	sshUsername := username
 	if isRoot {
@@ -122,11 +142,16 @@ func (sm *SessionManager) CreateSession(userID uint, username, password string, 
 
 	// 保存会话
 	sm.mu.Lock()
-	sm.sessions[userID] = session
+	key := sm.getSessionKey(userID, isRoot)
+	// 如果旧会话存在，先关闭
+	if old, ok := sm.sessions[key]; ok {
+		_ = old.Close()
+	}
+	sm.sessions[key] = session
 	sm.mu.Unlock()
 
 	sm.logger.Info("创建SSH会话成功",
-		zap.Uint("user_id", userID),
+		zap.Int("user_id", userID),
 		zap.String("ssh_username", sshUsername),
 		zap.Bool("is_root", isRoot),
 	)
@@ -135,22 +160,24 @@ func (sm *SessionManager) CreateSession(userID uint, username, password string, 
 }
 
 // AddSession 添加已存在的SSH会话（用于复用已验证的连接）
-func (sm *SessionManager) AddSession(userID uint, session *UserSession) {
+func (sm *SessionManager) AddSession(userID int, session *UserSession) {
 	sm.mu.Lock()
-	sm.sessions[userID] = session
+	key := sm.getSessionKey(userID, session.IsRootUser)
+	sm.sessions[key] = session
 	sm.mu.Unlock()
 
 	sm.logger.Info("添加SSH会话成功",
-		zap.Uint("user_id", userID),
+		zap.Int("user_id", userID),
 		zap.String("ssh_username", session.Username),
 		zap.Bool("is_root", session.IsRootUser),
 	)
 }
 
 // GetSession 获取用户的SSH会话
-func (sm *SessionManager) GetSession(userID uint) (*UserSession, error) {
+func (sm *SessionManager) GetSession(userID int, isRoot bool) (*UserSession, error) {
 	sm.mu.RLock()
-	session, exists := sm.sessions[userID]
+	key := sm.getSessionKey(userID, isRoot)
+	session, exists := sm.sessions[key]
 	sm.mu.RUnlock()
 
 	if !exists {
@@ -164,11 +191,12 @@ func (sm *SessionManager) GetSession(userID uint) (*UserSession, error) {
 }
 
 // DeleteSession 删除用户的SSH会话
-func (sm *SessionManager) DeleteSession(userID uint) error {
+func (sm *SessionManager) DeleteSession(userID int, isRoot bool) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	session, exists := sm.sessions[userID]
+	key := sm.getSessionKey(userID, isRoot)
+	session, exists := sm.sessions[key]
 	if !exists {
 		return nil
 	}
@@ -176,21 +204,22 @@ func (sm *SessionManager) DeleteSession(userID uint) error {
 	// 关闭SSH连接
 	if err := session.Close(); err != nil {
 		sm.logger.Warn("关闭SSH会话失败",
-			zap.Uint("user_id", userID),
+			zap.Int("user_id", userID),
 			zap.Error(err),
 		)
 	}
 
-	delete(sm.sessions, userID)
+	delete(sm.sessions, key)
 
-	sm.logger.Info("删除SSH会话成功", zap.Uint("user_id", userID))
+	sm.logger.Info("删除SSH会话成功", zap.Int("user_id", userID), zap.Bool("is_root", isRoot))
 	return nil
 }
 
 // HasSession 检查用户是否有SSH会话
-func (sm *SessionManager) HasSession(userID uint) bool {
+func (sm *SessionManager) HasSession(userID int, isRoot bool) bool {
 	sm.mu.RLock()
-	_, exists := sm.sessions[userID]
+	key := sm.getSessionKey(userID, isRoot)
+	_, exists := sm.sessions[key]
 	sm.mu.RUnlock()
 	return exists
 }
@@ -251,7 +280,7 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 		session.mu.RLock()
 		if now.Sub(session.LastUsedAt) > sm.cfg.SessionTimeout {
 			sm.logger.Info("清理过期SSH会话",
-				zap.Uint("user_id", userID),
+				zap.String("user_id", userID),
 				zap.Duration("idle_time", now.Sub(session.LastUsedAt)),
 			)
 			session.mu.RUnlock()
@@ -274,12 +303,12 @@ func (sm *SessionManager) CloseAll() {
 	for userID, session := range sm.sessions {
 		if err := session.Close(); err != nil {
 			sm.logger.Warn("关闭SSH会话失败",
-				zap.Uint("user_id", userID),
+				zap.String("user_id", userID),
 				zap.Error(err),
 			)
 		}
 	}
 
-	sm.sessions = make(map[uint]*UserSession)
+	sm.sessions = make(map[string]*UserSession)
 	sm.logger.Info("所有SSH会话已关闭")
 }

@@ -108,3 +108,32 @@ func (r *userRepository) ExistsByEmail(email string) (bool, error) {
 	err := r.db.Model(&entity.User{}).Where("email = ?", email).Count(&count).Error
 	return count > 0, err
 }
+
+// AssignRoleByName 为用户分配指定角色（按名称）
+func (r *userRepository) AssignRoleByName(userID int, name string) error {
+	var role entity.Role
+	if err := r.db.Where("name = ?", name).First(&role).Error; err != nil {
+		return err
+	}
+	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
+	return r.db.Model(&user).Association("Roles").Append(&role)
+}
+
+// ClearRoles 清空用户的所有角色关联
+func (r *userRepository) ClearRoles(userID int) error {
+	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
+	return r.db.Model(&user).Association("Roles").Clear()
+}
+
+// ReplaceRolesByNames 更改用户角色
+func (r *userRepository) ReplaceRolesByNames(userID int, names []string) error {
+	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}
+	if len(names) == 0 {
+		return r.db.Model(&user).Association("Roles").Clear()
+	}
+	var roles []entity.Role
+	if err := r.db.Where("name IN ?", names).Find(&roles).Error; err != nil {
+		return err
+	}
+	return r.db.Model(&user).Association("Roles").Replace(&roles)
+}

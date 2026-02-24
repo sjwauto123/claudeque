@@ -10,6 +10,7 @@ type FilesListData struct {
 	DirectoryList []*DirectoryItem  `json:"directory_list"` // 目录列表
 	Total         int               `json:"total"`          // 总数
 	Page          int               `json:"page"`           // 当前页
+	Pages         int               `json:"pages"`          //总页数
 	PageSize      int               `json:"page_size"`      // 每页数量
 }
 

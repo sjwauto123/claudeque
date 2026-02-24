@@ -4,11 +4,10 @@ import "mime/multipart"
 
 // FileListRequest 文件列表查询请求
 type FileListRequest struct {
-	Path         string `form:"path" json:"path"`                     // 目录路径
-	Keyword      string `form:"keyword" json:"keyword"`               // 模糊搜索关键词
-	Page         int    `form:"page" json:"page"`                     // 第几页
-	PageSize     int    `form:"page_size" json:"page_size"`           // 每页条数
-	TargetUserID uint   `form:"target_user_id" json:"target_user_id"` // 目标用户ID (管理员查看他人目录时使用)
+	Path     string `form:"path" json:"path"`           // 目录路径
+	Keyword  string `form:"keyword" json:"keyword"`     // 模糊搜索关键词
+	Page     int    `form:"page" json:"page"`           // 第几页
+	PageSize int    `form:"page_size" json:"page_size"` // 每页条数
 }
 
 // DiskUsageRequest 计算目录磁盘占比和大小
@@ -37,10 +36,4 @@ type UnzipRequest struct {
 	Path       string `json:"path" binding:"required"`       // 要解压的文件路径
 	Filename   string `json:"filename" binding:"required"`   // 解压后的文件名
 	TargetPath string `json:"targetpath" binding:"required"` // 解压到的路径
-}
-
-// ChmodRequest 修改权限请求
-type ChmodRequest struct {
-	Path string `json:"path" binding:"required"` // 文件或目录路径
-	Mode string `json:"mode" binding:"required"` // 权限模式 (e.g., "755", "+x")
 }

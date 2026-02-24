@@ -1,12 +1,12 @@
 package api
 
 import (
-	"cloudque/internal/api/v1/admin"
-	"cloudque/internal/api/v1/auth"
-	"cloudque/internal/api/v1/files"
-	"cloudque/internal/api/v1/terminal"
-	"cloudque/internal/api/v1/user"
-	"cloudque/internal/api/v1/ws"
+	"cloudque/internal/api/admin"
+	"cloudque/internal/api/auth"
+	"cloudque/internal/api/files"
+	"cloudque/internal/api/terminal"
+	"cloudque/internal/api/user"
+	"cloudque/internal/api/ws"
 	"cloudque/internal/middleware"
 	"cloudque/internal/service"
 	"cloudque/pkg/ssh"
@@ -17,9 +17,9 @@ import (
 
 // Router 路由
 type Router struct {
-	userCtrl  *user.Controller
-	authCtrl  *auth.Controller
-	adminCtrl *admin.Controller
+	userCtrl     *user.Controller
+	authCtrl     *auth.Controller
+	adminCtrl    *admin.Controller
 	filesCtrl    *files.Controller
 	terminalCtrl *terminal.Controller
 	wsCtrl       *ws.Controller
@@ -35,13 +35,12 @@ func NewRouter(
 	sessionManager *ssh.SessionManager,
 ) *Router {
 	return &Router{
-		userCtrl:  user.NewController(userService),
-		authCtrl:  auth.NewController(authService, userService),
-		adminCtrl: admin.NewController(userService, userService, authService),
-		filesCtrl:    files.NewController(fileService, logService),
-		terminalCtrl: terminal.NewController(terminalService, authService, logService),
+		userCtrl:     user.NewController(userService),
+		authCtrl:     auth.NewController(authService, userService),
+		adminCtrl:    admin.NewController(userService, userService, authService),
+		filesCtrl:    files.NewController(fileService, authService),
+		terminalCtrl: terminal.NewController(terminalService, authService),
 		wsCtrl:       ws.NewController(wsPool, authService, sessionManager),
-
 	}
 }
 

@@ -18,6 +18,11 @@ func NewRoleRepository(db *gorm.DB) RoleRepository {
 	return &roleRepository{db: db}
 }
 
+// Create 创建角色
+func (r *roleRepository) Create(role *entity.Role) error {
+	return r.db.Create(role).Error
+}
+
 // FindBySlug 根据 Slug 查找角色，权限，菜单
 func (r *roleRepository) FindBySlug(slug string) (*entity.Role, error) {
 	var role entity.Role
