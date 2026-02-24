@@ -20,7 +20,3 @@ func (c *CustomClaims) GetUsername() string {
 	return c.Username
 }
 
-// GetRoles 获取用户角色
-func (c *CustomClaims) GetRoles() []string {
-	return c.Roles
-}
