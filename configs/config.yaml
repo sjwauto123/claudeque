@@ -51,3 +51,11 @@ cors:
     - "Origin"
     - "Content-Type"
     - "Authorization"
+
+
+# 训练服务器配置
+training_server:
+  host: "192.168.10.20"
+  port: 8085
+  admin_username: "root"
+  timeout: 300  # 秒

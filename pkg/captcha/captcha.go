@@ -32,7 +32,7 @@ func Generate() (string, string, error) {
 	// 创建验证码实例
 	c := base64Captcha.NewCaptcha(driver.ConvertFonts(), store)
 	// 生成验证码
-	id, b64s, _, err := c.Generate()
+	id, b64s, err := c.Generate()
 	return id, b64s, err
 }
 

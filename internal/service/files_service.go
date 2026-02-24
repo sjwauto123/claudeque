@@ -82,7 +82,12 @@ func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (st
 	if err != nil {
 		return "", fmt.Errorf("创建SSH会话失败: %v", err)
 	}
-	defer session.Close()
+	defer func(session *xssh.Session) {
+		err := session.Close()
+		if err != nil {
+
+		}
+	}(session)
 
 	var stdout, stderr bytes.Buffer
 	session.Stdout = &stdout
@@ -250,8 +255,8 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 		dirs = []*dto.DirectoryItem{}
 		files = []*dto.FileItem{}
 	} else {
-		slicedDirs := []*dto.DirectoryItem{}
-		slicedFiles := []*dto.FileItem{}
+		var slicedDirs []*dto.DirectoryItem
+		var slicedFiles []*dto.FileItem
 
 		currentIdx := 0
 		count := 0
@@ -343,7 +348,12 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 	if err != nil {
 		return nil, fmt.Errorf("创建远程文件失败: %v", err)
 	}
-	defer dst.Close()
+	defer func(dst *sftp.File) {
+		err := dst.Close()
+		if err != nil {
+
+		}
+	}(dst)
 
 	if _, err := io.Copy(dst, file); err != nil {
 		return nil, fmt.Errorf("写入文件失败: %v", err)
@@ -450,7 +460,7 @@ func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (i
 	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", quotedPath)
 	out, err := s.executeSSHCommand(userID, cmd, isRootMode)
 
-	var bytes int64
+	var bytess int64
 
 	if err != nil {
 		// 如果 du -sb 失败，尝试 du -sk (千字节)
@@ -465,10 +475,10 @@ func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (i
 		if parseErr != nil {
 			return 0, "", 0, fmt.Errorf("解析大小失败: %v", parseErr)
 		}
-		bytes = kb * 1024
+		bytess = kb * 1024
 	} else {
 		sizeStr := strings.TrimSpace(out)
-		bytes, err = strconv.ParseInt(sizeStr, 10, 64)
+		bytess, err = strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
 			return 0, "", 0, fmt.Errorf("解析大小失败: %v", err)
 		}
@@ -484,11 +494,11 @@ func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (i
 		totalBytes, _ := strconv.ParseInt(totalStr, 10, 64)
 
 		if totalBytes > 0 {
-			usagePercent = float64(bytes) / float64(totalBytes) * 100
+			usagePercent = float64(bytess) / float64(totalBytes) * 100
 		}
 	}
 
-	return bytes, formatFileSize(bytes), usagePercent, nil
+	return bytess, formatFileSize(bytess), usagePercent, nil
 }
 
 // formatFileSize 格式化文件大小

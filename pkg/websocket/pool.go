@@ -22,6 +22,7 @@ const (
 type SessionMetadata struct {
 	UserID      int
 	SessionType string // "terminal" or "files" or "ws"
+	Role        string // "admin" or "user"
 	CreatedAt   int64
 }
 
@@ -38,13 +39,16 @@ type Client struct {
 type ConnectionPool struct {
 	// userID -> { client -> struct{} }
 	userClients map[int]map[*Client]struct{}
-	mu          sync.RWMutex
+	// 管理员客户端
+	adminClients map[*Client]struct{}
+	mu           sync.RWMutex
 }
 
 // NewConnectionPool 创建连接池
 func NewConnectionPool() *ConnectionPool {
 	return &ConnectionPool{
-		userClients: make(map[int]map[*Client]struct{}),
+		userClients:  make(map[int]map[*Client]struct{}),
+		adminClients: make(map[*Client]struct{}),
 	}
 }
 
@@ -62,6 +66,11 @@ func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *Session
 		p.userClients[userID] = make(map[*Client]struct{})
 	}
 	p.userClients[userID][client] = struct{}{}
+
+	// 如果是管理员，添加到管理员客户端map
+	if metadata != nil && metadata.Role == "admin" {
+		p.adminClients[client] = struct{}{}
+	}
 	p.mu.Unlock()
 
 	// 启动写协程
@@ -70,21 +79,25 @@ func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *Session
 	return client
 }
 
-// Remove 移除特定客户端
-func (p *Client) Close() {
-	p.once.Do(func() {
-		p.Pool.mu.Lock()
-		defer p.Pool.mu.Unlock()
+// Close 关闭客户端连接
+func (c *Client) Close() {
+	c.once.Do(func() {
+		c.Pool.mu.Lock()
+		defer c.Pool.mu.Unlock()
 
-		userID := p.Metadata.UserID
-		if clients, ok := p.Pool.userClients[userID]; ok {
-			delete(clients, p)
+		userID := c.Metadata.UserID
+		if clients, ok := c.Pool.userClients[userID]; ok {
+			delete(clients, c)
 			if len(clients) == 0 {
-				delete(p.Pool.userClients, userID)
+				delete(c.Pool.userClients, userID)
 			}
 		}
-		close(p.Send)
-		_ = p.Conn.Close()
+
+		// 如果是管理员，从管理员客户端map中移除
+		delete(c.Pool.adminClients, c)
+
+		close(c.Send)
+		_ = c.Conn.Close()
 	})
 }
 
@@ -99,10 +112,12 @@ func (c *Client) WritePump() {
 	for {
 		select {
 		case message, ok := <-c.Send:
-			c.Conn.SetWriteDeadline(time.Now().Add(WriteWait))
+			if err := c.Conn.SetWriteDeadline(time.Now().Add(WriteWait)); err != nil {
+				return
+			}
 			if !ok {
 				// 通道已关闭
-				c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
+				_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -124,7 +139,9 @@ func (c *Client) WritePump() {
 			}
 
 		case <-ticker.C:
-			c.Conn.SetWriteDeadline(time.Now().Add(WriteWait))
+			if err := c.Conn.SetWriteDeadline(time.Now().Add(WriteWait)); err != nil {
+				return
+			}
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
@@ -165,6 +182,20 @@ func (p *ConnectionPool) Broadcast(data []byte) {
 	}
 }
 
+// BroadcastToAdmins 广播消息给管理员用户
+func (p *ConnectionPool) BroadcastToAdmins(data []byte) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	for client := range p.adminClients {
+		select {
+		case client.Send <- data:
+		default:
+			go client.Close()
+		}
+	}
+}
+
 // GetConnectionCount 获取总连接数
 func (p *ConnectionPool) GetConnectionCount() int {
 	p.mu.RLock()
@@ -175,6 +206,13 @@ func (p *ConnectionPool) GetConnectionCount() int {
 		count += len(clients)
 	}
 	return count
+}
+
+// GetAdminConnectionCount 获取管理员连接数
+func (p *ConnectionPool) GetAdminConnectionCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return len(p.adminClients)
 }
 
 // CloseAll 关闭所有连接

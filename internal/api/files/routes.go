@@ -9,11 +9,11 @@ import (
 // RegisterRoutes 注册文件路由
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	// 文件管理接口 /api/files
-	filesGroup := r.Group("/files")
-	filesGroup.Use(middleware.Auth())
+
+	r.Use(middleware.Auth())
 	{
 		// 1. 系统根目录管理 (/)
-		systemGroup := filesGroup.Group("/system")
+		systemGroup := r.Group("/system")
 		systemGroup.Use(middleware.RequirePermission(ctrl.authService, "file:system"))
 		{
 			systemGroup.GET("/list", ctrl.GetFileList)
@@ -25,7 +25,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		}
 
 		// 2. 用户家目录管理 (/home/{username})
-		userGroup := filesGroup.Group("/user")
+		userGroup := r.Group("/user")
 		userGroup.Use(middleware.RequirePermission(ctrl.authService, "file:user"))
 		{
 			userGroup.GET("/list", ctrl.GetFileList)

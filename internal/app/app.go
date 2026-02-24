@@ -1,7 +1,6 @@
 package app
 
 import (
-	"cloudque/pkg/websocket"
 	"context"
 	"errors"
 	"fmt"
@@ -30,14 +29,14 @@ import (
 
 // App 应用结构体
 type App struct {
-	cfg       *config.Config
-	mysqlDB   *gorm.DB
-	redis     *redis.Client
-	router    *api.Router
-	server    *http.Server
-	scheduler service.Scheduler
+	cfg            *config.Config
+	mysqlDB        *gorm.DB
+	redis          *redis.Client
+	router         *api.Router
+	server         *http.Server
+	scheduler      service.Scheduler
 	sessionManager *ssh.SessionManager
-	pool      *websocket.ConnectionPool
+	wsPool         *websocket.ConnectionPool
 }
 
 // NewApp 创建应用实例
@@ -62,13 +61,10 @@ func (a *App) Initialize() error {
 		return err
 	}
 
-	// 4. 初始化 WebSocket连接池
-	a.pool = websocket.NewConnectionPool()
-
-	// 5. 初始化依赖
+	// 4. 初始化依赖
 	a.initDependencies()
 
-	// 6. 初始化路由
+	// 5. 初始化路由
 	// 打印 SSH 状态
 	if a.cfg.Server.Enabled {
 		logger.Info("SSH 远程服务器配置已就绪",
@@ -224,7 +220,7 @@ func (a *App) initDependencies() {
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
-	infoService := service.NewSystemInfoService(a.pool, procCacheRepo)
+	infoService := service.NewSystemInfoService(a.wsPool, procCacheRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
@@ -242,14 +238,14 @@ func (a *App) initDependencies() {
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc,fileSvc, terminalSvc, a.pool, sessionManager)
+	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc, fileSvc, terminalSvc, a.wsPool, sessionManager)
 }
 
 // Shutdown 关闭应用
 func (a *App) Shutdown() {
 	// 关闭 ConnectionPool
-	if a.pool != nil {
-		a.pool.CloseAll()
+	if a.wsPool != nil {
+		a.wsPool.CloseAll()
 	}
 }
 

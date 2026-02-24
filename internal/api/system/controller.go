@@ -51,7 +51,7 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	userID := value.(uint)
+	userID := value.(int)
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

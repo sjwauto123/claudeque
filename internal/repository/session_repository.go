@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -91,7 +92,7 @@ func (r *sessionRepository) GetSessionInfo(userID int) (*SessionInfo, error) {
 	key := r.getSessionKey(userID)
 	data, err := r.redis.Get(r.ctx, key).Bytes()
 	if err != nil {
-		if err == redis.Nil {
+		if errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("会话不存在")
 		}
 		return nil, fmt.Errorf("获取会话信息失败: %w", err)
@@ -157,7 +158,7 @@ func (r *sessionRepository) DeleteAllSessions() error {
 // ListActiveSessions 列出所有活跃会话
 func (r *sessionRepository) ListActiveSessions() ([]*SessionInfo, error) {
 	if r.redis == nil {
-		return nil, fmt.Errorf("Redis不可用")
+		return nil, fmt.Errorf("redis不可用")
 	}
 
 	// 获取所有会话ID
@@ -253,13 +254,13 @@ func (r *sessionRepository) SaveUserCredentials(userID int, username, password s
 // GetUserCredentials 获取用户SSH凭证
 func (r *sessionRepository) GetUserCredentials(userID int) (*UserCredentials, error) {
 	if r.redis == nil {
-		return nil, fmt.Errorf("Redis不可用")
+		return nil, fmt.Errorf("redis不可用")
 	}
 
 	key := r.getCredsKey(userID)
 	data, err := r.redis.Get(r.ctx, key).Bytes()
 	if err != nil {
-		if err == redis.Nil {
+		if errors.Is(err, redis.Nil) {
 			return nil, fmt.Errorf("凭证不存在或已过期")
 		}
 		return nil, fmt.Errorf("获取凭证失败: %w", err)
