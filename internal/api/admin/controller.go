@@ -143,8 +143,8 @@ func (ctrl *Controller) Restart(c *gin.Context) {
 func (ctrl *Controller) Shutdown(c *gin.Context) {
 	cmd := exec.Command("sudo", "shutdown", "now")
 	if err := cmd.Start(); err != nil {
-		response.InternalError(c, "failed to restart system")
+		response.InternalError(c, "failed to shutdown system")
 		return
 	}
-	response.Success(c, gin.H{"message": "restarting"})
+	response.Success(c, gin.H{"message": "shutdown"})
 }

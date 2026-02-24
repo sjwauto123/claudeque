@@ -189,6 +189,6 @@ func (ctrl *Controller) UploadAvatar(c *gin.Context) {
 		return
 	}
 
-	imgFullPath := "http://1b818c84.r3.cpolar.cn/" + filepath.ToSlash(dst)
+	imgFullPath := "http://192.168.10.6:9980/" + filepath.ToSlash(dst)
 	response.Success(c, gin.H{"path": imgFullPath})
 }
