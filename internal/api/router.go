@@ -14,16 +14,25 @@ import (
 )
 
 // Router 路由
+
 type Router struct {
 	jobCtrl   *job.Controller
 	queueCtrl *queue.Controller
 	userCtrl  *user.Controller
 	authCtrl  *auth.Controller
 	adminCtrl *admin.Controller
+	systemInfoCtrl   *system.Controller
+	userCtrl         *user.Controller
+	authCtrl         *auth.Controller
+	adminCtrl        *admin.Controller
+	operationLogCtrl *operationLogs.Controller
 }
 
 // NewRouter 创建路由
 func NewRouter(
+	userOperationLogService service.UserOperationLogService,
+	adminOperationLogService service.AdminOperationLogService,
+	infoService service.SystemInfoService,
 	userService service.UserService,
 	authService service.AuthService,
 	jobService service.JobService,
@@ -37,6 +46,11 @@ func NewRouter(
 		adminCtrl: admin.NewController(userService, userService, authService),
 		jobCtrl:   job.NewController(jobService, authService, gpuService),
 		queueCtrl: queue.NewController(queueService, repository, authService),
+		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),
+		userCtrl:         user.NewController(userService, userOperationLogService),
+		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
+		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
+		systemInfoCtrl:   system.NewController(infoService, authService, userOperationLogService),
 	}
 }
 
@@ -72,11 +86,16 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 	// api v4 路由组，展示任务信息
 	v4 := engine.Group("/api/job")
+	//API v2 路由组 操作日志输出
+	v2 := engine.Group("/api/operationLogs")
 	{
 		r.jobCtrl.JobsRoutes(v4)
 	}
 	// api v5 路由组，展示队列信息
 	v5 := engine.Group("/api/queue")
+
+	//API v3 路由组 展示系统信息
+	v3 := engine.Group("/api/system")
 	{
 		r.queueCtrl.QueueRoutes(v5)
 	}

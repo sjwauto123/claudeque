@@ -21,6 +21,7 @@ import (
 	"cloudque/pkg/logger"
 
 	"github.com/gin-gonic/gin"
+	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -112,6 +113,7 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
+		&entity.UserOperationLog{},
 		&entity.BaseEntity{},
 		&entity.Process{},
 		&entity.User{},
@@ -153,6 +155,8 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
+	userLogRepo := repository.NewUserOperationLogRepository(a.mysqlDB)
+	adminLogRepo := repository.NewAdminOperationLogRepository(a.mysqlDB)
 	processRepo := repository.NewProcessRepository(a.mysqlDB)
 	userRepo := repository.NewUserRepository(a.mysqlDB)
 	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
@@ -164,6 +168,9 @@ func (a *App) initDependencies() {
 	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
 
 	// 创建 Service
+	userLogSvc := service.NewUserOperationLogService(userLogRepo)
+	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
+	infoService := service.NewSystemInfoService(a.pool, processRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
@@ -174,6 +181,8 @@ func (a *App) initDependencies() {
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 	// 创建 Router
 	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc)
+	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc)
+
 }
 
 // Shutdown 关闭应用
