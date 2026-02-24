@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CloudQue Debugger</title>
+    <!-- xterm.js CSS -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/xterm@5.3.0/css/xterm.css" />
+    <style>
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; padding: 20px; background: #f0f2f5; color: #333; }
+        .container { max-width: 1200px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; color: #2c3e50; }
+        
+        .config-box { background: #eef2f7; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #d1d9e6; }
+        .config-row { display: flex; gap: 10px; margin-bottom: 10px; align-items: center; }
+        .config-row label { width: 100px; font-weight: bold; }
+        input[type="text"], input[type="password"] { flex: 1; padding: 8px; border: 1px solid #ccc; border-radius: 4px; }
+        
+        button { padding: 8px 16px; background: #007bff; color: white; border: none; border-radius: 4px; cursor: pointer; transition: background 0.2s; }
+        button:hover { background: #0056b3; }
+        button.disconnect { background: #dc3545; }
+        button.disconnect:hover { background: #a71d2a; }
+        button.action-btn { padding: 4px 8px; font-size: 12px; margin-right: 5px; }
+        button.upload-btn { background: #28a745; }
+        button.upload-btn:hover { background: #218838; }
+
+        .tabs { display: flex; gap: 5px; margin-bottom: 20px; border-bottom: 2px solid #ddd; }
+        .tab { padding: 10px 20px; cursor: pointer; border: 1px solid transparent; border-bottom: none; border-radius: 4px 4px 0 0; background: #f8f9fa; color: #666; }
+        .tab.active { background: white; border-color: #ddd; border-bottom-color: white; font-weight: bold; color: #007bff; border-top: 2px solid #007bff; }
+        
+        .panel { display: none; }
+        .panel.active { display: block; }
+
+        /* Terminal Style */
+        #terminal-container { width: 100%; height: 600px; background: black; padding: 10px; border-radius: 4px; }
+        
+        /* Raw Debug Style */
+        .log-box { height: 400px; overflow-y: auto; background: #222; color: #0f0; font-family: monospace; padding: 10px; border-radius: 4px; margin-bottom: 10px; border: 1px solid #333; }
+        .log-entry { margin-bottom: 2px; border-bottom: 1px solid #333; word-break: break-all; }
+        .log-entry.sent { color: #f0e68c; }
+        .log-entry.received { color: #0f0; }
+        .log-entry.system { color: #aaa; font-style: italic; }
+        .input-area { display: flex; gap: 10px; }
+        textarea { flex: 1; height: 60px; padding: 5px; font-family: monospace; }
+
+        /* File Manager Style */
+        .fm-toolbar { display: flex; gap: 10px; margin-bottom: 15px; align-items: center; background: #f8f9fa; padding: 10px; border-radius: 4px; }
+        .breadcrumb { font-family: monospace; font-weight: bold; color: #007bff; margin-bottom: 10px; }
+        table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+        th, td { text-align: left; padding: 10px; border-bottom: 1px solid #eee; }
+        th { background: #f1f1f1; }
+        tr:hover { background: #f9f9f9; }
+        .is-dir { font-weight: bold; color: #007bff; cursor: pointer; }
+        .is-file { color: #333; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>CloudQue 综合调试工具</h1>
+
+    <div class="config-box">
+        <div class="config-row">
+            <label>API Base:</label>
+            <input type="text" id="api-base" value="http://localhost:8080" placeholder="http://localhost:8080">
+            <button onclick="applyLocalConfig()" style="background: #6c757d;">重置为本地地址</button>
+        </div>
+        <div class="config-row">
+            <label>WS URL:</label>
+            <input type="text" id="ws-url" value="ws://localhost:8080/api/terminal/ws" placeholder="ws://localhost:8080/api/terminal/ws">
+        </div>
+        <div class="config-row">
+            <label>用户名:</label>
+            <input type="text" id="login-username" value="flandern" placeholder="请输入用户名">
+        </div>
+        <div class="config-row">
+            <label>密码:</label>
+            <input type="password" id="login-password" value="20041211wzwaicjW." placeholder="请输入密码">
+        </div>
+        <div class="config-row">
+            <label>Token:</label>
+            <input type="text" id="auth-token" placeholder="输入 JWT Token (登录获取)">
+            <button onclick="loginAndGetToken()">模拟登录并获取 Token</button>
+        </div>
+    </div>
+
+    <div class="tabs">
+        <div class="tab active" onclick="switchTab('files')">文件管理 (File Manager)</div>
+        <div class="tab" onclick="switchTab('admin')">管理员工具 (Admin Tools)</div>
+        <div class="tab" onclick="switchTab('terminal')">终端调试 (xterm.js)</div>
+        <div class="tab" onclick="switchTab('raw')">原始消息调试 (Raw WS)</div>
+    </div>
+
+    <!-- File Manager Panel -->
+    <div id="panel-files" class="panel active">
+        <div class="fm-toolbar">
+            <button onclick="refreshFiles()">刷新</button>
+            <input type="text" id="search-keyword" placeholder="搜索文件..." style="width: 120px;" oninput="debounceRefresh()">
+            <input type="text" id="current-path" placeholder="当前路径" readonly style="background: #e9ecef; width: 250px;">
+            <input type="file" id="upload-input" style="display:none;" onchange="uploadFile()">
+            <button id="upload-btn" onclick="document.getElementById('upload-input').click()" class="upload-btn">上传</button>
+        </div>
+        <div id="breadcrumb" class="breadcrumb"></div>
+        <div id="disk-usage-info" style="margin-bottom: 10px; color: #666; font-size: 0.9em;"></div>
+        
+        <table>
+            <thead>
+                <tr>
+                    <th>文件名</th>
+                    <th>所有者</th>
+                    <th>大小</th>
+                    <th>修改时间</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody id="file-list-body">
+                <tr><td colspan="5" style="text-align:center">请点击"刷新列表"加载数据</td></tr>
+            </tbody>
+        </table>
+        <div style="margin-top: 10px; text-align: right;">
+            <span id="pagination-info"></span>
+        </div>
+    </div>
+
+    <!-- Admin Tools Panel -->
+    <div id="panel-admin" class="panel">
+        <div class="config-box">
+            <h3>管理员浏览系统目录 (/home)</h3>
+            <div class="config-row">
+                <label>目录路径:</label>
+                <input type="text" id="admin-target-path" value="/home" placeholder="例如: /home" style="flex: 1;">
+                <button onclick="adminViewUserFiles()">刷新列表</button>
+            </div>
+            <p style="font-size: 0.85em; color: #666; margin-top: 5px;">* 管理员模式仅供查看，不支持上传、删除、解压等修改操作。</p>
+        </div>
+        
+        <div id="admin-file-results">
+            <div id="admin-breadcrumb" class="breadcrumb"></div>
+            <table>
+                <thead>
+                    <tr>
+                        <th>文件名</th>
+                        <th>所有者</th>
+                        <th>大小</th>
+                        <th>修改时间</th>
+                    </tr>
+                </thead>
+                <tbody id="admin-file-list-body">
+                    <tr><td colspan="4" style="text-align:center">点击"刷新列表"加载数据</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Terminal Panel -->
+    <div id="panel-terminal" class="panel">
+        <div style="margin-bottom: 10px;">
+            <button onclick="connectTerminal()">连接终端</button>
+            <button onclick="disconnectTerminal()" class="disconnect">断开连接</button>
+            <span id="term-status" style="margin-left: 10px; color: #666;">未连接</span>
+        </div>
+        <div id="terminal-container"></div>
+    </div>
+
+    <!-- Raw Debug Panel -->
+    <div id="panel-raw" class="panel">
+        <div style="margin-bottom: 10px;">
+            <button onclick="connectRaw()">连接 WebSocket</button>
+            <button onclick="disconnectRaw()" class="disconnect">断开连接</button>
+            <span id="raw-status" style="margin-left: 10px; color: #666;">未连接</span>
+        </div>
+        <div id="raw-log" class="log-box"></div>
+        <div class="input-area">
+            <textarea id="raw-input" placeholder='{"type":"input", "data":"ls\n"}'></textarea>
+            <button onclick="sendRaw()">发送消息</button>
+        </div>
+    </div>
+</div>
+
+<!-- xterm.js JS -->
+<script src="https://cdn.jsdelivr.net/npm/xterm@5.3.0/lib/xterm.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/xterm-addon-fit@0.8.0/lib/xterm-addon-fit.js"></script>
+
+<script>
+    // --- Global State ---
+    let terminalWs = null;
+    let rawWs = null;
+    let term = null;
+    let fitAddon = null;
+    let currentPath = ".";
+    let terminalPingInterval = null;
+    let rawPingInterval = null;
+
+    // --- Initialization ---
+    window.onload = function() {
+        applyLocalConfig();
+        
+        // 当 API Base 改变时自动同步 WS URL
+        document.getElementById('api-base').oninput = function() {
+            syncWsUrl();
+        };
+    };
+
+    function applyLocalConfig() {
+        // 自动探测当前页面的 Host
+        const host = window.location.host || 'localhost:8080';
+        const protocol = window.location.protocol === 'https:' ? 'https' : 'http';
+        
+        const apiBase = `${protocol}://${host}`;
+        document.getElementById('api-base').value = apiBase;
+        syncWsUrl();
+    }
+
+    function syncWsUrl() {
+        const apiBase = document.getElementById('api-base').value;
+        const wsProtocol = apiBase.startsWith('https') ? 'wss' : 'ws';
+        // 提取 host (去掉 http:// 或 https://)
+        const host = apiBase.replace(/^https?:\/\//, '');
+        // 更新终端 WS 地址
+        document.getElementById('ws-url').value = `${wsProtocol}://${host}/api/terminal/ws`;
+    }
+
+    // --- Tab Switching ---
+    function switchTab(tabName) {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+        
+        if (tabName === 'files') {
+            document.querySelector('.tab:nth-child(1)').classList.add('active');
+            document.getElementById('panel-files').classList.add('active');
+        } else if (tabName === 'admin') {
+            document.querySelector('.tab:nth-child(2)').classList.add('active');
+            document.getElementById('panel-admin').classList.add('active');
+        } else if (tabName === 'terminal') {
+            document.querySelector('.tab:nth-child(3)').classList.add('active');
+            document.getElementById('panel-terminal').classList.add('active');
+            if (fitAddon) fitAddon.fit();
+        } else {
+            document.querySelector('.tab:nth-child(4)').classList.add('active');
+            document.getElementById('panel-raw').classList.add('active');
+        }
+    }
+
+    // --- Auth Helper ---
+    function getAuthHeaders() {
+        const token = document.getElementById('auth-token').value;
+        if (!token) {
+            alert("请先登录获取 Token");
+            return null;
+        }
+        return { 
+            "Authorization": "Bearer " + token 
+        };
+    }
+
+    async function loginAndGetToken() {
+        const username = document.getElementById('login-username').value;
+        const password = document.getElementById('login-password').value;
+        if (!username || !password) {
+            alert("请输入用户名和密码");
+            return;
+        }
+
+        const apiBase = document.getElementById('api-base').value;
+        try {
+            const res = await fetch(`${apiBase}/api/auth/login`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                document.getElementById('auth-token').value = data.data.token;
+                alert("登录成功，Token 已自动填充");
+                refreshFiles(); // Auto refresh files on login
+            } else {
+                alert("登录失败: " + data.message);
+            }
+        } catch (e) {
+            alert("请求错误: " + e);
+        }
+    }
+
+    // --- Debounce ---
+    let debounceTimer;
+    function debounceRefresh() {
+        clearTimeout(debounceTimer);
+        debounceTimer = setTimeout(() => {
+            refreshFiles(null);
+        }, 500);
+    }
+
+    // --- File Manager Logic ---
+    async function refreshFiles(path = null) {
+        const headers = getAuthHeaders();
+        if (!headers) return;
+
+        if (path !== null) currentPath = path;
+        const apiBase = document.getElementById('api-base').value;
+        const keyword = document.getElementById('search-keyword').value;
+        
+        // Ensure path is properly encoded
+        const encodedPath = encodeURIComponent(currentPath);
+        const encodedKeyword = encodeURIComponent(keyword);
+
+        let url = `${apiBase}/api/files/list?path=${encodedPath}&keyword=${encodedKeyword}&page=1&page_size=100`;
+
+        try {
+            const res = await fetch(url, {
+                method: "GET",
+                headers: headers
+            });
+            const data = await res.json();
+            
+            if (data.code === 0) {
+                renderFileList(data.data, false);
+            } else {
+                alert("获取文件列表失败: " + data.message);
+            }
+        } catch (e) {
+            console.error(e);
+            alert("请求失败: " + e);
+        }
+    }
+
+    // --- Admin Logic ---
+    async function adminViewUserFiles(path = null) {
+        const headers = getAuthHeaders();
+        if (!headers) return;
+
+        const apiBase = document.getElementById('api-base').value;
+        const targetPath = path !== null ? path : document.getElementById('admin-target-path').value;
+        
+        const encodedPath = encodeURIComponent(targetPath);
+        let url = `${apiBase}/api/files/list?path=${encodedPath}&page=1&page_size=100`;
+
+        try {
+            const res = await fetch(url, {
+                method: "GET",
+                headers: headers
+            });
+            const data = await res.json();
+            
+            if (data.code === 0) {
+                renderAdminFileList(data.data);
+            } else {
+                alert("获取文件列表失败: " + data.message);
+            }
+        } catch (e) {
+            console.error(e);
+            alert("请求失败: " + e);
+        }
+    }
+
+    function renderAdminFileList(data) {
+        const tbody = document.getElementById('admin-file-list-body');
+        tbody.innerHTML = '';
+        
+        // Update Path
+        document.getElementById('admin-target-path').value = data.path;
+
+        // Render Breadcrumb
+        const bcContainer = document.getElementById('admin-breadcrumb');
+        bcContainer.innerHTML = '';
+        if (data.breadcrumb) {
+            data.breadcrumb.forEach((item, index) => {
+                const span = document.createElement('span');
+                span.textContent = item.name;
+                span.style.cursor = 'pointer';
+                span.style.textDecoration = 'underline';
+                span.onclick = () => adminViewUserFiles(item.path);
+                bcContainer.appendChild(span);
+                if (index < data.breadcrumb.length - 1) {
+                    bcContainer.appendChild(document.createTextNode(' / '));
+                }
+            });
+        }
+
+        // Render Dirs
+        if (data.directory_list) {
+            data.directory_list.forEach((dir) => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><span class="is-dir" onclick="adminViewUserFiles('${escapeJs(dir.path)}')">📁 ${dir.name}</span></td>
+                    <td><span style="color:#666;">${dir.owner || '-'}</span></td>
+                    <td>-</td>
+                    <td>${formatDate(dir.updated_at)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Render Files
+        if (data.file_list) {
+            data.file_list.forEach(file => {
+                const tr = document.createElement('tr');
+                tr.innerHTML = `
+                    <td><span class="is-file">📄 ${file.filename}</span></td>
+                    <td><span style="color:#666;">${file.owner || '-'}</span></td>
+                    <td>${formatSize(file.file_size)}</td>
+                    <td>${formatDate(file.updated_at)}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        
+        if ((!data.directory_list || data.directory_list.length === 0) && (!data.file_list || data.file_list.length === 0)) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center; color:#999;">空目录</td></tr>';
+        }
+    }
+
+    function renderFileList(data, isAdminView = false) {
+        const tbody = document.getElementById('file-list-body');
+        tbody.innerHTML = '';
+        
+        // Update Path Info
+        currentPath = data.path;
+        document.getElementById('current-path').value = currentPath;
+
+        // Hide upload button if admin viewing others
+        const uploadBtn = document.getElementById('upload-btn');
+        if (isAdminView) {
+            uploadBtn.style.display = 'none';
+        } else {
+            uploadBtn.style.display = 'inline-block';
+        }
+        
+        // Render Breadcrumb
+        const bcContainer = document.getElementById('breadcrumb');
+        bcContainer.innerHTML = '';
+        if (data.breadcrumb && !isAdminView) { // Hide breadcrumb in admin view
+            data.breadcrumb.forEach((item, index) => {
+                const span = document.createElement('span');
+                span.textContent = item.name;
+                span.style.cursor = 'pointer';
+                span.style.textDecoration = 'underline';
+                span.onclick = () => refreshFiles(item.path);
+                bcContainer.appendChild(span);
+                if (index < data.breadcrumb.length - 1) {
+                    bcContainer.appendChild(document.createTextNode(' / '));
+                }
+            });
+        }
+
+        // Render Pagination Info
+        const pgInfo = document.getElementById('pagination-info');
+        pgInfo.textContent = `共 ${data.total} 项 | 第 ${data.page} 页 | 每页 ${data.page_size}`;
+
+        // Render Dirs
+        if (data.directory_list) {
+            data.directory_list.forEach((dir, index) => {
+                const tr = document.createElement('tr');
+                const dirId = `dir-size-${index}`;
+                
+                let actions = '-';
+                if (!isAdminView) {
+                    actions = `<button class="action-btn disconnect" onclick="deleteItem('${escapeJs(dir.path)}')">删除</button>`;
+                }
+
+                tr.innerHTML = `
+                    <td><span class="is-dir" onclick="refreshFiles('${escapeJs(dir.path)}')">📁 ${dir.name}</span></td>
+                    <td><span style="color:#666;">${dir.owner || '-'}</span></td>
+                    <td><span id="${dirId}" style="color:blue; cursor:pointer;" onclick="calculateSize('${escapeJs(dir.path)}', '${dirId}')">计算大小</span></td>
+                    <td>${formatDate(dir.updated_at)}</td>
+                    <td>${actions}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+
+        // Render Files
+        if (data.file_list) {
+            data.file_list.forEach(file => {
+                const tr = document.createElement('tr');
+                const ext = file.filename.split('.').pop().toLowerCase();
+                const isCompressed = ['zip', 'tar', 'gz', 'bz2', 'xz', 'rar', '7z'].includes(ext);
+                
+                let unzipBtn = '';
+                if (isCompressed && !isAdminView) {
+                    unzipBtn = `<button class="action-btn" onclick="unzipItem('${escapeJs(file.path)}', '${file.filename}')">解压</button>`;
+                }
+
+                let actions = '-';
+                if (!isAdminView) {
+                    actions = `
+                        <button class="action-btn" onclick="downloadItem('${escapeJs(file.path)}')">下载</button>
+                        <button class="action-btn disconnect" onclick="deleteItem('${escapeJs(file.path)}')">删除</button>
+                        ${unzipBtn}
+                    `;
+                }
+
+                tr.innerHTML = `
+                    <td><span class="is-file">📄 ${file.filename}</span></td>
+                    <td><span style="color:#666;">${file.owner || '-'}</span></td>
+                    <td>${formatSize(file.file_size)}</td>
+                    <td>${formatDate(file.updated_at)}</td>
+                    <td>${actions}</td>
+                `;
+                tbody.appendChild(tr);
+            });
+        }
+        
+        if ((!data.directory_list || data.directory_list.length === 0) && (!data.file_list || data.file_list.length === 0)) {
+            tbody.innerHTML = '<tr><td colspan="5" style="text-align:center; color:#999;">空目录</td></tr>';
+        }
+    }
+
+    async function calculateSize(path, elementId) {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        el.textContent = "计算中...";
+        el.onclick = null; // Disable click while calculating
+
+        const headers = getAuthHeaders();
+        if (!headers) return;
+        
+        const apiBase = document.getElementById('api-base').value;
+        const encodedPath = encodeURIComponent(path);
+
+        try {
+            const res = await fetch(`${apiBase}/api/files/size?path=${encodedPath}`, {
+                method: "GET",
+                headers: headers
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                 const size = data.data.size;
+                 const usage = data.data.usage !== undefined ? ` (${data.data.usage.toFixed(2)}%)` : '';
+                 el.textContent = size + usage;
+                 el.style.color = "#333";
+                 el.style.cursor = "default";
+             } else {
+                el.textContent = "失败(重试)";
+                el.style.color = "red";
+                el.style.cursor = "pointer";
+                el.onclick = () => calculateSize(path, elementId);
+            }
+        } catch (e) {
+            el.textContent = "错误(重试)";
+            el.style.color = "red";
+            el.style.cursor = "pointer";
+            el.onclick = () => calculateSize(path, elementId);
+        }
+    }
+
+    async function uploadFile() {
+        const headers = getAuthHeaders();
+        if (!headers) return;
+        delete headers['Content-Type']; // Let browser set boundary
+
+        const fileInput = document.getElementById('upload-input');
+        if (fileInput.files.length === 0) {
+            alert("请选择文件");
+            return;
+        }
+
+        const formData = new FormData();
+        formData.append('file', fileInput.files[0]);
+        formData.append('target_path', currentPath);
+
+        const apiBase = document.getElementById('api-base').value;
+        try {
+            const res = await fetch(`${apiBase}/api/files/upload_file`, {
+                method: "POST",
+                headers: { "Authorization": headers["Authorization"] },
+                body: formData
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                alert("上传成功");
+                refreshFiles();
+                fileInput.value = '';
+            } else {
+                alert("上传失败: " + data.message);
+            }
+        } catch (e) {
+            alert("请求失败: " + e);
+        }
+    }
+
+    async function deleteItem(path) {
+        if (!confirm(`确定要删除 ${path} 吗?`)) return;
+        const headers = getAuthHeaders();
+        if (!headers) return;
+        headers['Content-Type'] = 'application/json';
+
+        const apiBase = document.getElementById('api-base').value;
+        try {
+            const res = await fetch(`${apiBase}/api/files/delete`, {
+                method: "DELETE",
+                headers: headers,
+                body: JSON.stringify({ path: path })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                refreshFiles();
+            } else {
+                alert("删除失败: " + data.message);
+            }
+        } catch (e) {
+            alert("请求失败: " + e);
+        }
+    }
+
+    function downloadItem(path) {
+        const token = document.getElementById('auth-token').value;
+        const apiBase = document.getElementById('api-base').value;
+        // Direct link download with token
+        // Note: For better security, usually we use a temp signed URL or blob, 
+        // but here we just append query param since Get method doesn't support Authorization header in simple href
+        // Wait, the API expects Bearer token in header. Browser navigation doesn't send that.
+        // We can use fetch -> blob -> objectURL.
+        
+        fetch(`${apiBase}/api/files/download?path=${encodeURIComponent(path)}`, {
+            headers: { "Authorization": "Bearer " + token }
+        })
+        .then(res => {
+            if (res.status !== 200) throw new Error("Download failed");
+            return res.blob();
+        })
+        .then(blob => {
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = path.split('/').pop();
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+        })
+        .catch(e => alert("下载失败: " + e));
+    }
+
+    async function unzipItem(path, filename) {
+        const targetPath = prompt("解压到哪里 (目标路径):", currentPath);
+        if (!targetPath) return;
+
+        const headers = getAuthHeaders();
+        if (!headers) return;
+        headers['Content-Type'] = 'application/json';
+
+        const apiBase = document.getElementById('api-base').value;
+        try {
+            const res = await fetch(`${apiBase}/api/files/unzip`, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify({ path: path, filename: filename, targetpath: targetPath })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                alert("解压成功");
+                refreshFiles();
+            } else {
+                alert("解压失败: " + data.message);
+            }
+        } catch (e) {
+            alert("请求失败: " + e);
+        }
+    }
+    
+    async function chmodItem(path) {
+        const mode = prompt("输入新权限 (例如 755 或 +x):", "755");
+        if (!mode) return;
+
+        const headers = getAuthHeaders();
+        if (!headers) return;
+        headers['Content-Type'] = 'application/json';
+
+        const apiBase = document.getElementById('api-base').value;
+        try {
+            const res = await fetch(`${apiBase}/api/files/chmod`, {
+                method: "POST",
+                headers: headers,
+                body: JSON.stringify({ path: path, mode: mode })
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                alert("权限修改成功");
+                refreshFiles();
+            } else {
+                alert("修改失败: " + data.message);
+            }
+        } catch (e) {
+            alert("请求失败: " + e);
+        }
+    }
+
+    async function getDiskUsage() {
+        const headers = getAuthHeaders();
+        if (!headers) return;
+        
+        const apiBase = document.getElementById('api-base').value;
+        try {
+            const res = await fetch(`${apiBase}/api/user/directories/calculate-usage?path=${encodeURIComponent(currentPath)}`, {
+                headers: headers
+            });
+            const data = await res.json();
+            if (data.code === 0) {
+                const info = document.getElementById('disk-usage-info');
+                info.textContent = `当前目录大小: ${formatSize(data.data.directory_size)} | 磁盘占用率: ${data.data.disk_usage.toFixed(2)}%`;
+            } else {
+                alert("获取磁盘信息失败: " + data.message);
+            }
+        } catch (e) {
+            alert("请求失败: " + e);
+        }
+    }
+
+    // --- Helpers ---
+    function formatSize(bytes) {
+        if (bytes === 0) return '0 B';
+        const k = 1024;
+        const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    }
+
+    function formatDate(dateStr) {
+        if (!dateStr) return '-';
+        return new Date(dateStr).toLocaleString();
+    }
+    
+    function escapeJs(str) {
+        return str.replace(/'/g, "\\'");
+    }
+
+    // --- Terminal Logic (Existing) ---
+    function initTerminal() {
+        if (term) return;
+        term = new Terminal({
+            cursorBlink: true,
+            fontSize: 14,
+            theme: { background: '#1e1e1e' }
+        });
+        fitAddon = new FitAddon.FitAddon();
+        term.loadAddon(fitAddon);
+        term.open(document.getElementById('terminal-container'));
+        fitAddon.fit();
+        
+        term.onData(data => {
+            if (terminalWs && terminalWs.readyState === WebSocket.OPEN) {
+                terminalWs.send(JSON.stringify({ type: 'input', data: data }));
+            }
+        });
+        
+        window.addEventListener('resize', () => {
+            if (fitAddon) {
+                fitAddon.fit();
+                if (terminalWs && terminalWs.readyState === WebSocket.OPEN) {
+                    terminalWs.send(JSON.stringify({ 
+                        type: 'resize', 
+                        cols: term.cols, 
+                        rows: term.rows 
+                    }));
+                }
+            }
+        });
+    }
+
+    function connectTerminal() {
+        const url = document.getElementById('ws-url').value;
+        const token = document.getElementById('auth-token').value;
+        if (!token) { alert("请先填写 Token"); return; }
+
+        disconnectTerminal();
+        initTerminal();
+        term.reset();
+        term.write("Connecting...\r\n");
+
+        const fullUrl = `${url}?token=${token}`;
+        terminalWs = new WebSocket(fullUrl);
+
+        terminalWs.onopen = () => {
+            document.getElementById('term-status').textContent = "已连接";
+            document.getElementById('term-status').style.color = "green";
+            term.write("Connected to CloudQue Terminal.\r\n");
+            terminalWs.send(JSON.stringify({ type: 'resize', cols: term.cols, rows: term.rows }));
+            
+            // Start heartbeat
+            if (terminalPingInterval) clearInterval(terminalPingInterval);
+            terminalPingInterval = setInterval(() => {
+                if (terminalWs && terminalWs.readyState === WebSocket.OPEN) {
+                    terminalWs.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, 15000);
+        };
+
+        terminalWs.onmessage = (event) => {
+            try {
+                const msg = JSON.parse(event.data);
+                if (msg.type === 'output') {
+                    term.write(msg.data);
+                } else if (msg.type === 'pong') {
+                    // console.log("Terminal pong received");
+                }
+            } catch (e) {
+                console.error("Parse error:", e);
+                term.write(event.data); 
+            }
+        };
+
+        terminalWs.onclose = (e) => {
+            if (terminalPingInterval) clearInterval(terminalPingInterval);
+            document.getElementById('term-status').textContent = "已断开";
+            document.getElementById('term-status').style.color = "red";
+            term.write(`\r\nConnection closed. (Code: ${e.code})\r\n`);
+        };
+        
+        terminalWs.onerror = (e) => {
+            term.write(`\r\nError: ${e.type}\r\n`);
+        };
+    }
+
+    function disconnectTerminal() {
+        if (terminalPingInterval) clearInterval(terminalPingInterval);
+        if (terminalWs) {
+            terminalWs.onclose = null; // Important: nullify before closing to avoid ghost messages
+            terminalWs.close();
+            terminalWs = null;
+        }
+    }
+
+    // --- Raw Debug Logic (Existing) ---
+    function logRaw(msg, type) {
+        const div = document.createElement('div');
+        div.className = `log-entry ${type}`;
+        div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+        const box = document.getElementById('raw-log');
+        box.appendChild(div);
+        box.scrollTop = box.scrollHeight;
+    }
+
+    function connectRaw() {
+        const url = document.getElementById('ws-url').value;
+        const token = document.getElementById('auth-token').value;
+        if (!token) { alert("请先填写 Token"); return; }
+
+        disconnectRaw();
+
+        const fullUrl = `${url}?token=${token}`;
+        rawWs = new WebSocket(fullUrl);
+
+        rawWs.onopen = () => {
+            document.getElementById('raw-status').textContent = "已连接";
+            document.getElementById('raw-status').style.color = "green";
+            logRaw("Connected to " + fullUrl, "system");
+            
+            // Start heartbeat
+            if (rawPingInterval) clearInterval(rawPingInterval);
+            rawPingInterval = setInterval(() => {
+                if (rawWs && rawWs.readyState === WebSocket.OPEN) {
+                    rawWs.send(JSON.stringify({ type: 'ping' }));
+                }
+            }, 15000);
+        };
+
+        rawWs.onmessage = (event) => {
+            logRaw(event.data, "received");
+        };
+
+        rawWs.onclose = (e) => {
+            if (rawPingInterval) clearInterval(rawPingInterval);
+            document.getElementById('raw-status').textContent = "已断开";
+            document.getElementById('raw-status').style.color = "red";
+            logRaw(`Connection closed. (Code: ${e.code})`, "system");
+        };
+        
+        rawWs.onerror = (e) => {
+            logRaw("WebSocket Error", "system");
+        };
+    }
+
+    function sendRaw() {
+        if (!rawWs || rawWs.readyState !== WebSocket.OPEN) {
+            alert("未连接");
+            return;
+        }
+        const data = document.getElementById('raw-input').value;
+        rawWs.send(data);
+        logRaw(data, "sent");
+    }
+
+    function disconnectRaw() {
+        if (rawPingInterval) clearInterval(rawPingInterval);
+        if (rawWs) {
+            rawWs.onclose = null;
+            rawWs.close();
+            rawWs = null;
+        }
+    }
+</script>
+
+</body>
+</html>

@@ -4,6 +4,7 @@ import (
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
+	"time"
 )
 
 // AuthService 认证服务接口
@@ -18,4 +19,12 @@ type AuthService interface {
 	GetPermissionsByRole(slug string) ([]entity.Permission, error)
 	// GetAllRoles 获取所有角色
 	GetAllRoles() ([]entity.Role, error)
+	// EnsureSSHSession 确保用户的SSH会话存在 (默认身份)
+	EnsureSSHSession(userID int) error
+	// EnsureSSHSessionByType 确保特定身份的SSH会话存在
+	EnsureSSHSessionByType(userID int, isRoot bool) error
+	// SetSSHServerHost 设置SSH服务器地址
+	SetSSHServerHost(host string)
+	// SetSSHTimeout 设置SSH连接超时
+	SetSSHTimeout(timeout time.Duration)
 }

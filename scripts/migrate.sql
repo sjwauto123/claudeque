@@ -1,24 +1,73 @@
--- CloudQue 数据库迁移脚本
+-- CloudQue 数据库建表脚本
 
 -- 创建数据库
 CREATE DATABASE IF NOT EXISTS cloudque DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 USE cloudque;
 
+-- 角色表
+CREATE TABLE IF NOT EXISTS `admin_roles` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT,
+  `name` varchar(50) NOT NULL COMMENT '角色名称',
+  `status` tinyint DEFAULT NULL COMMENT '角色状态 0-禁用 1-启用',
+  `slug` varchar(50) NOT NULL COMMENT '角色唯一标识',
+  `created_at` datetime(3) DEFAULT NULL,
+  `updated_at` datetime(3) DEFAULT NULL,
+  PRIMARY KEY (`id`),
+  UNIQUE KEY `idx_slug` (`slug`),
+  UNIQUE KEY `idx_name` (`name`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='角色表';
+
 -- 用户表
 CREATE TABLE IF NOT EXISTS `users` (
   `id` bigint unsigned NOT NULL AUTO_INCREMENT,
-  `username` varchar(50) NOT NULL COMMENT '用户名',
-  `password` varchar(255) NOT NULL COMMENT '密码',
-  `email` varchar(100) DEFAULT NULL COMMENT '邮箱',
-  `nickname` varchar(50) DEFAULT NULL COMMENT '昵称',
-  `avatar` varchar(255) DEFAULT NULL COMMENT '头像',
-  `status` tinyint NOT NULL DEFAULT '1' COMMENT '状态:1正常,2禁用',
+  `username` varchar(190) NOT NULL COMMENT '登录账号，唯一',
+  `password` varchar(60) NOT NULL COMMENT '加密后的密码',
+  `role` tinyint NOT NULL DEFAULT 1 COMMENT '用户角色 1-普通用户 2-管理员',
+  `avatar` varchar(191) DEFAULT '' COMMENT '头像URL',
+  `email` varchar(255) DEFAULT NULL COMMENT '邮箱',
+  `remember_token` varchar(100) DEFAULT '' COMMENT '记住我Token',
+  `status` tinyint NOT NULL COMMENT '账号状态',
+  `priority` tinyint NOT NULL DEFAULT 1 COMMENT '用户优先级 1-低 2-高',
+  `multi_training` tinyint NOT NULL DEFAULT 0 COMMENT '多卡训练 0-否 1-是',
+  `cross_server` tinyint NOT NULL DEFAULT 0 COMMENT '跨服务器调度 0-否 1-是',
   `created_at` datetime(3) DEFAULT NULL,
   `updated_at` datetime(3) DEFAULT NULL,
-  `deleted_at` datetime(3) DEFAULT NULL,
   PRIMARY KEY (`id`),
   UNIQUE KEY `idx_username` (`username`),
-  UNIQUE KEY `idx_email` (`email`),
-  KEY `idx_deleted_at` (`deleted_at`)
+  KEY `idx_email` (`email`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='用户表';
+
+-- 操作日志表
+CREATE TABLE IF NOT EXISTS `operation_logs` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+  `username` varchar(50) NOT NULL COMMENT '操作用户名称，关联users.username',
+  `action_type` varchar(50) NOT NULL COMMENT '操作类型 (Login, SubmitJob, CancelJob, DeleteFile...)',
+  `description` text COMMENT '操作详情描述',
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP COMMENT '操作时间',
+  `updated_at` timestamp DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_action_type` (`action_type`),
+  KEY `idx_operation_time` (`created_at`),
+  KEY `idx_user_operation` (`username`, `created_at`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='用户操作日志表';
+
+-- 请求日志表
+CREATE TABLE IF NOT EXISTS `request_logs` (
+  `id` bigint unsigned NOT NULL AUTO_INCREMENT COMMENT '日志ID',
+  `user_id` int unsigned DEFAULT 0 COMMENT '用户ID',
+  `method` varchar(10) NOT NULL COMMENT '请求方法',
+  `path` varchar(255) NOT NULL COMMENT '请求路径',
+  `query` text COMMENT '请求参数',
+  `body` text COMMENT '请求体',
+  `ip_address` varchar(45) NOT NULL COMMENT '请求IP',
+  `user_agent` varchar(255) DEFAULT '' COMMENT '用户代理',
+  `status_code` int NOT NULL COMMENT '响应状态码',
+  `latency` bigint DEFAULT 0 COMMENT '耗时(ms)',
+  `created_at` timestamp DEFAULT CURRENT_TIMESTAMP COMMENT '请求时间',
+  PRIMARY KEY (`id`),
+  KEY `idx_request_time` (`created_at`),
+  KEY `idx_user_request` (`user_id`, `created_at`),
+  KEY `idx_path` (`path`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci ROW_FORMAT=DYNAMIC COMMENT='用户请求日志表';
+

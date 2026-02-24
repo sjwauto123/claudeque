@@ -3,6 +3,10 @@ package api
 import (
 	"cloudque/internal/api/admin"
 	"cloudque/internal/api/auth"
+	"cloudque/internal/api/files"
+	"cloudque/internal/api/terminal"
+	"cloudque/internal/api/user"
+	"cloudque/internal/api/ws"
 	"cloudque/internal/api/job"
 	"cloudque/internal/api/operationLogs"
 	"cloudque/internal/api/queue"
@@ -11,6 +15,8 @@ import (
 	"cloudque/internal/middleware"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
+	"cloudque/pkg/ssh"
+	"cloudque/pkg/websocket"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,11 +24,14 @@ import (
 // Router 路由
 
 type Router struct {
+	userCtrl     *user.Controller
+	authCtrl     *auth.Controller
+	adminCtrl    *admin.Controller
+	filesCtrl    *files.Controller
+	terminalCtrl *terminal.Controller
+	wsCtrl       *ws.Controller
 	jobCtrl          *job.Controller
 	queueCtrl        *queue.Controller
-	userCtrl         *user.Controller
-	authCtrl         *auth.Controller
-	adminCtrl        *admin.Controller
 	systemInfoCtrl   *system.Controller
 	operationLogCtrl *operationLogs.Controller
 }
@@ -38,15 +47,24 @@ func NewRouter(
 	queueService service.QueueService,
 	repository repository.JobRepository,
 	gpuService service.GpuService,
+	fileService service.FileService,
+	terminalService service.TerminalService,
+	wsPool *websocket.ConnectionPool,
+	sessionManager *ssh.SessionManager,
 ) *Router {
 	return &Router{
+		userCtrl:     user.NewController(userService,userOperationLogService),
+		authCtrl:     auth.NewController(authService, userService,userOperationLogService),
+		adminCtrl:    admin.NewController(userService, userService, authService,userOperationLogService, adminOperationLogService),
+		filesCtrl:    files.NewController(fileService, authService),
+		terminalCtrl: terminal.NewController(terminalService, authService),
+		wsCtrl:       ws.NewController(wsPool, authService, sessionManager),
 		jobCtrl:          job.NewController(jobService, authService, gpuService, userOperationLogService),
 		queueCtrl:        queue.NewController(queueService, userOperationLogService, repository, authService),
 		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),
-		userCtrl:         user.NewController(userService, userOperationLogService),
-		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
-		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
 		systemInfoCtrl:   system.NewController(infoService, authService, userOperationLogService),
+
+
 	}
 }
 
@@ -104,4 +122,27 @@ func (r *Router) Setup(engine *gin.Engine) {
 		r.queueCtrl.QueueRoutes(v5)
 	}
 
+	// api v5 路由组，文件
+	v6 := engine.Group("/api/file")
+	{
+		r.filesCtrl.RegisterRoutes(v6)
+	}
+
+
+	// api v5 路由组，展示队列信息
+	v7 := engine.Group("/api/term")
+	{
+		// 终端路由
+		r.terminalCtrl.RegisterRoutes(v7)
+
+		// WebSocket 路由
+		r.wsCtrl.RegisterRoutes(v7)
+	}
+
+
+}
+
+// Close 关闭所有路由连接
+func (r *Router) Close() error {
+	return nil
 }

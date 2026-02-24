@@ -1,12 +1,16 @@
 package main
 
 import (
+	"flag"
 	"fmt"
 
 	"cloudque/internal/app"
 )
 
 func main() {
+	// 定义命令行参数
+	flag.Parse()
+
 	// 创建应用实例
 	application := app.NewApp()
 
