@@ -3,9 +3,9 @@ package api
 import (
 	"cloudque/internal/api/job"
 	"cloudque/internal/api/queue"
-	"cloudque/internal/api/v1/admin"
-	"cloudque/internal/api/v1/auth"
-	"cloudque/internal/api/v1/user"
+	"cloudque/internal/api/admin"
+	"cloudque/internal/api/auth"
+	"cloudque/internal/api/user"
 	"cloudque/internal/middleware"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
@@ -56,14 +56,22 @@ func (r *Router) Setup(engine *gin.Engine) {
 			"message": "CloudQue API is running",
 		})
 	})
+
+	engine.GET("/api/v1/buildtest", func(c *gin.Context) {
+		c.JSON(200, gin.H{
+			"status":  "ok",
+			"message": "/api/v1/buildtestabc123456",
+		})
+	})
+
 	// API v1 路由组
 	v1 := engine.Group("/api/v1")
 	{
-		// 用户路由
-		r.userCtrl.RegisterRoutes(v1)
-
 		// 认证路由
 		r.authCtrl.RegisterRoutes(v1)
+
+		// 用户路由
+		r.userCtrl.RegisterRoutes(v1)
 
 		// 管理员路由
 		r.adminCtrl.RegisterRoutes(v1)

@@ -5,6 +5,7 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
+	"cloudque/pkg/utils"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -104,7 +105,9 @@ func (ctrl *Controller) ChangePassword(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	if req.NewPassword != req.ConfirmPassword {
+	n1 := utils.DecryptIfCryptoJS(req.NewPassword)
+	n2 := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+	if n1 != n2 {
 		response.BadRequest(c, "两次输入的密码不一致")
 	}
 
@@ -186,6 +189,6 @@ func (ctrl *Controller) UploadAvatar(c *gin.Context) {
 		return
 	}
 
-	imgFullPath := "http://5e50c1db.r29.cpolar.top/" + filepath.ToSlash(dst)
+	imgFullPath := "http://192.168.10.6:9980/" + filepath.ToSlash(dst)
 	response.Success(c, gin.H{"path": imgFullPath})
 }

@@ -8,6 +8,7 @@ import (
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
+	"cloudque/pkg/utils"
 	"context"
 	"errors"
 	"fmt"
@@ -69,8 +70,8 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 		logger.Info("删除验证码失败")
 	}
 
-	// 加密密码
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	pwd := utils.DecryptIfCryptoJS(req.Password)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -155,13 +156,14 @@ func (s *userService) ChangePassword(id int, req *request.ChangePasswordRequest)
 		return err
 	}
 
-	// 验证旧密码
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.OldPassword)); err != nil {
+	oldPwd := utils.DecryptIfCryptoJS(req.OldPassword)
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPwd)); err != nil {
 		return bizerrors.ErrInvalidCredentials
 	}
 
 	// 加密新密码
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	newPwd := utils.DecryptIfCryptoJS(req.NewPassword)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
@@ -196,8 +198,8 @@ func (s *userService) ResetPassword(req *request.ResetPasswordRequest) error {
 		return bizerrors.New(bizerrors.CodeUserNotFound, "该邮箱未注册用户")
 	}
 
-	// 3. 更新密码
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	newPwd := utils.DecryptIfCryptoJS(req.NewPassword)
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err
 	}
