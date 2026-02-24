@@ -37,6 +37,14 @@ const (
 	CodeResourceNotFound      = 3001
 	CodeResourceAlreadyExists = 3002
 	CodeResourceLocked        = 3003
+
+	// 任务错误 4xxx
+	CodeJobNotFound        = 4001
+	CodeJobAlreadyRunning  = 4002
+	CodeJobCannotCancel    = 4003
+	CodeGPUInsufficient    = 4004
+	CodeJobSubmitFailed    = 4005
+	CodeJobExecutionFailed = 4006
 )
 
 // 错误码对应的文本消息
@@ -65,6 +73,12 @@ var codeMessages = map[int]string{
 	CodeResourceNotFound:      "资源不存在",
 	CodeResourceAlreadyExists: "资源已存在",
 	CodeResourceLocked:        "资源已被锁定",
+	CodeJobNotFound:           "任务不存在",
+	CodeJobAlreadyRunning:     "任务正在运行",
+	CodeJobCannotCancel:       "无法取消此任务",
+	CodeGPUInsufficient:       "显卡数量不足",
+	CodeJobSubmitFailed:       "提交任务失败",
+	CodeJobExecutionFailed:    "任务执行失败",
 }
 
 // GetMessage 获取错误码对应的文本消息

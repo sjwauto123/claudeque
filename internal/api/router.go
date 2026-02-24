@@ -1,10 +1,13 @@
 package api
 
 import (
+	"cloudque/internal/api/job"
+	"cloudque/internal/api/queue"
 	"cloudque/internal/api/admin"
 	"cloudque/internal/api/auth"
 	"cloudque/internal/api/user"
 	"cloudque/internal/middleware"
+	"cloudque/internal/repository"
 	"cloudque/internal/service"
 
 	"github.com/gin-gonic/gin"
@@ -12,6 +15,8 @@ import (
 
 // Router 路由
 type Router struct {
+	jobCtrl   *job.Controller
+	queueCtrl *queue.Controller
 	userCtrl  *user.Controller
 	authCtrl  *auth.Controller
 	adminCtrl *admin.Controller
@@ -21,11 +26,17 @@ type Router struct {
 func NewRouter(
 	userService service.UserService,
 	authService service.AuthService,
+	jobService service.JobService,
+	queueService service.QueueService,
+	repository repository.JobRepository,
+	gpuService service.GpuService,
 ) *Router {
 	return &Router{
 		userCtrl:  user.NewController(userService),
 		authCtrl:  auth.NewController(authService, userService),
 		adminCtrl: admin.NewController(userService, userService, authService),
+		jobCtrl:   job.NewController(jobService, authService, gpuService),
+		queueCtrl: queue.NewController(queueService, repository, authService),
 	}
 }
 
@@ -57,5 +68,16 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// 管理员路由
 		r.adminCtrl.RegisterRoutes(v1)
+	}
+
+	// api v4 路由组，展示任务信息
+	v4 := engine.Group("/api/job")
+	{
+		r.jobCtrl.JobsRoutes(v4)
+	}
+	// api v5 路由组，展示队列信息
+	v5 := engine.Group("/api/queue")
+	{
+		r.queueCtrl.QueueRoutes(v5)
 	}
 }

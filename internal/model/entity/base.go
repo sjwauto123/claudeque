@@ -8,7 +8,7 @@ import (
 
 // BaseEntity 基础实体
 type BaseEntity struct {
-	ID        int       `gorm:"primarykey" json:"id"`
+	ID        int       `gorm:"primaryKey" json:"id"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

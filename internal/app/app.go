@@ -1,6 +1,7 @@
 package app
 
 import (
+	"cloudque/pkg/websocket"
 	"context"
 	"fmt"
 	"net/http"
@@ -8,6 +9,8 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"cloudque/internal/api"
 	"cloudque/internal/model/entity"
@@ -18,18 +21,19 @@ import (
 	"cloudque/pkg/logger"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // App 应用结构体
 type App struct {
-	cfg     *config.Config
-	mysqlDB *gorm.DB
-	redis   *redis.Client
-	router  *api.Router
-	server  *http.Server
+	cfg       *config.Config
+	mysqlDB   *gorm.DB
+	redis     *redis.Client
+	router    *api.Router
+	server    *http.Server
+	scheduler service.Scheduler
+	pool      *websocket.ConnectionPool
 }
 
 // NewApp 创建应用实例
@@ -54,13 +58,16 @@ func (a *App) Initialize() error {
 		return err
 	}
 
-	// 4. 初始化依赖
+	// 4. 初始化 WebSocket连接池
+	a.pool = websocket.NewConnectionPool()
+
+	// 5. 初始化依赖
 	a.initDependencies()
 
-	// 5. 初始化路由
+	// 6. 初始化路由
 	a.initRouter()
 
-	// 6. 初始化服务器
+	// 7. 初始化服务器
 	a.initServer()
 
 	return nil
@@ -105,7 +112,11 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
+		&entity.BaseEntity{},
+		&entity.Process{},
 		&entity.User{},
+		&entity.Job{},
+		&entity.GpuCard{},
 		&entity.Role{},
 		&entity.Permission{},
 		&entity.Menu{},
@@ -115,12 +126,26 @@ func (a *App) initDatabase() error {
 		logger.Info("数据库迁移完成")
 	}
 
-	// 初始化 Redis（可选）
+	// 初始化 Redis
 	rs, err := database.InitRedis(&a.cfg.Database.Redis)
 	if err != nil {
 		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
 	}
 	a.redis = rs
+
+	//初始化GPU卡片
+	if a.redis != nil {
+		gpuRepo := repository.NewGpuRepository(a.mysqlDB)
+		gpuCache := repository.NewGpuCacheRepository(a.redis)
+		gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := gpuSvc.InitializeGpus(ctx); err != nil {
+			logger.Warn("GPU卡片初始化失败", zap.Error(err))
+		} else {
+			logger.Info("GPU卡片初始化完成")
+		}
+		cancel()
+	}
 
 	return nil
 }
@@ -128,16 +153,35 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
+	processRepo := repository.NewProcessRepository(a.mysqlDB)
 	userRepo := repository.NewUserRepository(a.mysqlDB)
+	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
+	gpuRepo := repository.NewGpuRepository(a.mysqlDB)
+	gpuCache := repository.NewGpuCacheRepository(a.redis)
+	queueRepo := repository.NewQueueRepository(a.redis)
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
 	redisRepo := repository.NewRedisRepository()
+	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
 
 	// 创建 Service
+	queueSvc := service.NewQueueService(queueRepo, jobRepo)
+	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
+	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo)
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 
+	// 创建调度器
+	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc)
+	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc)
+}
+
+// Shutdown 关闭应用
+func (a *App) Shutdown() {
+	// 关闭 ConnectionPool
+	if a.pool != nil {
+		a.pool.CloseAll()
+	}
 }
 
 // initRouter 初始化路由
@@ -165,6 +209,11 @@ func (a *App) initServer() {
 
 // Run 运行应用
 func (a *App) Run() {
+	// 启动任务调度器
+	if a.scheduler != nil {
+		a.scheduler.Start()
+	}
+
 	// 启动 HTTP 服务器
 	go func() {
 		logger.Info("HTTP 服务器启动",
@@ -187,6 +236,11 @@ func (a *App) gracefulShutdown() {
 	<-quit
 
 	logger.Info("正在关闭服务器...")
+
+	// 停止任务调度器
+	if a.scheduler != nil {
+		a.scheduler.Stop()
+	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

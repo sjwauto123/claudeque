@@ -105,7 +105,7 @@ Service 和 Repository 层使用接口定义，支持 Mock 测试和多种实现
 ```go
 // 定义接口
 type UserRepository interface {
-    FindByID(id uint) (*entity.User, error)
+    FindByID(id int) (*entity.User, error)
     Create(user *entity.User) error
 }
 
