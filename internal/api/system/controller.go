@@ -3,19 +3,15 @@
 package system
 
 import (
+	"cloudque/internal/middleware"
 	"cloudque/internal/service"
 	"cloudque/pkg/logger"
+	"cloudque/pkg/response"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 )
-
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		return true // 开发阶段可临时放开，生产务必限制
-	},
-}
 
 type Controller struct {
 	syInfoSvc               service.SystemInfoService
@@ -31,23 +27,39 @@ func NewController(svc service.SystemInfoService, authSvc service.AuthService, u
 	}
 }
 
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool {
+		origin := r.Header.Get("Origin") // 获取请求来源
+		allowedOrigins := []string{
+			"https://yourdomain.com",
+			//"http://localhost:3000",
+		}
+		for _, allowed := range allowedOrigins {
+			if origin == allowed {
+				return true // 白名单中的来源允许连接
+			}
+		}
+		return false // 其他来源拒绝连接
+	},
+}
+
 func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 
-	//value, exists := c.Get(middleware.ContextUserID)
-	//if !exists {
-	//	response.BadRequest(c, "未找到用户信息")
-	//	return
-	//}
+	value, exists := c.Get(middleware.ContextUserID)
+	if !exists {
+		response.BadRequest(c, "未找到用户信息")
+		return
+	}
 
-	userID := 1
+	userID := value.(uint)
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		logger.Info("升级失败")
+		logger.Info("Failed to upgrade to WebSocket:")
 		// Gin 已接管 writer，不能写 JSON，直接 return
 		return
 	}
 	// 处理WebSocket连接
-	ctrl.syInfoSvc.HandleSyMessage(conn, uint(userID))
+	ctrl.syInfoSvc.HandleSyMessage(conn, userID)
 }

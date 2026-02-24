@@ -27,6 +27,10 @@ func (a *adminOperationLogService) GetAdminLogs(r *request.AdminLogsRequest) (in
 	return response.NewPageResponse(logs, total, r.Page, r.Size), nil
 }
 
-func (a *adminOperationLogService) CreateLog(log *entity.AdminOperationLog) error {
+func (a *adminOperationLogService) CreateLog(log *entity.AdminOperationLog) (int, error) {
 	return a.adminOperationLogRep.CreateLog(log)
+}
+
+func (a *adminOperationLogService) UpdateStatus(id int) (int, error) {
+	return a.adminOperationLogRep.UpdateStatus(id)
 }

@@ -13,12 +13,13 @@ import (
 )
 
 // Router 路由
+
 type Router struct {
-	operationLogCtrl *operationLogs.Controller
 	systemInfoCtrl   *system.Controller
 	userCtrl         *user.Controller
 	authCtrl         *auth.Controller
 	adminCtrl        *admin.Controller
+	operationLogCtrl *operationLogs.Controller
 }
 
 // NewRouter 创建路由
@@ -28,14 +29,13 @@ func NewRouter(
 	infoService service.SystemInfoService,
 	userService service.UserService,
 	authService service.AuthService,
-
 	// 新增
 ) *Router {
 	return &Router{
 		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),
 		userCtrl:         user.NewController(userService, userOperationLogService),
 		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
-		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService),
+		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
 		systemInfoCtrl:   system.NewController(infoService, authService, userOperationLogService),
 	}
 }
@@ -70,15 +70,14 @@ func (r *Router) Setup(engine *gin.Engine) {
 		r.adminCtrl.RegisterRoutes(v1)
 	}
 
-	//API v2 路由组,用户操作日志输出
+	//API v2 路由组 操作日志输出
 	v2 := engine.Group("/api/operationLogs")
-
 	{
 		r.operationLogCtrl.RegisterRoutes(v2)
 	}
 
-	//API v3 路由组，展示系统信息
-	v3 := engine.Group("/api")
+	//API v3 路由组 展示系统信息
+	v3 := engine.Group("/api/system")
 	{
 		r.systemInfoCtrl.RegisterRoutes(v3)
 	}

@@ -3,6 +3,7 @@ package repository
 import (
 	dto "cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
+
 	"gorm.io/gorm"
 )
 
@@ -15,7 +16,21 @@ func NewAdminOperationLogRepository(db *gorm.DB) AdminOperationLogRepository {
 }
 
 func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWord string) (*[]dto.AdminLogResponse, int64, error) {
-	query := a.db.Model(&entity.AdminOperationLog{}).Select("username, action_type, object, status, created_at")
+	// 先获取最新的5000条记录的ID
+	var latestIDs []int
+	if err := a.db.Model(&entity.AdminOperationLog{}).
+		Select("id").
+		Order("created_at DESC").
+		Limit(5000).
+		Pluck("id", &latestIDs).Error; err != nil {
+		return nil, 0, err
+	}
+
+	if len(latestIDs) == 0 {
+		return &[]dto.AdminLogResponse{}, 0, nil
+	}
+
+	query := a.db.Model(&entity.AdminOperationLog{}).Select("username, action_type, object, status, created_at").Where("id IN ?", latestIDs)
 
 	if keyWord != "" {
 		query = query.Where("username LIKE ? OR action_type LIKE ? OR object LIKE  ?", "%"+keyWord+"%", "%"+keyWord+"%", "%"+keyWord+"%")
@@ -34,6 +49,17 @@ func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWor
 	return &logs, total, nil
 }
 
-func (a *adminOperationLogRepository) CreateLog(log *entity.AdminOperationLog) error {
-	return a.db.Create(log).Error
+func (a *adminOperationLogRepository) CreateLog(log *entity.AdminOperationLog) (int, error) {
+	if err := a.db.Create(log).Error; err != nil {
+		return 0, err
+	}
+	return log.ID, nil
+}
+
+func (a *adminOperationLogRepository) UpdateStatus(id int) (int, error) {
+	result := a.db.Model(&entity.AdminOperationLog{}).Where("id = ?", id).Update("status", 1)
+	if result.Error != nil {
+		return 0, result.Error
+	}
+	return int(result.RowsAffected), nil
 }

@@ -242,9 +242,10 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 		// 通过本地命令获取进程的详细信息
 		info, err := getProcessDetails(p)
 		fmt.Println("获取的进程详情：", info)
-		if err == nil {
-			processInfos = append(processInfos, info)
+		if err != nil {
+			logger.Infof("获取进程详细信息失败:%v", err)
 		}
+		processInfos = append(processInfos, info)
 	}
 
 	return processInfos, nil

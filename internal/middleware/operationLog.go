@@ -50,18 +50,19 @@ func UserOperationLogs(userLogService service.UserOperationLogService) gin.Handl
 		// 5. 获取用户信息
 		username := GetUsername(c)
 		if username == "" {
-			username = "anonymous"
+			return
 		}
 
 		// 6. 构建操作日志
 		// 从上下文中获取操作类型（由装饰器设置）
 		actionType := ""
-		if opType, exists := c.Get("operationType"); exists {
-			if typeStr, ok := opType.(string); ok {
-				actionType = typeStr
-			}
+		opType, exists := c.Get("operationType")
+		if !exists {
+			return
 		}
-
+		if typeStr, ok := opType.(string); ok {
+			actionType = typeStr
+		}
 		// 获取业务状态码和响应消息（优先从响应体中提取）
 		status := getBusinessStatusCode(blw.Body())
 
