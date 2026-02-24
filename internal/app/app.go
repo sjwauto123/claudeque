@@ -112,7 +112,6 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
-		&entity.OperationLog{},
 		&entity.BaseEntity{},
 		&entity.Process{},
 		&entity.User{},

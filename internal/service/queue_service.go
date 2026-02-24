@@ -171,7 +171,10 @@ func (s *queueService) fixJobStatusIfMovedFromHead(ctx context.Context, jobID in
 		job, err := s.jobRepo.GetByID(jobID)
 		if err == nil && job != nil && job.Status == entity.JobStatusWaitingGpu {
 			// 重置为排队中，让调度器在它再次到达队首时重新触发资源检查
-			_ = s.jobRepo.UpdateStatus(jobID, entity.JobStatusQueued)
+			err = s.jobRepo.UpdateStatus(jobID, entity.JobStatusQueued)
+			if err != nil {
+				return
+			}
 		}
 	}
 }
