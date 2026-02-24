@@ -4,6 +4,10 @@ type RolePermissionResponse struct {
 	Menu []*MenuNodeResponse      `json:"menu"`
 	Api  []*ApiPermissionGroupRes `json:"api"`
 }
+type RoleSimple struct {
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
 
 // RolePermissionNodeRes 角色权限节点结构
 //type RolePermissionNodeRes struct {

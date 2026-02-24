@@ -7,10 +7,12 @@ import (
 	"time"
 )
 
+// roleRepository 角色仓储实现
 type roleRepository struct {
 	db *gorm.DB
 }
 
+// NewRoleRepository 创建角色仓储
 func NewRoleRepository(db *gorm.DB) RoleRepository {
 	return &roleRepository{db: db}
 }
@@ -26,11 +28,11 @@ func (r *roleRepository) GetRoleByID(id int) (*entity.Role, error) {
 	return &role, nil
 }
 
-// FindBySlug 根据 Slug 查找角色
+// FindBySlug 根据 Slug 查找角色，权限，菜单
 func (r *roleRepository) FindBySlug(slug string) (*entity.Role, error) {
 	var role entity.Role
 
-	err := r.db.Preload("Permissions").Preload("Permissions.Menus").Where("slug = ?", slug).First(&role).Error
+	err := r.db.Preload("Permissions").Preload("Menus").Where("slug = ?", slug).First(&role).Error
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return nil, nil
@@ -215,7 +217,7 @@ func (r *roleRepository) UpdateRolePermission(
 
 	return r.db.Transaction(func(tx *gorm.DB) error {
 
-		// 1. 除旧菜单
+		// 1. 删除旧菜单
 		if err := tx.
 			Where("role_id = ?", roleID).
 			Delete(&entity.RoleMenu{}).Error; err != nil {
@@ -229,7 +231,7 @@ func (r *roleRepository) UpdateRolePermission(
 			return err
 		}
 
-		// 3. 插入新菜单
+		// 3. 写入新菜单
 		if len(menuIDs) > 0 {
 			var roleMenus []entity.RoleMenu
 			for _, menuID := range menuIDs {
@@ -244,7 +246,7 @@ func (r *roleRepository) UpdateRolePermission(
 			}
 		}
 
-		// 4. 插入新权限
+		// 4. 写入新权限
 		if len(permissionIDs) > 0 {
 			var rolePermissions []entity.RolePermission
 			for _, permID := range permissionIDs {
@@ -279,4 +281,30 @@ func (r *roleRepository) ExistsBySlug(slug string) (bool, error) {
 		Where("slug = ?", slug).
 		Count(&count).Error
 	return count > 0, err
+}
+
+// ListAll 获取所有角色（仅名称与标识）
+func (r *roleRepository) ListAll() ([]entity.Role, error) {
+	var roles []entity.Role
+	if err := r.db.Model(&entity.Role{}).Select("id", "name", "slug", "status").Order("id ASC").Find(&roles).Error; err != nil {
+		return nil, err
+	}
+	return roles, nil
+}
+func (r *roleRepository) CheckUserPermission(userID int, method string, path string) (bool, error) {
+	var count int64
+	err := r.db.Table("admin_users").
+		Joins("JOIN admin_role_users ru ON ru.user_id = admin_users.id").
+		Joins("JOIN admin_roles ro ON ro.id = ru.role_id").
+		Joins("JOIN admin_role_permissions rp ON rp.role_id = ro.id").
+		Joins("JOIN admin_permissions p ON p.id = rp.permission_id").
+		Where("admin_users.id = ?", userID).
+		Where("p.http_method = ?", method).
+		Where("p.http_path = ?", path).
+		Count(&count).Error
+	if err != nil {
+		return false, err
+	}
+
+	return count > 0, nil
 }

@@ -1,9 +1,13 @@
 package role
 
-import "github.com/gin-gonic/gin"
+import (
+	"cloudque/internal/middleware"
+	"github.com/gin-gonic/gin"
+)
 
 func (ctrl *RoleController) RegisterRoutes(r *gin.RouterGroup) {
 	roleGroup := r.Group("/permissionManage/roles")
+	roleGroup.Use(middleware.RequirePermission(ctrl.authService))
 	{
 		roleGroup.GET("/page", ctrl.PageList)
 		roleGroup.GET("/:id", ctrl.GetRoleByID)

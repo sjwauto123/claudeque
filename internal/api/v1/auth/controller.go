@@ -5,6 +5,7 @@ import (
 	"cloudque/internal/service"
 	"cloudque/pkg/captcha"
 	"cloudque/pkg/response"
+	"cloudque/pkg/utils"
 	"regexp"
 
 	"github.com/gin-gonic/gin"
@@ -31,7 +32,9 @@ func (ctrl *Controller) Register(c *gin.Context) {
 		return
 	}
 
-	if req.Password != req.ConfirmPassword {
+	p1 := utils.DecryptIfCryptoJS(req.Password)
+	p2 := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+	if p1 != p2 {
 		response.BadRequest(c, "两次输入的密码不一致")
 		return
 	}
@@ -95,7 +98,9 @@ func (ctrl *Controller) ResetPassword(c *gin.Context) {
 		return
 	}
 
-	if req.NewPassword != req.ConfirmPassword {
+	n1 := utils.DecryptIfCryptoJS(req.NewPassword)
+	n2 := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+	if n1 != n2 {
 		response.BadRequest(c, "两次输入的密码不一致")
 	}
 

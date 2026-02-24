@@ -14,6 +14,7 @@ import (
 
 type MenuController struct {
 	menuService service.MenuService
+	authService service.AuthService
 }
 
 // NewMenuController 创建菜单控制器实例

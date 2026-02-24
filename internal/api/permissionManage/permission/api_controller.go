@@ -13,7 +13,8 @@ import (
 )
 
 type APIController struct {
-	apiService service.APIService
+	apiService  service.APIService
+	authService service.AuthService
 }
 
 func NewAPIController(apiService service.APIService) *APIController {

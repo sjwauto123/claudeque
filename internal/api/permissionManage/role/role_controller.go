@@ -13,6 +13,7 @@ import (
 
 type RoleController struct {
 	roleService service.RoleService
+	authService service.AuthService
 }
 
 func NewRoleController(roleService service.RoleService) *RoleController {
