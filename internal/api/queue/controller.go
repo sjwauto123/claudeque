@@ -12,22 +12,24 @@ import (
 
 // Controller 队列控制器
 type Controller struct {
-	queueService service.QueueService
-	jobRepo      repository.JobRepository
-	authService  service.AuthService
+	queueService            service.QueueService
+	userOperationLogService service.UserOperationLogService
+	jobRepo                 repository.JobRepository
+	authService             service.AuthService
 }
 
 // NewController 创建队列控制器
-func NewController(queueService service.QueueService, jobRepo repository.JobRepository, authService service.AuthService) *Controller {
+func NewController(queueService service.QueueService, userOperationLogService service.UserOperationLogService, jobRepo repository.JobRepository, authService service.AuthService) *Controller {
 	return &Controller{
-		queueService: queueService,
-		jobRepo:      jobRepo,
-		authService:  authService,
+		queueService:            queueService,
+		userOperationLogService: userOperationLogService,
+		jobRepo:                 jobRepo,
+		authService:             authService,
 	}
 }
 
 // GetQueue 获取排队队列
-func (c *Controller) GetQueue(ctx *gin.Context) {
+func (ctrl *Controller) GetQueue(ctx *gin.Context) {
 	var req request.QueueListRequest
 	if err := ctx.ShouldBindQuery(&req); err != nil {
 		response.BadRequest(ctx, err.Error())
@@ -44,7 +46,7 @@ func (c *Controller) GetQueue(ctx *gin.Context) {
 		return
 	}
 
-	list, total, page, pageSize, err := c.queueService.GetQueuePage(ctx.Request.Context(), req, startTime, endTime)
+	list, total, page, pageSize, err := ctrl.queueService.GetQueuePage(ctx.Request.Context(), req, startTime, endTime)
 	if err != nil {
 		response.InternalError(ctx, err.Error())
 		return

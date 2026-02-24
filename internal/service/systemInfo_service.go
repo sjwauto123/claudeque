@@ -5,6 +5,7 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/websocket"
+	"context"
 	"encoding/json"
 	"fmt"
 	"os/exec"
@@ -23,7 +24,7 @@ import (
 // ResourceCollector 资源收集器
 type ResourceCollector struct {
 	Pool     *websocket.ConnectionPool
-	ProcRepo repository.ProcessRepository
+	ProcRepo repository.ProcessCacheRepository
 	Done     chan struct{}
 	Once     sync.Once
 	mutex    sync.RWMutex
@@ -34,7 +35,7 @@ type systemInfoService struct {
 	Collector *ResourceCollector
 }
 
-func NewSystemInfoService(pool *websocket.ConnectionPool, procRepo repository.ProcessRepository) SystemInfoService {
+func NewSystemInfoService(pool *websocket.ConnectionPool, procRepo repository.ProcessCacheRepository) SystemInfoService {
 	collector := NewResourceCollector(pool, procRepo)
 	collector.Start()
 	return &systemInfoService{
@@ -61,7 +62,7 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID uint) {
 }
 
 // NewResourceCollector 创建资源收集器
-func NewResourceCollector(pool *websocket.ConnectionPool, procRepo repository.ProcessRepository) *ResourceCollector {
+func NewResourceCollector(pool *websocket.ConnectionPool, procRepo repository.ProcessCacheRepository) *ResourceCollector {
 	return &ResourceCollector{
 		Pool:     pool,
 		ProcRepo: procRepo,
@@ -231,12 +232,15 @@ func GetNvidiaGPUInfo() ([]response.GPUInfoResponse, error) {
 
 // collectProcessInfo 收集进程信息
 func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoResponse, error) {
-	// 从redis获取进程信息
-	//processes, err := rc.getProcessesFromCache()
-	//if err != nil {
-	//	return nil, fmt.Errorf("查询进程信息失败: %w", err)
-	//}
-	processes := []int{3188, 6132, 32133, 20700, 22360}
+	// 创建带超时的上下文，防止Redis操作超时
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+
+	//从redis获取进程信息
+	_, processes, err := rc.ProcRepo.GetAllPid(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("查询进程信息失败: %w", err)
+	}
 	var processInfos []response.ProcessInfoResponse
 	for _, p := range processes {
 		// 通过本地命令获取进程的详细信息

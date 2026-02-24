@@ -14,17 +14,19 @@ import (
 
 // Controller 任务控制器
 type Controller struct {
-	jobService  service.JobService
-	authService service.AuthService
-	gpuService  service.GpuService
+	jobService              service.JobService
+	authService             service.AuthService
+	gpuService              service.GpuService
+	userOperationLogService service.UserOperationLogService
 }
 
 // NewController 创建任务控制器
-func NewController(jobService service.JobService, authService service.AuthService, gpuService service.GpuService) *Controller {
+func NewController(jobService service.JobService, authService service.AuthService, gpuService service.GpuService, userOperationLogService service.UserOperationLogService) *Controller {
 	return &Controller{
-		jobService:  jobService,
-		authService: authService,
-		gpuService:  gpuService,
+		jobService:              jobService,
+		authService:             authService,
+		gpuService:              gpuService,
+		userOperationLogService: userOperationLogService,
 	}
 }
 

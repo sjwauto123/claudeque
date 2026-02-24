@@ -21,7 +21,6 @@ import (
 	"cloudque/pkg/logger"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
@@ -170,7 +169,7 @@ func (a *App) initDependencies() {
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
-	infoService := service.NewSystemInfoService(a.pool, processRepo)
+	infoService := service.NewSystemInfoService(a.pool, procCacheRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
@@ -180,8 +179,7 @@ func (a *App) initDependencies() {
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 	// 创建 Router
-	a.router = api.NewRouter(userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc)
-	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc)
+	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc)
 
 }
 

@@ -180,7 +180,6 @@ func (ctrl *Controller) Shutdown(c *gin.Context) {
 	}
 	cmd := exec.Command("sudo", "shutdown", "now")
 	if err := cmd.Start(); err != nil {
-
 		status, err := ctrl.adminOperationLogSer.UpdateStatus(logId)
 		if err != nil || status == 0 {
 			response.BizError(c, err)

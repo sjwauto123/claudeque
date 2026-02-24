@@ -18,12 +18,12 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		//登录
 		authGroup.POST("/login", middleware.WithOperation("用户登录"), ctrl.Login)
 		//刷新token
-		authGroup.POST("/refresh", middleware.WithOperation("刷新令牌"), ctrl.RefreshToken)
+		authGroup.POST("/refresh", ctrl.RefreshToken)
 		//发送邮箱验证码
 		authGroup.POST("/email/code", middleware.WithOperation("发送邮箱验证码"), ctrl.SendEmailCode)
 		//忘记密码
 		authGroup.POST("/password/reset", middleware.WithOperation("重置密码"), ctrl.ResetPassword)
 		//图形验证码
-		authGroup.GET("/captcha", middleware.WithOperation("获取验证码"), ctrl.GetCaptcha)
+		authGroup.GET("/captcha", ctrl.GetCaptcha)
 	}
 }
