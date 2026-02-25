@@ -20,7 +20,7 @@ database:
     host: "192.168.10.4"
     port: 6379
     password: "123456"
-    db: 2
+    db: 5
     pool_size: 10
 
 # JWT 配置
@@ -56,7 +56,7 @@ cors:
 
 # 训练服务器配置
 server:
-  host: "192.168.83.130:22"
+  host: "38.135.24.184:1211"
   root_username: "root"
   base_path: "/data/users"
   timeout: "30s"

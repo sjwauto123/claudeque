@@ -5,7 +5,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
+	router := r.Group("/api/system")
 	router.Use(middleware.Auth())
 	router.Use(middleware.RequirePermission(ctrl.authService))
 	router.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
