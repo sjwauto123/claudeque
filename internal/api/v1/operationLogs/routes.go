@@ -6,7 +6,7 @@ import (
 )
 
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
-	router := r.Group("/api/operationLogs")
+	router := r.Group("/operationLogs")
 	router.Use(middleware.Auth())
 	router.Use(middleware.RequirePermission(ctrl.authService))
 	// 系统关机重启操作日志路由
