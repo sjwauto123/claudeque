@@ -53,7 +53,7 @@ type UpdateProductRequest struct {
 package response
 
 type ProductResponse struct {
-    ID          uint    `json:"id"`
+    ID          int     `json:"id"`
     Name        string  `json:"name"`
     Description string  `json:"description"`
     Price       float64 `json:"price"`
@@ -88,7 +88,7 @@ func NewProductRepository(db *gorm.DB) ProductRepository {
     return &productRepository{db: db}
 }
 
-func (r *productRepository) FindByID(id uint) (*entity.Product, error) {
+func (r *productRepository) FindByID(id int) (*entity.Product, error) {
     var product entity.Product
     err := r.db.First(&product, id).Error
     if err != nil {
@@ -110,10 +110,10 @@ func (r *productRepository) FindByID(id uint) (*entity.Product, error) {
 ```go
 type ProductService interface {
     Create(req *request.CreateProductRequest) error
-    GetByID(id uint) (*entity.Product, error)
-    Update(id uint, req *request.UpdateProductRequest) error
-    Delete(id uint) error
-    List(page, pageSize int) ([]*entity.Product, int64, error)
+    GetByID(id int) (*entity.Product, error)
+    Update(id int, req *request.UpdateProductRequest) error
+    Delete(id int) error
+    List(page, pageSize int) ([]*entity.Product, int, error)
 }
 ```
 
@@ -145,10 +145,10 @@ func (s *productService) Create(req *request.CreateProductRequest) error {
 
 ### 步骤 5: 创建 Controller
 
-在 `internal/api/v1/product/` 创建控制器：
+在 `internal/api/product/` 创建控制器：
 
 ```go
-// internal/api/v1/product/controller.go
+// internal/api/product/controller.go
 package product
 
 type ProductController struct {
@@ -176,9 +176,9 @@ func (ctrl *ProductController) Create(c *gin.Context) {
 
 func (ctrl *ProductController) GetByID(c *gin.Context) {
     id := c.Param("id")
-    productID, _ := strconv.ParseUint(id, 10, 32)
+    productID, _ := strconv.Atoi(id)
 
-    product, err := ctrl.productService.GetByID(uint(productID))
+    product, err := ctrl.productService.GetByID(productID)
     if err != nil {
         response.BizError(c, err)
         return
@@ -190,10 +190,10 @@ func (ctrl *ProductController) GetByID(c *gin.Context) {
 // 实现其他方法...
 ```
 
-在 `internal/api/v1/product/routes.go` 注册路由：
+在 `internal/api/product/routes.go` 注册路由：
 
 ```go
-// internal/api/v1/product/routes.go
+// internal/api/product/routes.go
 package product
 
 func (ctrl *ProductController) RegisterRoutes(r *gin.RouterGroup) {
@@ -357,7 +357,7 @@ func TestUserService_Register(t *testing.T) {
 ### 1. 查看日志
 
 ```bash
-tail -f logs/app.log
+tail -f operationLogs/app.log
 ```
 
 ### 2. 打印调试信息

@@ -3,6 +3,7 @@ package utils
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"strconv"
 	"strings"
 )
 
@@ -33,4 +34,22 @@ func TrimSpace(s string) string {
 // IsEmpty 检查字符串是否为空
 func IsEmpty(s string) bool {
 	return TrimSpace(s) == ""
+}
+
+// StringToInt 将字符串转换为int
+func StringToInt(s string, result *int) (bool, error) {
+	if s == "" {
+		return false, nil
+	}
+	val, err := strconv.Atoi(s)
+	if err != nil {
+		return false, err
+	}
+	*result = val
+	return true, nil
+}
+
+// IntToString 将int转换为字符串
+func IntToString(i int) string {
+	return strconv.Itoa(i)
 }

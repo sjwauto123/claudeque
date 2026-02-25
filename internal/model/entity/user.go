@@ -11,8 +11,7 @@ type User struct {
 	Priority      int    `gorm:"type:int;default:1;comment:用户优先级" json:"priority"`
 	MultiTraining int    `gorm:"type:int;default:0;comment:多卡训练" json:"multi_training"`
 	CrossServer   int    `gorm:"type:int;default:0;comment:跨服务器调度" json:"cross_server"`
-
-	Roles []Role `gorm:"many2many:admin_role_users;joinForeignKey:user_id;JoinReferences:role_id" json:"roles"`
+	Roles         []Role `gorm:"many2many:admin_role_users;joinForeignKey:user_id;JoinReferences:role_id" json:"roles"`
 }
 
 // TableName 指定表名

@@ -1,27 +1,34 @@
 package admin
 
 import (
+	"cloudque/internal/middleware"
 	"cloudque/internal/model/dto/request"
 	dtoResp "cloudque/internal/model/dto/response"
+	"cloudque/internal/model/entity"
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
 	"os/exec"
 	"strconv"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
 type Controller struct {
-	adminService service.AdminService
-	userService  service.UserService
-	authService  service.AuthService
+	adminService         service.AdminService
+	userService          service.UserService
+	authService          service.AuthService
+	userOperationLogSer  service.UserOperationLogService
+	adminOperationLogSer service.AdminOperationLogService
 }
 
-func NewController(adminService service.AdminService, userService service.UserService, authService service.AuthService) *Controller {
+func NewController(adminService service.AdminService, userService service.UserService, authService service.AuthService, userOperationLogSer service.UserOperationLogService, adminOperationLogSer service.AdminOperationLogService) *Controller {
 	return &Controller{
-		adminService: adminService,
-		userService:  userService,
-		authService:  authService,
+		adminService:         adminService,
+		userService:          userService,
+		authService:          authService,
+		userOperationLogSer:  userOperationLogSer,
+		adminOperationLogSer: adminOperationLogSer,
 	}
 }
 
@@ -131,8 +138,26 @@ func (ctrl *Controller) ListRoleSimple(c *gin.Context) {
 
 // Restart 重启系统
 func (ctrl *Controller) Restart(c *gin.Context) {
+
+	logId, err := ctrl.adminOperationLogSer.CreateLog(&entity.AdminOperationLog{
+		Username:   middleware.GetUsername(c),
+		ActionType: "restart",
+		Object:     "重启系统",
+		Status:     1,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	})
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 	cmd := exec.Command("sudo", "reboot", "now")
-	if err := cmd.Start(); err != nil {
+	if err = cmd.Start(); err != nil {
+		status, err := ctrl.adminOperationLogSer.UpdateStatus(logId)
+		if err != nil || status == 0 {
+			response.BizError(c, err)
+			return
+		}
 		response.InternalError(c, "failed to restart system")
 		return
 	}
@@ -141,10 +166,27 @@ func (ctrl *Controller) Restart(c *gin.Context) {
 
 // Shutdown 关闭系统
 func (ctrl *Controller) Shutdown(c *gin.Context) {
-	cmd := exec.Command("sudo", "shutdown", "now")
-	if err := cmd.Start(); err != nil {
-		response.InternalError(c, "failed to shutdown system")
+	logId, err := ctrl.adminOperationLogSer.CreateLog(&entity.AdminOperationLog{
+		Username:   middleware.GetUsername(c),
+		ActionType: "close",
+		Object:     "关闭系统",
+		Status:     1,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	})
+	if err != nil {
+		response.BizError(c, err)
 		return
 	}
-	response.Success(c, gin.H{"message": "shutdown"})
+	cmd := exec.Command("sudo", "shutdown", "now")
+	if err := cmd.Start(); err != nil {
+		status, err := ctrl.adminOperationLogSer.UpdateStatus(logId)
+		if err != nil || status == 0 {
+			response.BizError(c, err)
+			return
+		}
+		response.InternalError(c, "failed to close system")
+		return
+	}
+	response.Success(c, gin.H{"message": "closing"})
 }
