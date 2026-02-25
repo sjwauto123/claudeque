@@ -10,7 +10,6 @@ import (
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	authGroup := r.Group("/auth")
 	authGroup.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
-	authGroup.Use(middleware.RequirePermission(ctrl.authService, "getUserInfo"))
 	{
 
 		//注册
