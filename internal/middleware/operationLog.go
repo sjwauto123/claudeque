@@ -129,7 +129,6 @@ func getBusinessStatusCode(body []byte) int {
 	var resp struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
-		Msg     string `json:"msg"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return 0
