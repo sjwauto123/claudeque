@@ -4,6 +4,7 @@ app:
   version: "1.0.0"
   mode: "debug"  # debug, release, test
   port: 8080
+  aes: 1234567890abcdef
 
 # 数据库配置
 database:
@@ -17,7 +18,7 @@ database:
     max_open_conns: 100
   redis:
     host: "192.168.10.4"
-    port: 6378
+    port: 6379
     password: "123456"
     db: 2
     pool_size: 10
