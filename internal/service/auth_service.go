@@ -274,8 +274,8 @@ func (s *authService) aggregate(user *entity.User) ([]dto.PermissionResponse, []
 			Slug:       p.Slug,
 			Type:       p.Type,
 			Status:     p.Status,
-			HttpMethod: p.HTTPMethod,
-			HttpPath:   p.HTTPPath,
+			HttpMethod: p.HttpMethod,
+			HttpPath:   p.HttpPath,
 		})
 	}
 	menus := make([]entity.Menu, 0, len(menuMap))
