@@ -1,14 +1,11 @@
 package admin
 
 import (
-	"cloudque/internal/middleware"
 	"github.com/gin-gonic/gin"
 )
 
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	adminGroup := r.Group("/admin")
-	adminGroup.Use(middleware.Auth())
-	adminGroup.Use(middleware.RequirePermission(ctrl.authService, "user_manage"))
 
 	{
 		adminGroup.POST("/users", ctrl.CreateUser)

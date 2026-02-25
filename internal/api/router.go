@@ -12,9 +12,10 @@ import (
 
 // Router 路由
 type Router struct {
-	userCtrl  *user.Controller
-	authCtrl  *auth.Controller
-	adminCtrl *admin.Controller
+	userCtrl    *user.Controller
+	authCtrl    *auth.Controller
+	adminCtrl   *admin.Controller
+	authService service.AuthService
 }
 
 // NewRouter 创建路由
@@ -23,9 +24,10 @@ func NewRouter(
 	authService service.AuthService,
 ) *Router {
 	return &Router{
-		userCtrl:  user.NewController(userService),
-		authCtrl:  auth.NewController(authService, userService),
-		adminCtrl: admin.NewController(userService, userService, authService),
+		userCtrl:    user.NewController(userService),
+		authCtrl:    auth.NewController(authService, userService),
+		adminCtrl:   admin.NewController(userService, userService, authService),
+		authService: authService,
 	}
 }
 
@@ -49,13 +51,19 @@ func (r *Router) Setup(engine *gin.Engine) {
 	// API v1 路由组
 	v1 := engine.Group("/api/v1")
 	{
-		// 认证路由
+		// 认证路由 (公开)
 		r.authCtrl.RegisterRoutes(v1)
 
-		// 用户路由
-		r.userCtrl.RegisterRoutes(v1)
+		// 需要认证的路由组
+		authorized := v1.Group("/")
+		authorized.Use(middleware.Auth())
+		authorized.Use(middleware.RequirePermission(r.authService))
+		{
+			// 用户路由
+			r.userCtrl.RegisterRoutes(authorized)
 
-		// 管理员路由
-		r.adminCtrl.RegisterRoutes(v1)
+			// 管理员路由
+			r.adminCtrl.RegisterRoutes(authorized)
+		}
 	}
 }

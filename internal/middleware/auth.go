@@ -57,7 +57,7 @@ func Auth() gin.HandlerFunc {
 }
 
 // RequirePermission 权限检查中间件
-func RequirePermission(authService service.AuthService, permission string) gin.HandlerFunc {
+func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// 1. 获取用户角色slug
 		rolesInterface, exists := c.Get(ContextRoles)
@@ -68,7 +68,11 @@ func RequirePermission(authService service.AuthService, permission string) gin.H
 		}
 		roles := rolesInterface.([]string)
 
-		// 2. 查到用户所有的权限
+		// 2. 获取当前请求路径和方法
+		currentPath := c.FullPath()
+		currentMethod := c.Request.Method
+
+		// 3. 查到用户所有的权限
 		hasPermission := false
 		for _, roleSlug := range roles {
 			if roleSlug == "admin" {
@@ -83,7 +87,7 @@ func RequirePermission(authService service.AuthService, permission string) gin.H
 			}
 
 			for _, p := range perms {
-				if p.Slug == permission {
+				if p.HttpPath == currentPath && p.HttpMethod == currentMethod {
 					hasPermission = true
 					break
 				}
