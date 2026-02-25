@@ -83,11 +83,11 @@ func (r *apiRepository) Update(api *entity.Permission) error {
 	if api.Status != 0 {
 		updates["status"] = api.Status
 	}
-	if api.HTTPMethod != "" {
-		updates["http_method"] = api.HTTPMethod
+	if api.HttpMethod != "" {
+		updates["http_method"] = api.HttpMethod
 	}
-	if api.HTTPPath != "" {
-		updates["http_path"] = api.HTTPPath
+	if api.HttpPath != "" {
+		updates["http_path"] = api.HttpPath
 	}
 	if api.Sort != 0 {
 		updates["sort"] = api.Sort
