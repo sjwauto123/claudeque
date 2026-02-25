@@ -7,7 +7,7 @@ import (
 
 // QueueRoutes 队列路由
 func (ctrl *Controller) QueueRoutes(router *gin.RouterGroup) {
-	r := router.Group("/api/queue")
+	r := router.Group("/queue")
 	r.Use(middleware.Auth())
 	r.Use(middleware.RequirePermission(ctrl.authService))
 	r.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
