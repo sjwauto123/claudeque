@@ -259,8 +259,7 @@ func (a *App) initDependencies() {
 		gpuSvc,
 		fileSvc,
 		terminalSvc,
-		a.wsPool,
-		sessionManager)
+	)
 }
 
 // Shutdown 关闭应用

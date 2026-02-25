@@ -6,6 +6,9 @@ import (
 	"cloudque/internal/api/files"
 	"cloudque/internal/api/job"
 	"cloudque/internal/api/operationLogs"
+	"cloudque/internal/api/permissionManage/menu"
+	"cloudque/internal/api/permissionManage/permission"
+	"cloudque/internal/api/permissionManage/role"
 	"cloudque/internal/api/queue"
 	"cloudque/internal/api/system"
 	"cloudque/internal/api/terminal"
@@ -14,12 +17,6 @@ import (
 	"cloudque/internal/middleware"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
-	"cloudque/pkg/ssh"
-	"cloudque/pkg/websocket"
-
-	"cloudque/internal/api/permissionManage/menu"
-	"cloudque/internal/api/permissionManage/permission"
-	"cloudque/internal/api/permissionManage/role"
 	"github.com/gin-gonic/gin"
 )
 
@@ -143,9 +140,6 @@ func (r *Router) Setup(engine *gin.Engine) {
 	{
 		// 终端路由
 		r.terminalCtrl.RegisterRoutes(v7)
-
-		// WebSocket 路由
-		r.wsCtrl.RegisterRoutes(v7)
 	}
 	// api v8 路由组，展示队列信息
 	v8 := engine.Group("/api")

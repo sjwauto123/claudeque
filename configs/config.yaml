@@ -4,6 +4,7 @@ app:
   version: "1.0.0"
   mode: "debug"  # debug, release, test
   port: 8080
+  aes: 1234567890abcdef
 
 # 数据库配置
 database:
@@ -16,10 +17,10 @@ database:
     max_idle_conns: 10
     max_open_conns: 100
   redis:
-    host: "localhost"
+    host: "192.168.10.4"
     port: 6379
-    password: ""
-    db: 5
+    password: "123456"
+    db: 2
     pool_size: 10
 
 # JWT 配置
@@ -61,3 +62,10 @@ server:
   timeout: "30s"
   session_timeout: "24h"
   enabled: true
+
+  #邮箱配置
+email:
+  host: "smtp.qq.com"
+  port: 465
+  username: "2144515062@qq.com"
+  password: "wmbabqrkltzadehg"

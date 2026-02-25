@@ -111,29 +111,3 @@ func GetUsername(c *gin.Context) string {
 	}
 	return ""
 }
-
-// OptionalAuth 可选的 JWT 认证中间件
-func OptionalAuth() gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.Next()
-			return
-		}
-
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			c.Next()
-			return
-		}
-
-		claims, err := jwt.ParseToken(parts[1])
-		if err == nil {
-			c.Set(ContextUserID, claims.GetUserID())
-			c.Set(ContextUsername, claims.GetUsername())
-			c.Set(ContextRoles, claims.GetRoles())
-		}
-
-		c.Next()
-	}
-}

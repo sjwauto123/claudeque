@@ -24,7 +24,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const PermissionRootSSH = "ssh:root" // 定义SSH root权限slug
+const PermissionRootSSH = "cloud:feature:cmd:root" // 定义SSH root权限slug
 
 // sshCredentials 用于存储用户的SSH凭证
 type sshCredentials struct {
@@ -274,8 +274,8 @@ func (s *authService) aggregate(user *entity.User) ([]dto.PermissionResponse, []
 			Slug:       p.Slug,
 			Type:       p.Type,
 			Status:     p.Status,
-			HttpMethod: p.HTTPMethod,
-			HttpPath:   p.HTTPPath,
+			HttpMethod: p.HttpMethod,
+			HttpPath:   p.HttpPath,
 		})
 	}
 	menus := make([]entity.Menu, 0, len(menuMap))
@@ -545,4 +545,16 @@ func (s *authService) SetSSHTimeout(timeout time.Duration) {
 	if s.sessionManager != nil {
 		s.sessionManager.SetTimeout(timeout)
 	}
+}
+
+// HasSystemAccess 检查用户是否拥有系统级权限
+func (s *authService) HasSystemAccess(userID int) (bool, error) {
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, bizerrors.ErrUserNotFound
+	}
+	return s.userHasPermission(user, PermissionRootSSH), nil
 }

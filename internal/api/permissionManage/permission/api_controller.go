@@ -72,8 +72,8 @@ func (ctrl *APIController) PageList(c *gin.Context) {
 			Category:   api.Category,
 			Slug:       api.Slug,
 			Status:     api.Status,
-			HTTPMethod: api.HTTPMethod,
-			HTTPPath:   api.HTTPPath,
+			HTTPMethod: api.HttpMethod,
+			HTTPPath:   api.HttpPath,
 		})
 	}
 

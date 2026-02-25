@@ -1,10 +1,10 @@
 package terminal
 
 import (
+	"cloudque/pkg/logger"
 	"encoding/json"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -64,12 +64,21 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return
 	}
 
-	// 判断身份：根据 URL 路径决定是 root 终端还是普通用户终端
-	// 默认兼容旧路径为普通用户终端
-	isRoot := false
-	path := c.Request.URL.Path
-	if strings.Contains(path, "/root/ws") {
-		isRoot = true
+	// 判断身份：根据 URL 参数决定是 root 终端还是普通用户终端
+	mode := c.Param("mode")
+	isRoot := (mode == "root")
+
+	// 如果是 root 模式，需要检查用户是否拥有系统级权限
+	if isRoot {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权访问 root 终端")
+			return
+		}
 	}
 
 	// 确保对应身份的 SSH 会话存在 (支持会话恢复)
@@ -82,13 +91,24 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 	if err != nil {
 		return
 	}
-	defer conn.Close()
+	defer func(conn *websocket.Conn) {
+		err := conn.Close()
+		if err != nil {
+			logger.Error("无法关闭web连接")
+		}
+	}(conn)
 
 	// 设置心跳和超时
 	const pongWait = 60 * time.Second
-	conn.SetReadDeadline(time.Now().Add(pongWait))
+	err = conn.SetReadDeadline(time.Now().Add(pongWait))
+	if err != nil {
+		return
+	}
 	conn.SetPongHandler(func(string) error {
-		conn.SetReadDeadline(time.Now().Add(pongWait))
+		err := conn.SetReadDeadline(time.Now().Add(pongWait))
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 
@@ -101,8 +121,18 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer stdoutWriter.Close()
-		defer stderrWriter.Close()
+		defer func(stdoutWriter *io.PipeWriter) {
+			err := stdoutWriter.Close()
+			if err != nil {
+				logger.Error("stdoutWriter关闭失败")
+			}
+		}(stdoutWriter)
+		defer func(stderrWriter *io.PipeWriter) {
+			err := stderrWriter.Close()
+			if err != nil {
+				logger.Error("stderrWriter关闭失败")
+			}
+		}(stderrWriter)
 		sessionErr = ctrl.terminalService.RunInteractiveSession(userID, stdinReader, stdoutWriter, stderrWriter, isRoot)
 	}()
 
@@ -160,7 +190,10 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 			break
 		}
 		// 每次收到消息都刷新读取超时
-		conn.SetReadDeadline(time.Now().Add(pongWait))
+		err = conn.SetReadDeadline(time.Now().Add(pongWait))
+		if err != nil {
+			return
+		}
 
 		var in inboundMsg
 		if err := json.Unmarshal(data, &in); err != nil {

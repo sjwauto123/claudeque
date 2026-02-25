@@ -6,8 +6,8 @@ import (
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
 	"io"
+	"mime/multipart"
 	"net/url"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -43,8 +43,19 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 		return
 	}
 
-	// 判断是系统模式还是用户模式
-	isRootMode := strings.Contains(c.Request.URL.Path, "/system/")
+	isRootMode := (req.Mode == request.System)
+
+	if isRootMode {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权访问系统文件")
+			return
+		}
+	}
 
 	data, err := ctrl.fileService.GetFileList(userID, &req, isRootMode)
 	if err != nil {
@@ -74,7 +85,8 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 
 	var req request.DiskUsageRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		req.Path = c.Query("path")
+		response.BadRequest(c, err.Error())
+		return
 	}
 
 	if req.Path == "" {
@@ -82,10 +94,44 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 		return
 	}
 
-	// 判断是系统模式还是用户模式
-	isRootMode := strings.Contains(c.Request.URL.Path, "/system/")
+	isRootMode := (req.Mode == request.System)
+
+	if isRootMode {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权获取系统磁盘使用情况")
+			return
+		}
+	}
 
 	data, err := ctrl.fileService.GetDiskUsage(userID, req.Path, isRootMode)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, data)
+}
+
+// ListHomeDirectories 获取 /home 目录下的所有用户目录列表
+func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
+	var req request.FileListRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	data, err := ctrl.fileService.GetHomeDirectoriesList(userID, &req)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -97,16 +143,27 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 // CalculateSize 计算目录或文件大小
 func (ctrl *Controller) CalculateSize(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	path := c.Query("path")
-
-	if path == "" {
-		response.BadRequest(c, "缺少 path 参数")
+	var req request.DiskUsageRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 
-	isRootMode := strings.Contains(c.Request.URL.Path, "/system/")
+	isRootMode := (req.Mode == request.System)
 
-	size, sizeStr, usage, err := ctrl.fileService.CalculateSize(userID, path, isRootMode)
+	if isRootMode {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权计算系统文件大小")
+			return
+		}
+	}
+
+	size, sizeStr, usage, err := ctrl.fileService.CalculateSize(userID, req.Path, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -122,16 +179,27 @@ func (ctrl *Controller) CalculateSize(c *gin.Context) {
 // DeleteFile 删除文件或目录
 func (ctrl *Controller) DeleteFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	path := c.Query("path")
-
-	if path == "" {
-		response.BadRequest(c, "缺少 path 参数")
+	var req request.DeleteFileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 
-	isRootMode := strings.Contains(c.Request.URL.Path, "/system/")
+	isRootMode := (req.Mode == request.System)
 
-	err := ctrl.fileService.DeleteFile(userID, path, isRootMode)
+	if isRootMode {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权删除系统文件")
+			return
+		}
+	}
+
+	err := ctrl.fileService.DeleteFile(userID, req.Path, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -143,18 +211,40 @@ func (ctrl *Controller) DeleteFile(c *gin.Context) {
 // UploadFile 上传文件
 func (ctrl *Controller) UploadFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	targetPath := c.PostForm("path")
-
-	file, header, err := c.Request.FormFile("file")
-	if err != nil {
-		response.BadRequest(c, "文件上传失败")
+	var req request.UploadFileRequest
+	if err := c.ShouldBind(&req); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
-	defer file.Close()
 
-	isRootMode := strings.Contains(c.Request.URL.Path, "/system/")
+	file, err := req.File.Open()
+	if err != nil {
+		response.BadRequest(c, "文件打开失败: "+err.Error())
+		return
+	}
+	defer func(file multipart.File) {
+		err := file.Close()
+		if err != nil {
+			return
+		}
+	}(file)
 
-	data, err := ctrl.fileService.UploadFile(userID, file, header, targetPath, isRootMode)
+	// 判断是系统模式还是用户模式
+	isRootMode := (req.Mode == request.System)
+
+	if isRootMode {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权上传系统文件")
+			return
+		}
+	}
+
+	data, err := ctrl.fileService.UploadFile(userID, file, req.File, req.TargetPath, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -166,25 +256,44 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 // DownloadFile 下载文件
 func (ctrl *Controller) DownloadFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
-	path := c.Query("path")
-
-	if path == "" {
-		response.BadRequest(c, "缺少 path 参数")
+	var req request.DownloadRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
 
-	isRootMode := strings.Contains(c.Request.URL.Path, "/system/")
+	isRootMode := (req.Mode == request.System)
 
-	reader, filename, err := ctrl.fileService.DownloadFile(userID, path, isRootMode)
+	if isRootMode {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权下载系统文件")
+			return
+		}
+	}
+
+	reader, filename, err := ctrl.fileService.DownloadFile(userID, req.Path, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
 	}
-	defer reader.Close()
+	defer func(reader io.ReadCloser) {
+		err := reader.Close()
+		if err != nil {
+			return
+		}
+	}(reader)
 
 	c.Header("Content-Disposition", "attachment; filename="+url.QueryEscape(filename))
 	c.Header("Content-Type", "application/octet-stream")
-	io.Copy(c.Writer, reader)
+	_, err = io.Copy(c.Writer, reader)
+	if err != nil {
+		return
+	}
 }
 
 // UnzipFile 解压文件
@@ -196,7 +305,19 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode := strings.Contains(c.Request.URL.Path, "/system/")
+	isRootMode := (req.Mode == request.System)
+
+	if isRootMode {
+		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
+		if err != nil {
+			response.BizError(c, err)
+			return
+		}
+		if !hasAccess {
+			response.Forbidden(c, "无权解压系统文件")
+			return
+		}
+	}
 
 	err := ctrl.fileService.UnzipFile(userID, &req, isRootMode)
 	if err != nil {
