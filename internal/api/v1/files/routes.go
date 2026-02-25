@@ -7,9 +7,9 @@ import (
 )
 
 // RegisterRoutes 注册文件路由
-func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
+func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	// 文件管理接口 /api/files
-
+	r := router.Group("/api/files")
 	r.Use(middleware.Auth())
 	r.Use(middleware.RequirePermission(ctrl.authService))
 	{
