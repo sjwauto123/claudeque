@@ -73,8 +73,8 @@ func (s *apiService) Create(req *request.CreateAPIRequest) error {
 		Category:   req.Category,
 		Slug:       req.Slug,
 		Status:     *req.Status,
-		HTTPMethod: req.HTTPMethod,
-		HTTPPath:   req.HTTPPath,
+		HttpMethod: req.HTTPMethod,
+		HttpPath:   req.HTTPPath,
 		Sort:       req.Sort,
 	}
 
@@ -123,10 +123,10 @@ func (s *apiService) Update(req *request.UpdateAPIRequest) error {
 		api.Status = *req.Status
 	}
 	if req.HTTPMethod != "" {
-		api.HTTPMethod = req.HTTPMethod
+		api.HttpMethod = req.HTTPMethod
 	}
 	if req.HTTPPath != "" {
-		api.HTTPPath = req.HTTPPath
+		api.HttpPath = req.HTTPPath
 	}
 	if req.Sort != nil {
 		api.Sort = *req.Sort

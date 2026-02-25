@@ -6,20 +6,16 @@ import (
 	"cloudque/internal/api/files"
 	"cloudque/internal/api/job"
 	"cloudque/internal/api/operationLogs"
+	"cloudque/internal/api/permissionManage/menu"
+	"cloudque/internal/api/permissionManage/permission"
+	"cloudque/internal/api/permissionManage/role"
 	"cloudque/internal/api/queue"
 	"cloudque/internal/api/system"
 	"cloudque/internal/api/terminal"
 	"cloudque/internal/api/user"
-	"cloudque/internal/api/ws"
 	"cloudque/internal/middleware"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
-	"cloudque/pkg/ssh"
-	"cloudque/pkg/websocket"
-
-	"cloudque/internal/api/permissionManage/menu"
-	"cloudque/internal/api/permissionManage/permission"
-	"cloudque/internal/api/permissionManage/role"
 	"github.com/gin-gonic/gin"
 )
 
@@ -31,7 +27,6 @@ type Router struct {
 	adminCtrl        *admin.Controller
 	filesCtrl        *files.Controller
 	terminalCtrl     *terminal.Controller
-	wsCtrl           *ws.Controller
 	jobCtrl          *job.Controller
 	queueCtrl        *queue.Controller
 	systemInfoCtrl   *system.Controller
@@ -57,8 +52,6 @@ func NewRouter(
 	gpuService service.GpuService,
 	fileService service.FileService,
 	terminalService service.TerminalService,
-	wsPool *websocket.ConnectionPool,
-	sessionManager *ssh.SessionManager,
 ) *Router {
 	return &Router{
 		roleCtrl:         role.NewRoleController(roleService, authService),
@@ -69,7 +62,6 @@ func NewRouter(
 		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
 		filesCtrl:        files.NewController(fileService, authService),
 		terminalCtrl:     terminal.NewController(terminalService, authService),
-		wsCtrl:           ws.NewController(wsPool, authService, sessionManager),
 		jobCtrl:          job.NewController(jobService, authService, gpuService, userOperationLogService),
 		queueCtrl:        queue.NewController(queueService, userOperationLogService, repository, authService),
 		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),
@@ -143,9 +135,6 @@ func (r *Router) Setup(engine *gin.Engine) {
 	{
 		// 终端路由
 		r.terminalCtrl.RegisterRoutes(v7)
-
-		// WebSocket 路由
-		r.wsCtrl.RegisterRoutes(v7)
 	}
 	// api v8 路由组，展示队列信息
 	v8 := engine.Group("/api")
