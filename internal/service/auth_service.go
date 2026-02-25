@@ -101,7 +101,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	if user == nil {
 		return nil, bizerrors.ErrInvalidCredentials
 	}
-
 	// 检查用户状态是否启用
 	if user.Status != 1 {
 		return nil, bizerrors.ErrUserDisabled
