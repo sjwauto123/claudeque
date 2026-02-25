@@ -13,7 +13,7 @@ type Permission struct {
 	Status     int    `gorm:"type:int;default:1;comment:0-禁用 1-启用" json:"status"`
 	HttpMethod string `gorm:"type:varchar(10);comment:API请求方法" json:"http_method"`
 	HttpPath   string `gorm:"type:varchar(255);comment:API路径" json:"http_path"`
-	Sort       int    `gorm:"type:int;default:0;comment:菜单排序" json:"sort"`
+	Sort       int    `gorm:"type:int;default:1;comment:菜单排序" json:"sort"`
 }
 
 func (Permission) TableName() string {
