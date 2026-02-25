@@ -18,8 +18,11 @@ type MenuController struct {
 }
 
 // NewMenuController 创建菜单控制器实例
-func NewMenuController(menuService service.MenuService) *MenuController {
-	return &MenuController{menuService: menuService}
+func NewMenuController(menuService service.MenuService, authService service.AuthService) *MenuController {
+	return &MenuController{
+		menuService: menuService,
+		authService: authService,
+	}
 }
 
 func (ctrl *MenuController) GetMenuByID(c *gin.Context) {

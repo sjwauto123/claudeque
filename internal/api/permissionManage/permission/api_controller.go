@@ -17,8 +17,11 @@ type APIController struct {
 	authService service.AuthService
 }
 
-func NewAPIController(apiService service.APIService) *APIController {
-	return &APIController{apiService: apiService}
+func NewAPIController(apiService service.APIService, authService service.AuthService) *APIController {
+	return &APIController{
+		apiService:  apiService,
+		authService: authService,
+	}
 }
 
 func (ctrl *APIController) GetAPIByID(c *gin.Context) {

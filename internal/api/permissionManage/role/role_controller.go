@@ -16,8 +16,11 @@ type RoleController struct {
 	authService service.AuthService
 }
 
-func NewRoleController(roleService service.RoleService) *RoleController {
-	return &RoleController{roleService: roleService}
+func NewRoleController(roleService service.RoleService, authService service.AuthService) *RoleController {
+	return &RoleController{
+		roleService: roleService,
+		authService: authService,
+	}
 }
 func (ctrl *RoleController) GetRoleByID(c *gin.Context) {
 	idStr := c.Param("id")

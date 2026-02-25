@@ -227,7 +227,6 @@ func (a *App) initDependencies() {
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo)
-	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 	roleSvc := service.NewRoleService(roleRepo)
 	apiSvc := service.NewAPIService(apiRepo)
 	menuSvc := service.NewMenuService(menuRepo)
@@ -243,10 +242,24 @@ func (a *App) initDependencies() {
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 
-	// 创建 Router（传入所有 Service）
-	a.router = api.NewRouter(userSvc, authSvc, roleSvc, apiSvc, menuSvc) // 更新路由初始化，添加菜单服务
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc, fileSvc, terminalSvc, a.wsPool, sessionManager)
+	a.router = api.NewRouter(
+		userLogSvc,
+		adminLogSvc,
+		infoService,
+		userSvc,
+		authSvc,
+		roleSvc,
+		apiSvc,
+		menuSvc,
+		jobSvc,
+		queueSvc,
+		jobRepo,
+		gpuSvc,
+		fileSvc,
+		terminalSvc,
+		a.wsPool,
+		sessionManager)
 }
 
 // Shutdown 关闭应用

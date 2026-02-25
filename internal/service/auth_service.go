@@ -49,8 +49,10 @@ func NewAuthService(
 	roleRepo repository.RoleRepository,
 	redisRepo repository.RedisRepository,
 	userService UserService,
+	sessionRepo repository.SessionRepository,
+	sessionManager *ssh.SessionManager,
+	sshConfig *ssh.Config,
 ) AuthService {
-func NewAuthService(userRepo repository.UserRepository, roleRepo repository.RoleRepository, redisRepo repository.RedisRepository, userService UserService, sessionRepo repository.SessionRepository, sessionManager *ssh.SessionManager, sshConfig *ssh.Config) AuthService {
 	return &authService{
 		userRepo:       userRepo,
 		roleRepo:       roleRepo,
@@ -169,7 +171,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		return nil, err
 	}
 
-	///////////////////////////////////////////////////////////////////建立SSH会话/////////////////////
+	//////////////////////////建立SSH会话/////////////////////
 
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {

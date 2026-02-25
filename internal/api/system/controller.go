@@ -15,14 +15,14 @@ import (
 
 type Controller struct {
 	syInfoSvc               service.SystemInfoService
-	authSvc                 service.AuthService
+	authService             service.AuthService
 	userOperationLogService service.UserOperationLogService
 }
 
 func NewController(svc service.SystemInfoService, authSvc service.AuthService, userOperationLogService service.UserOperationLogService) *Controller {
 	return &Controller{
 		syInfoSvc:               svc,
-		authSvc:                 authSvc,
+		authService:             authSvc,
 		userOperationLogService: userOperationLogService,
 	}
 }
