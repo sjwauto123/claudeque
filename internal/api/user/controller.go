@@ -17,13 +17,18 @@ import (
 // Controller 用户控制器
 type Controller struct {
 	userService            service.UserService
+	authService            service.AuthService
 	useOperationLogService service.UserOperationLogService
 }
 
 // NewController 创建用户控制器
-func NewController(userService service.UserService, userOperationLogService service.UserOperationLogService) *Controller {
+func NewController(userService service.UserService,
+	userOperationLogService service.UserOperationLogService,
+	authService service.AuthService,
+) *Controller {
 	return &Controller{
 		userService:            userService,
+		authService:            authService,
 		useOperationLogService: userOperationLogService,
 	}
 }
@@ -191,6 +196,6 @@ func (ctrl *Controller) UploadAvatar(c *gin.Context) {
 		return
 	}
 
-	imgFullPath := "http://192.168.10.6:9980/" + filepath.ToSlash(dst)
+	imgFullPath := "http://192.168.10.6:8080/" + filepath.ToSlash(dst)
 	response.Success(c, gin.H{"path": imgFullPath})
 }

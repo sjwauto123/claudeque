@@ -17,6 +17,9 @@ import (
 	"cloudque/pkg/ssh"
 	"cloudque/pkg/websocket"
 
+	"cloudque/internal/api/permissionManage/menu"
+	"cloudque/internal/api/permissionManage/permission"
+	"cloudque/internal/api/permissionManage/role"
 	"github.com/gin-gonic/gin"
 )
 
@@ -33,6 +36,9 @@ type Router struct {
 	queueCtrl        *queue.Controller
 	systemInfoCtrl   *system.Controller
 	operationLogCtrl *operationLogs.Controller
+	roleCtrl         *role.RoleController
+	apiCtrl          *permission.APIController
+	menuCtrl         *menu.MenuController
 }
 
 // NewRouter 创建路由
@@ -42,6 +48,9 @@ func NewRouter(
 	infoService service.SystemInfoService,
 	userService service.UserService,
 	authService service.AuthService,
+	roleService service.RoleService,
+	apiService service.APIService,
+	menuService service.MenuService,
 	jobService service.JobService,
 	queueService service.QueueService,
 	repository repository.JobRepository,
@@ -52,7 +61,10 @@ func NewRouter(
 	sessionManager *ssh.SessionManager,
 ) *Router {
 	return &Router{
-		userCtrl:         user.NewController(userService, userOperationLogService),
+		roleCtrl:         role.NewRoleController(roleService, authService),
+		apiCtrl:          permission.NewAPIController(apiService, authService),
+		menuCtrl:         menu.NewMenuController(menuService, authService),
+		userCtrl:         user.NewController(userService, userOperationLogService, authService),
 		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
 		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
 		filesCtrl:        files.NewController(fileService, authService),
@@ -88,11 +100,12 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// 认证路由
 		r.authCtrl.RegisterRoutes(v1)
 
+		// 管理员路由
+		r.adminCtrl.RegisterRoutes(v1)
+
 		// 用户路由
 		r.userCtrl.RegisterRoutes(v1)
 
-		// 管理员路由
-		r.adminCtrl.RegisterRoutes(v1)
 	}
 
 	//API v2 路由组 操作日志输出
@@ -119,13 +132,13 @@ func (r *Router) Setup(engine *gin.Engine) {
 		r.queueCtrl.QueueRoutes(v5)
 	}
 
-	// api v5 路由组，文件
+	// api v6 路由组，文件
 	v6 := engine.Group("/api/files")
 	{
 		r.filesCtrl.RegisterRoutes(v6)
 	}
 
-	// api v5 路由组，展示队列信息
+	// api v7 路由组，展示队列信息
 	v7 := engine.Group("/api/terminal")
 	{
 		// 终端路由
@@ -133,6 +146,18 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// WebSocket 路由
 		r.wsCtrl.RegisterRoutes(v7)
+	}
+	// api v8 路由组，展示队列信息
+	v8 := engine.Group("/api")
+	{
+		// API管理路由
+		r.apiCtrl.RegisterRoutes(v8)
+
+		// 菜单管理路由
+		r.menuCtrl.RegisterRoutes(v8)
+
+		// 角色路由
+		r.roleCtrl.RegisterRoutes(v8)
 	}
 
 }

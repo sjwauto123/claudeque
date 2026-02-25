@@ -10,6 +10,7 @@ import (
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	userGroup := r.Group("/user")
 	userGroup.Use(middleware.Auth())
+	userGroup.Use(middleware.RequirePermission(ctrl.authService))
 	userGroup.Use(middleware.UserOperationLogs(ctrl.useOperationLogService))
 	{
 		userGroup.GET("/profile", middleware.WithOperation("查询用户资料"), ctrl.GetProfile)

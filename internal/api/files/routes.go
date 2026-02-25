@@ -14,7 +14,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	{
 		// 1. 系统根目录管理 (/)
 		systemGroup := r.Group("/system")
-		systemGroup.Use(middleware.RequirePermission(ctrl.authService, "file:system"))
+		systemGroup.Use(middleware.RequirePermission(ctrl.authService))
 		{
 			systemGroup.GET("/list", ctrl.GetFileList)
 			systemGroup.DELETE("/delete", ctrl.DeleteFile)
@@ -26,7 +26,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 
 		// 2. 用户家目录管理 (/home/{username})
 		userGroup := r.Group("/user")
-		userGroup.Use(middleware.RequirePermission(ctrl.authService, "file:user"))
+		userGroup.Use(middleware.RequirePermission(ctrl.authService))
 		{
 			userGroup.GET("/list", ctrl.GetFileList)
 			userGroup.DELETE("/delete", ctrl.DeleteFile)

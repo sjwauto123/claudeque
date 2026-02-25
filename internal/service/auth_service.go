@@ -44,7 +44,15 @@ type authService struct {
 }
 
 // NewAuthService 创建认证服务
-func NewAuthService(userRepo repository.UserRepository, roleRepo repository.RoleRepository, redisRepo repository.RedisRepository, userService UserService, sessionRepo repository.SessionRepository, sessionManager *ssh.SessionManager, sshConfig *ssh.Config) AuthService {
+func NewAuthService(
+	userRepo repository.UserRepository,
+	roleRepo repository.RoleRepository,
+	redisRepo repository.RedisRepository,
+	userService UserService,
+	sessionRepo repository.SessionRepository,
+	sessionManager *ssh.SessionManager,
+	sshConfig *ssh.Config,
+) AuthService {
 	return &authService{
 		userRepo:       userRepo,
 		roleRepo:       roleRepo,
@@ -163,7 +171,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		return nil, err
 	}
 
-	///////////////////////////////////////////////////////////////////建立SSH会话/////////////////////
+	//////////////////////////建立SSH会话/////////////////////
 
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {
@@ -235,7 +243,7 @@ func (s *authService) buildRoles(user *entity.User) []string {
 }
 
 // 将权限和菜单聚合到map中，并以固定形式返回
-func (s *authService) aggregate(user *entity.User) ([]dto.Permission, []entity.Menu) {
+func (s *authService) aggregate(user *entity.User) ([]dto.PermissionResponse, []entity.Menu) {
 	permMap := make(map[int]entity.Permission)
 	menuMap := make(map[int]entity.Menu)
 	for _, r := range user.Roles {
@@ -257,20 +265,17 @@ func (s *authService) aggregate(user *entity.User) ([]dto.Permission, []entity.M
 			}
 		}
 	}
-	permsDTO := make([]dto.Permission, 0, len(permMap))
+	permsDTO := make([]dto.PermissionResponse, 0, len(permMap))
 	for _, p := range permMap {
-		permsDTO = append(permsDTO, dto.Permission{
+		permsDTO = append(permsDTO, dto.PermissionResponse{
 			ID:         p.ID,
 			Name:       p.Name,
 			Category:   p.Category,
 			Slug:       p.Slug,
 			Type:       p.Type,
 			Status:     p.Status,
-			HttpMethod: p.HttpMethod,
-			HttpPath:   p.HttpPath,
-			Sort:       p.Sort,
-			CreatedAt:  p.CreatedAt,
-			UpdatedAt:  p.UpdatedAt,
+			HttpMethod: p.HTTPMethod,
+			HttpPath:   p.HTTPPath,
 		})
 	}
 	menus := make([]entity.Menu, 0, len(menuMap))
@@ -281,11 +286,11 @@ func (s *authService) aggregate(user *entity.User) ([]dto.Permission, []entity.M
 }
 
 // 构建菜单树
-func buildMenuTree(menus []entity.Menu) []dto.MenuNode {
-	nodeMap := make(map[int]*dto.MenuNode)
-	parentChildren := make(map[int][]dto.MenuNode)
+func buildMenuTree(menus []entity.Menu) []dto.MenuTreeNode {
+	nodeMap := make(map[int]*dto.MenuTreeNode)
+	parentChildren := make(map[int][]*dto.MenuTreeNode)
 	for _, m := range menus {
-		nodeMap[m.ID] = &dto.MenuNode{
+		nodeMap[m.ID] = &dto.MenuTreeNode{
 			ID:       m.ID,
 			ParentID: m.ParentID,
 			Title:    m.Title,
@@ -298,12 +303,13 @@ func buildMenuTree(menus []entity.Menu) []dto.MenuNode {
 	}
 	for _, n := range nodeMap {
 		if n.ParentID != 0 {
-			parentChildren[n.ParentID] = append(parentChildren[n.ParentID], *n)
+			parentChildren[n.ParentID] = append(parentChildren[n.ParentID], n)
 		}
 	}
-	menuNodes := make([]dto.MenuNode, 0)
+	menuNodes := make([]dto.MenuTreeNode, 0)
 	for id, n := range nodeMap {
 		if ch, ok := parentChildren[id]; ok {
+			// 子节点排序
 			sort.Slice(ch, func(i, j int) bool {
 				if ch[i].Sort == ch[j].Sort {
 					return ch[i].Title < ch[j].Title
@@ -312,10 +318,12 @@ func buildMenuTree(menus []entity.Menu) []dto.MenuNode {
 			})
 			n.Children = ch
 		}
+		// 如果是根节点（ParentID == 0）或者没有父节点（nodeMap[n.ParentID] == nil）
 		if n.ParentID == 0 || nodeMap[n.ParentID] == nil {
 			menuNodes = append(menuNodes, *n)
 		}
 	}
+	// 根节点排序
 	sort.Slice(menuNodes, func(i, j int) bool {
 		if menuNodes[i].Sort == menuNodes[j].Sort {
 			return menuNodes[i].Title < menuNodes[j].Title
@@ -517,6 +525,9 @@ func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, er
 	}
 
 	return role.Permissions, nil
+}
+func (s *authService) CheckUserPermission(userID int, method string, path string) (bool, error) {
+	return s.roleRepo.CheckUserPermission(userID, method, path)
 }
 
 // GetAllRoles 获取所有角色

@@ -56,7 +56,7 @@ type AdminUpdateUserRequest struct {
 	Username string `json:"username" binding:"omitempty,min=3,max=50"`
 	Email    string `json:"email" binding:"omitempty,email"`
 
-	Status        *int      `json:"status" binding:"omitempty,oneof=0 1"` // 0:禁用 1:正常, 使用指针以区分是否更新
+	Status        *int      `json:"status" binding:"omitempty,oneof=0 1"` // 0:禁用 1:正常
 	Password      string    `json:"password" binding:"omitempty,min=6,max=50"`
 	Priority      *int      `json:"priority" binding:"omitempty,oneof=1 2"`
 	MultiTraining *int      `json:"multi_training" binding:"omitempty,oneof=0 1"`

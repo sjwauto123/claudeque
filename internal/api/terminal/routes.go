@@ -10,13 +10,13 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 
 	// 1. Root 终端 (需特定权限)
 	rootGroup := r.Group("/root")
-	rootGroup.Use(middleware.RequirePermission(ctrl.authService, "ssh:root"))
+	rootGroup.Use(middleware.RequirePermission(ctrl.authService))
 	{
 		rootGroup.GET("/ws", ctrl.WebSocketTerminal)
 	}
 
 	userGroup := r.Group("/user")
-	userGroup.Use(middleware.RequirePermission(ctrl.authService, "ssh:user"))
+	userGroup.Use(middleware.RequirePermission(ctrl.authService))
 	{
 		// 2. User 终端 (需普通权限)
 		userGroup.GET("/ws", ctrl.WebSocketTerminal)
