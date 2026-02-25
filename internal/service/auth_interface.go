@@ -29,4 +29,6 @@ type AuthService interface {
 	SetSSHServerHost(host string)
 	// SetSSHTimeout 设置SSH连接超时
 	SetSSHTimeout(timeout time.Duration)
+	// HasSystemAccess 检查用户是否拥有系统级权限
+	HasSystemAccess(userID int) (bool, error)
 }

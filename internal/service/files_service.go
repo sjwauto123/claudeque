@@ -27,6 +27,7 @@ type FileService interface {
 	UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error
 	GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error)
 	CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error)
+	GetHomeDirectoriesList(userID int, req *request.FileListRequest) (*dto.FilesListData, error)
 }
 
 // fileService 文件服务实现
@@ -499,6 +500,135 @@ func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (i
 	}
 
 	return bytess, formatFileSize(bytess), usagePercent, nil
+}
+
+// GetHomeDirectoriesList 获取 /home 目录下的所有用户目录列表
+func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRequest) (*dto.FilesListData, error) {
+	opUserID := userID
+
+	// 启动对应的ftpclient，以root模式获取，因为要访问 /home
+	client, err := s.getSftpClient(opUserID, true) // isRootMode = true
+	if err != nil {
+		return nil, err
+	}
+
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+	if req.PageSize <= 0 {
+		req.PageSize = 100
+	}
+
+	// 解析路径并限制在 /home 目录下
+	basePath := "/home"
+	var currentPath string
+	if req.Path == "" || req.Path == "." || req.Path == "/" {
+		currentPath = basePath
+	} else {
+		// 拼接并清理路径
+		joinedPath := filepath.Join(basePath, req.Path)
+		cleanPath := filepath.Clean(joinedPath)
+
+		// 确保路径没有越权
+		if !strings.HasPrefix(cleanPath, basePath) {
+			return nil, fmt.Errorf("越权访问被拒绝: %s", req.Path)
+		}
+		currentPath = cleanPath
+	}
+
+	realPath := filepath.ToSlash(currentPath)
+
+	// 读取目标目录下的所有文件和目录
+	entries, err := client.ReadDir(realPath)
+	if err != nil {
+		return nil, fmt.Errorf("读取目录失败: %v", err)
+	}
+
+	var dirs []*dto.DirectoryItem
+
+	// 构建 UID -> Username 映射
+	uidToName := make(map[uint32]string)
+	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", true) // isRootMode = true
+	if err == nil {
+		lines := strings.Split(passwdOut, "\n")
+		for _, line := range lines {
+			parts := strings.Split(line, ":")
+			if len(parts) >= 3 {
+				username := parts[0]
+				uidStr := parts[2]
+				if uid, err := strconv.ParseUint(uidStr, 10, 32); err == nil {
+					uidToName[uint32(uid)] = username
+				}
+			}
+		}
+	}
+
+	for _, entry := range entries {
+		// 只列出目录
+		if entry.IsDir() {
+			if req.Keyword != "" && !strings.Contains(entry.Name(), req.Keyword) {
+				continue
+			}
+
+			var owner string
+			if sys := entry.Sys(); sys != nil {
+				if stat, ok := sys.(*sftp.FileStat); ok {
+					name, found := uidToName[stat.UID]
+					if found {
+						owner = name
+					} else {
+						owner = fmt.Sprintf("%d", stat.UID)
+					}
+				} else {
+					owner = "unknown"
+				}
+			} else {
+				owner = "unknown"
+			}
+
+			dirs = append(dirs, &dto.DirectoryItem{
+				Name:      entry.Name(),
+				UpdatedAt: entry.ModTime(),
+				Path:      filepath.ToSlash(filepath.Join(realPath, entry.Name())),
+				Owner:     owner,
+			})
+		}
+	}
+
+	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
+
+	// Pagination
+	totalDirs := len(dirs)
+	total := totalDirs
+	pages := total / req.PageSize
+	if total%req.PageSize != 0 {
+		pages++
+	}
+
+	start := (req.Page - 1) * req.PageSize
+	end := start + req.PageSize
+	if end > total {
+		end = total
+	}
+
+	var slicedDirs []*dto.DirectoryItem
+	if start < total {
+		slicedDirs = dirs[start:end]
+	}
+
+	// Build Breadcrumb for /home
+	breadcrumb := buildBreadcrumb(realPath)
+
+	return &dto.FilesListData{
+		Breadcrumb:    breadcrumb,
+		Path:          realPath,
+		FileList:      []*dto.FileItem{}, // No files in this view
+		DirectoryList: slicedDirs,
+		Total:         total,
+		Pages:         pages,
+		Page:          req.Page,
+		PageSize:      req.PageSize,
+	}, nil
 }
 
 // formatFileSize 格式化文件大小

@@ -11,38 +11,29 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	// 文件管理接口 /api/files
 
 	r.Use(middleware.Auth())
+	r.Use(middleware.RequirePermission(ctrl.authService))
 	{
-		// 1. 系统根目录管理 (/)
-		systemGroup := r.Group("/system")
-		systemGroup.Use(middleware.RequirePermission(ctrl.authService))
+		// 文件管理 (通过 :mode 参数区分 system/user)
+		fileGroup := r.Group("/:mode")
 		{
-			systemGroup.GET("/list", ctrl.GetFileList)
-			systemGroup.DELETE("/delete", ctrl.DeleteFile)
-			systemGroup.POST("/upload", ctrl.UploadFile)
-			systemGroup.GET("/download", ctrl.DownloadFile)
-			systemGroup.POST("/unzip", ctrl.UnzipFile)
-			systemGroup.GET("/size", ctrl.CalculateSize)
-		}
-
-		// 2. 用户家目录管理 (/home/{username})
-		userGroup := r.Group("/user")
-		userGroup.Use(middleware.RequirePermission(ctrl.authService))
-		{
-			userGroup.GET("/list", ctrl.GetFileList)
-			userGroup.DELETE("/delete", ctrl.DeleteFile)
-			userGroup.POST("/upload", ctrl.UploadFile)
-			userGroup.GET("/download", ctrl.DownloadFile)
-			userGroup.POST("/unzip", ctrl.UnzipFile)
-			userGroup.GET("/size", ctrl.CalculateSize)
+			fileGroup.GET("/list", ctrl.GetFileList)
+			fileGroup.DELETE("/delete", ctrl.DeleteFile)
+			fileGroup.POST("/upload", ctrl.UploadFile)
+			fileGroup.GET("/download", ctrl.DownloadFile)
+			fileGroup.POST("/unzip", ctrl.UnzipFile)
+			fileGroup.GET("/size", ctrl.CalculateSize)
 		}
 
 	}
 
 	// 用户目录接口 /api/user/directories
-	userDirGroup := r.Group("/user/directories")
+	userDirGroup := r.Group("/directories")
 	userDirGroup.Use(middleware.Auth())
+	userDirGroup.Use(middleware.RequirePermission(ctrl.authService))
 	{
 		// 计算目录磁盘占比和大小
 		userDirGroup.GET("/calculate-usage", ctrl.GetDiskUsage)
+		// 列出 /home 目录下的所有用户目录
+		userDirGroup.GET("/list-home", ctrl.ListHomeDirectories)
 	}
 }
