@@ -20,13 +20,15 @@ import (
 type Controller struct {
 	terminalService service.TerminalService
 	authService     service.AuthService
+	userLogService  service.UserOperationLogService
 }
 
 // NewController 创建终端控制器
-func NewController(terminalService service.TerminalService, authService service.AuthService) *Controller {
+func NewController(terminalService service.TerminalService, authService service.AuthService, userLogService service.UserOperationLogService) *Controller {
 	return &Controller{
 		terminalService: terminalService,
 		authService:     authService,
+		userLogService:  userLogService,
 	}
 }
 

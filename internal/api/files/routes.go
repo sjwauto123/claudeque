@@ -11,29 +11,30 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	// 文件管理接口 /api/files
 
 	r.Use(middleware.Auth())
+	r.Use(middleware.UserOperationLogs(ctrl.userLogService))
 	{
 		// 1. 系统根目录管理 (/)
 		systemGroup := r.Group("/system")
 		systemGroup.Use(middleware.RequirePermission(ctrl.authService))
 		{
-			systemGroup.GET("/list", ctrl.GetFileList)
-			systemGroup.DELETE("/delete", ctrl.DeleteFile)
-			systemGroup.POST("/upload", ctrl.UploadFile)
-			systemGroup.GET("/download", ctrl.DownloadFile)
-			systemGroup.POST("/unzip", ctrl.UnzipFile)
-			systemGroup.GET("/size", ctrl.CalculateSize)
+			systemGroup.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
+			systemGroup.DELETE("/delete", middleware.WithOperation("删除文件"), ctrl.DeleteFile)
+			systemGroup.POST("/upload", middleware.WithOperation("上传文件"), ctrl.UploadFile)
+			systemGroup.GET("/download", middleware.WithOperation("下载文件"), ctrl.DownloadFile)
+			systemGroup.POST("/unzip", middleware.WithOperation("解压文件"), ctrl.UnzipFile)
+			systemGroup.GET("/size", middleware.WithOperation("计算文件大小"), ctrl.CalculateSize)
 		}
 
 		// 2. 用户家目录管理 (/home/{username})
 		userGroup := r.Group("/user")
 		userGroup.Use(middleware.RequirePermission(ctrl.authService))
 		{
-			userGroup.GET("/list", ctrl.GetFileList)
-			userGroup.DELETE("/delete", ctrl.DeleteFile)
-			userGroup.POST("/upload", ctrl.UploadFile)
-			userGroup.GET("/download", ctrl.DownloadFile)
-			userGroup.POST("/unzip", ctrl.UnzipFile)
-			userGroup.GET("/size", ctrl.CalculateSize)
+			userGroup.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
+			userGroup.DELETE("/delete", middleware.WithOperation("删除文件"), ctrl.DeleteFile)
+			userGroup.POST("/upload", middleware.WithOperation("上传文件"), ctrl.UploadFile)
+			userGroup.GET("/download", middleware.WithOperation("下载文件"), ctrl.DownloadFile)
+			userGroup.POST("/unzip", middleware.WithOperation("解压文件"), ctrl.UnzipFile)
+			userGroup.GET("/size", middleware.WithOperation("计算文件大小"), ctrl.CalculateSize)
 		}
 
 	}

@@ -61,14 +61,14 @@ func NewRouter(
 	sessionManager *ssh.SessionManager,
 ) *Router {
 	return &Router{
-		roleCtrl:         role.NewRoleController(roleService, authService),
-		apiCtrl:          permission.NewAPIController(apiService, authService),
-		menuCtrl:         menu.NewMenuController(menuService, authService),
+		roleCtrl:         role.NewRoleController(roleService, authService, userOperationLogService),
+		apiCtrl:          permission.NewAPIController(apiService, authService, userOperationLogService),
+		menuCtrl:         menu.NewMenuController(menuService, authService, userOperationLogService),
 		userCtrl:         user.NewController(userService, userOperationLogService, authService),
 		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
 		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
-		filesCtrl:        files.NewController(fileService, authService),
-		terminalCtrl:     terminal.NewController(terminalService, authService),
+		filesCtrl:        files.NewController(fileService, authService, userOperationLogService),
+		terminalCtrl:     terminal.NewController(terminalService, authService, userOperationLogService),
 		wsCtrl:           ws.NewController(wsPool, authService, sessionManager),
 		jobCtrl:          job.NewController(jobService, authService, gpuService, userOperationLogService),
 		queueCtrl:        queue.NewController(queueService, userOperationLogService, repository, authService),
@@ -87,7 +87,7 @@ func (r *Router) Setup(engine *gin.Engine) {
 	engine.Static("/uploads", "./uploads")
 
 	// 健康检查
-	engine.GET("/api/health", func(c *gin.Context) {
+	engine.GET("/api/v1/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{
 			"status":  "ok",
 			"message": "CloudQue API is running",
