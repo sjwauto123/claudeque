@@ -14,7 +14,7 @@ func InitFromConfig() error {
 func InitDefault() error {
 	cfg := &config.LogConfig{
 		Level:      "debug",
-		Filename:   "logs/app.log",
+		Filename:   "operationLogs/app.log",
 		MaxSize:    100,
 		MaxBackups: 3,
 		MaxAge:     28,

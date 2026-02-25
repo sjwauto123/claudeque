@@ -2,12 +2,15 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 
 	"cloudque/internal/api"
 	"cloudque/internal/model/entity"
@@ -16,20 +19,24 @@ import (
 	"cloudque/pkg/config"
 	"cloudque/pkg/database"
 	"cloudque/pkg/logger"
+	"cloudque/pkg/ssh"
+	"cloudque/pkg/websocket"
 
 	"github.com/gin-gonic/gin"
-	"github.com/redis/go-redis/v9"
 	"go.uber.org/zap"
 	"gorm.io/gorm"
 )
 
 // App 应用结构体
 type App struct {
-	cfg     *config.Config
-	mysqlDB *gorm.DB
-	redis   *redis.Client
-	router  *api.Router
-	server  *http.Server
+	cfg            *config.Config
+	mysqlDB        *gorm.DB
+	redis          *redis.Client
+	router         *api.Router
+	server         *http.Server
+	scheduler      service.Scheduler
+	sessionManager *ssh.SessionManager
+	wsPool         *websocket.ConnectionPool
 }
 
 // NewApp 创建应用实例
@@ -58,9 +65,20 @@ func (a *App) Initialize() error {
 	a.initDependencies()
 
 	// 5. 初始化路由
+	// 打印 SSH 状态
+	if a.cfg.Server.Enabled {
+		logger.Info("SSH 远程服务器配置已就绪",
+			zap.String("host", a.cfg.Server.Host),
+			zap.String("root_user", a.cfg.Server.RootUsername),
+		)
+	} else {
+		logger.Warn("SSH 功能已在配置中禁用")
+	}
+
+	// 5. 初始化路由
 	a.initRouter()
 
-	// 6. 初始化服务器
+	// 7. 初始化服务器
 	a.initServer()
 
 	return nil
@@ -90,6 +108,13 @@ func (a *App) initLogger() error {
 	logger.Info("配置加载成功")
 	logger.Info("=========================================")
 
+	// Debug config
+	logger.Info("Debug DB Config",
+		zap.String("host", a.cfg.Database.MySQL.Host),
+		zap.Int("port", a.cfg.Database.MySQL.Port),
+		zap.String("user", a.cfg.Database.MySQL.Username),
+	)
+
 	return nil
 }
 
@@ -105,22 +130,41 @@ func (a *App) initDatabase() error {
 	// 自动迁移数据库表
 	logger.Info("开始数据库迁移...")
 	if err := a.mysqlDB.AutoMigrate(
+		&entity.UserOperationLog{},
+		&entity.BaseEntity{},
+		&entity.Process{},
+		&entity.User{},
+		&entity.Job{},
+		&entity.GpuCard{},
 		&entity.Role{},
 		&entity.Permission{},
 		&entity.Menu{},
-		&entity.User{},
 	); err != nil {
 		logger.Warn("数据库迁移警告", zap.Error(err))
 	} else {
 		logger.Info("数据库迁移完成")
 	}
 
-	// 初始化 Redis（可选）
+	// 初始化 Redis
 	rs, err := database.InitRedis(&a.cfg.Database.Redis)
 	if err != nil {
 		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
 	}
 	a.redis = rs
+
+	//初始化GPU卡片
+	if a.redis != nil {
+		gpuRepo := repository.NewGpuRepository(a.mysqlDB)
+		gpuCache := repository.NewGpuCacheRepository(a.redis)
+		gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := gpuSvc.InitializeGpus(ctx); err != nil {
+			logger.Warn("GPU卡片初始化失败", zap.Error(err))
+		} else {
+			logger.Info("GPU卡片初始化完成")
+		}
+		cancel()
+	}
 
 	return nil
 }
@@ -128,21 +172,89 @@ func (a *App) initDatabase() error {
 // initDependencies 初始化依赖注入
 func (a *App) initDependencies() {
 	// 创建 Repository
+	userLogRepo := repository.NewUserOperationLogRepository(a.mysqlDB)
+	adminLogRepo := repository.NewAdminOperationLogRepository(a.mysqlDB)
+	processRepo := repository.NewProcessRepository(a.mysqlDB)
 	userRepo := repository.NewUserRepository(a.mysqlDB)
+	jobRepo := repository.NewJobRepository(a.mysqlDB, a.redis)
+	gpuRepo := repository.NewGpuRepository(a.mysqlDB)
+	gpuCache := repository.NewGpuCacheRepository(a.redis)
+	queueRepo := repository.NewQueueRepository(a.redis)
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
+	sessionRepo := repository.NewSessionRepository(a.redis)
 	redisRepo := repository.NewRedisRepository()
 	menuRepo := repository.NewMenuRepository(a.mysqlDB)
 	apiRepo := repository.NewAPIRepository(a.mysqlDB)
+	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
+
+	// 创建 SSH 会话管理器
+	var sessionManager *ssh.SessionManager
+	var sshConfig *ssh.Config
+	if a.cfg.Server.Enabled {
+		logger.Info("初始化SSH会话管理器",
+			zap.String("host", a.cfg.Server.Host),
+			zap.String("base_path", a.cfg.Server.BasePath),
+			zap.Duration("session_timeout", a.cfg.Server.SessionTimeout),
+		)
+		sshConfig = &ssh.Config{
+			ServerHost:     a.cfg.Server.Host,
+			RootUsername:   a.cfg.Server.RootUsername,
+			Timeout:        a.cfg.Server.Timeout,
+			SessionTimeout: a.cfg.Server.SessionTimeout,
+		}
+		sessionManager = ssh.NewSessionManager(sshConfig, logger.GetLogger())
+		a.sessionManager = sessionManager
+
+		// 启动会话超时清理定时器
+		if a.cfg.Server.SessionTimeout > 0 {
+			go sessionManager.StartCleanupTimer()
+		}
+	} else {
+		logger.Info("SSH服务器未启用，文件和终端功能将受限")
+		sessionManager = nil
+		sshConfig = nil
+		a.sessionManager = nil
+	}
+
+	// 创建 WebSocket 连接池
+	a.wsPool = websocket.NewConnectionPool()
 
 	// 创建 Service
+	userLogSvc := service.NewUserOperationLogService(userLogRepo)
+	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
+	infoService := service.NewSystemInfoService(a.wsPool, procCacheRepo)
+	queueSvc := service.NewQueueService(queueRepo, jobRepo)
+	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
+	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo)
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
 	roleSvc := service.NewRoleService(roleRepo)
 	apiSvc := service.NewAPIService(apiRepo)
 	menuSvc := service.NewMenuService(menuRepo)
+	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc, sessionRepo, sessionManager, sshConfig)
+
+	if a.cfg.Server.Enabled {
+		authSvc.SetSSHServerHost(a.cfg.Server.Host)
+		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
+	}
+	fileSvc := service.NewFileService(sessionManager)
+	terminalSvc := service.NewTerminalService(sessionManager)
+
+	// 创建调度器
+	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 
 	// 创建 Router（传入所有 Service）
 	a.router = api.NewRouter(userSvc, authSvc, roleSvc, apiSvc, menuSvc) // 更新路由初始化，添加菜单服务
+	// 创建 Router
+	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc, fileSvc, terminalSvc, a.wsPool, sessionManager)
+}
+
+// Shutdown 关闭应用
+func (a *App) Shutdown() {
+	// 关闭 ConnectionPool
+	if a.wsPool != nil {
+		a.wsPool.CloseAll()
+	}
 }
 
 // initRouter 初始化路由
@@ -170,13 +282,18 @@ func (a *App) initServer() {
 
 // Run 运行应用
 func (a *App) Run() {
+	// 启动任务调度器
+	if a.scheduler != nil {
+		a.scheduler.Start()
+	}
+
 	// 启动 HTTP 服务器
 	go func() {
 		logger.Info("HTTP 服务器启动",
 			zap.String("addr", a.server.Addr),
 			zap.String("mode", a.cfg.App.Mode),
 		)
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatal("HTTP 服务器启动失败", zap.Error(err))
 		}
 	}()
@@ -193,6 +310,11 @@ func (a *App) gracefulShutdown() {
 
 	logger.Info("正在关闭服务器...")
 
+	// 停止任务调度器
+	if a.scheduler != nil {
+		a.scheduler.Stop()
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -201,9 +323,21 @@ func (a *App) gracefulShutdown() {
 		logger.Error("服务器关闭失败", zap.Error(err))
 	}
 
+	// 关闭所有 SSH 会话
+	if a.sessionManager != nil {
+		a.sessionManager.CloseAll()
+	}
+
 	// 关闭数据库连接
 	_ = database.CloseMySQL()
 	_ = database.CloseRedis()
+
+	// 关闭路由连接
+	if a.router != nil {
+		if err := a.router.Close(); err != nil {
+			logger.Error("关闭路由连接失败", zap.Error(err))
+		}
+	}
 
 	// 同步日志
 	_ = logger.Sync()

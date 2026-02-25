@@ -1,11 +1,9 @@
 package response
 
 import (
-	"math"
-
 	"cloudque/pkg/errors"
-
 	"github.com/gin-gonic/gin"
+	"math"
 )
 
 // Response 统一响应结构
@@ -90,8 +88,8 @@ func InternalError(c *gin.Context, message string) {
 
 // PageRequest 分页请求参数
 type PageRequest struct {
-	Page int `form:"page" binding:"required,min=1"`         // 页码，从1开始
-	Size int `form:"size" binding:"required,min=1,max=100"` // 每页大小，最大100
+	Page int `form:"page" json:"page" binding:"required,min=1"`         // 页码，从1开始
+	Size int `form:"size" json:"size" binding:"required,min=1,max=100"` // 每页大小，最大100
 }
 
 // PageResponse 分页响应结构

@@ -20,13 +20,14 @@ const (
 	CodeServiceUnavailable = 503
 
 	// 业务错误 1xxx
-	CodeUserNotFound       = 1001
-	CodeUserAlreadyExists  = 1002
-	CodeInvalidCredentials = 1003
-	CodeUserDisabled       = 1004
-	CodeInvalidToken       = 1005
-	CodeTokenExpired       = 1006
-	CodeInvalidCaptcha     = 1007
+	CodeUserNotFound           = 1001
+	CodeUserAlreadyExists      = 1002
+	CodeInvalidCredentials     = 1003
+	CodeUserDisabled           = 1004
+	CodeInvalidToken           = 1005
+	CodeTokenExpired           = 1006
+	CodeInvalidCaptcha         = 1007
+	CodeSSHCredentialsNotFound = 1008
 
 	// 参数错误 2xxx
 	CodeInvalidParam     = 2001
@@ -37,34 +38,49 @@ const (
 	CodeResourceNotFound      = 3001
 	CodeResourceAlreadyExists = 3002
 	CodeResourceLocked        = 3003
+
+	// 任务错误 4xxx
+	CodeJobNotFound        = 4001
+	CodeJobAlreadyRunning  = 4002
+	CodeJobCannotCancel    = 4003
+	CodeGPUInsufficient    = 4004
+	CodeJobSubmitFailed    = 4005
+	CodeJobExecutionFailed = 4006
 )
 
 // 错误码对应的文本消息
 var codeMessages = map[int]string{
-	CodeSuccess:               "成功",
-	CodeBadRequest:            "请求参数错误",
-	CodeUnauthorized:          "未授权",
-	CodeForbidden:             "禁止访问",
-	CodeNotFound:              "资源不存在",
-	CodeMethodNotAllowed:      "方法不允许",
-	CodeRequestTimeout:        "请求超时",
-	CodeConflict:              "资源冲突",
-	CodeInternalError:         "服务器内部错误",
-	CodeNotImplemented:        "功能未实现",
-	CodeServiceUnavailable:    "服务不可用",
-	CodeUserNotFound:          "用户不存在",
-	CodeUserAlreadyExists:     "用户已存在",
-	CodeInvalidCredentials:    "用户名或密码错误",
-	CodeUserDisabled:          "用户已被禁用",
-	CodeInvalidToken:          "无效的令牌",
-	CodeTokenExpired:          "令牌已过期",
-	CodeInvalidCaptcha:        "验证码无效",
-	CodeInvalidParam:          "参数错误",
-	CodeMissingParam:          "缺少必要参数",
-	CodeParamFormatError:      "参数格式错误",
-	CodeResourceNotFound:      "资源不存在",
-	CodeResourceAlreadyExists: "资源已存在",
-	CodeResourceLocked:        "资源已被锁定",
+	CodeSuccess:                "成功",
+	CodeBadRequest:             "请求参数错误",
+	CodeUnauthorized:           "未授权",
+	CodeForbidden:              "禁止访问",
+	CodeNotFound:               "资源不存在",
+	CodeMethodNotAllowed:       "方法不允许",
+	CodeRequestTimeout:         "请求超时",
+	CodeConflict:               "资源冲突",
+	CodeInternalError:          "服务器内部错误",
+	CodeNotImplemented:         "功能未实现",
+	CodeServiceUnavailable:     "服务不可用",
+	CodeUserNotFound:           "用户不存在",
+	CodeUserAlreadyExists:      "用户已存在",
+	CodeInvalidCredentials:     "用户名或密码错误",
+	CodeUserDisabled:           "用户已被禁用",
+	CodeInvalidToken:           "无效的令牌",
+	CodeTokenExpired:           "令牌已过期",
+	CodeInvalidCaptcha:         "验证码无效",
+	CodeSSHCredentialsNotFound: "SSH凭证未找到或已过期",
+	CodeInvalidParam:           "参数错误",
+	CodeMissingParam:           "缺少必要参数",
+	CodeParamFormatError:       "参数格式错误",
+	CodeResourceNotFound:       "资源不存在",
+	CodeResourceAlreadyExists:  "资源已存在",
+	CodeResourceLocked:         "资源已被锁定",
+	CodeJobNotFound:           "任务不存在",
+	CodeJobAlreadyRunning:     "任务正在运行",
+	CodeJobCannotCancel:       "无法取消此任务",
+	CodeGPUInsufficient:       "显卡数量不足",
+	CodeJobSubmitFailed:       "提交任务失败",
+	CodeJobExecutionFailed:    "任务执行失败",
 }
 
 // GetMessage 获取错误码对应的文本消息

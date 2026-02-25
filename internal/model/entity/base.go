@@ -8,10 +8,9 @@ import (
 
 // BaseEntity 基础实体
 type BaseEntity struct {
-	ID        int            `gorm:"primaryKey" json:"id"`
-	CreatedAt time.Time      `gorm:"column:created_at;autoCreateTime" json:"created_at"`
-	UpdatedAt time.Time      `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
-	DeletedAt gorm.DeletedAt `gorm:"index" json:"-"`
+	ID        int       `gorm:"primarykey" json:"id"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // BeforeCreate GORM hook - 创建前
