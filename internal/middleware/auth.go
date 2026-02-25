@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"log"
 	"strings"
 
 	"cloudque/internal/service"
@@ -57,42 +56,34 @@ func Auth() gin.HandlerFunc {
 }
 
 // RequirePermission 权限检查中间件
-func RequirePermission(authService service.AuthService, permission string) gin.HandlerFunc {
+func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. 获取用户角色slug
-		rolesInterface, exists := c.Get(ContextRoles)
+
+		// 取出 userID
+		userIDInterface, exists := c.Get(ContextUserID)
 		if !exists {
-			response.Forbidden(c, "无权访问")
+			response.Forbidden(c, "未登录")
 			c.Abort()
 			return
 		}
-		roles := rolesInterface.([]string)
 
-		// 2. 查到用户所有的权限
-		hasPermission := false
-		for _, roleSlug := range roles {
-			//超级管理员，所有权限都有，不需要再判断权限
-			if roleSlug == "admin" {
-				hasPermission = true
-				break
-			}
+		userID, ok := userIDInterface.(int)
+		if !ok {
+			response.Forbidden(c, "用户信息异常")
+			c.Abort()
+			return
+		}
 
-			//对每个角色的每个权限进行判断，有需要的权限直接break，不用再找
-			perms, err := authService.GetPermissionsByRole(roleSlug)
-			if err != nil {
-				log.Printf("获取角色 %s 权限失败: %v", roleSlug, err)
-				continue
-			}
+		// 获取当前请求信息
+		method := c.Request.Method
+		path := c.FullPath()
 
-			for _, p := range perms {
-				if p.Slug == permission {
-					hasPermission = true
-					break
-				}
-			}
-			if hasPermission {
-				break
-			}
+		// 数据库判断
+		hasPermission, err := authService.CheckUserPermission(userID, method, path)
+		if err != nil {
+			response.Forbidden(c, "权限校验失败")
+			c.Abort()
+			return
 		}
 
 		if !hasPermission {
@@ -119,4 +110,30 @@ func GetUsername(c *gin.Context) string {
 		return username.(string)
 	}
 	return ""
+}
+
+// OptionalAuth 可选的 JWT 认证中间件
+func OptionalAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		authHeader := c.GetHeader("Authorization")
+		if authHeader == "" {
+			c.Next()
+			return
+		}
+
+		parts := strings.SplitN(authHeader, " ", 2)
+		if len(parts) != 2 || parts[0] != "Bearer" {
+			c.Next()
+			return
+		}
+
+		claims, err := jwt.ParseToken(parts[1])
+		if err == nil {
+			c.Set(ContextUserID, claims.GetUserID())
+			c.Set(ContextUsername, claims.GetUsername())
+			c.Set(ContextRoles, claims.GetRoles())
+		}
+
+		c.Next()
+	}
 }

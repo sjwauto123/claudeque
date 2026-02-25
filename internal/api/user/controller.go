@@ -17,13 +17,18 @@ import (
 // Controller 用户控制器
 type Controller struct {
 	userService            service.UserService
+	authService            service.AuthService
 	useOperationLogService service.UserOperationLogService
 }
 
 // NewController 创建用户控制器
-func NewController(userService service.UserService, userOperationLogService service.UserOperationLogService) *Controller {
+func NewController(userService service.UserService,
+	userOperationLogService service.UserOperationLogService,
+	authService service.AuthService,
+) *Controller {
 	return &Controller{
 		userService:            userService,
+		authService:            authService,
 		useOperationLogService: userOperationLogService,
 	}
 }

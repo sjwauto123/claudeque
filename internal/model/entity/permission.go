@@ -6,28 +6,27 @@ import (
 
 type Permission struct {
 	BaseEntity
-	Name       string `gorm:"type:varchar(50);not null;comment:权                                           限名称" json:"name"`
-	Category   string `gorm:"type:varchar(50);not null;comment:API类别" json:"category"`
-	Slug       string `gorm:"type:varchar(50);uniqueIndex;not null;comment:权限唯一标识" json:"slug"`
-	Type       string `gorm:"type:varchar(20);default:'';comment:权限类型" json:"type"`
-	Status     int    `gorm:"type:int;default:1;comment:0-禁用 1-启用" json:"status"`
-	HttpMethod string `gorm:"type:varchar(10);comment:API请求方法" json:"http_method"`
-	HttpPath   string `gorm:"type:varchar(255);comment:API路径" json:"http_path"`
-	Sort       int    `gorm:"type:int;default:0;comment:菜单排序" json:"sort"`
+	Name       string `gorm:"not null;comment:权限名称" json:"name"`
+	Category   string `gorm:"not null;comment:权限类别" json:"category"`
+	Slug       string `gorm:"uniqueIndex;not null;comment:权限唯一标识" json:"slug"`
+	Type       string `gorm:"comment:权限类型" json:"type"`
+	Status     int    `gorm:"default:1;comment:0-禁用 1-启用" json:"status"`
+	HTTPMethod string `gorm:"column:http_method;size:191" json:"http_method"`
+	HTTPPath   string `gorm:"column:http_path" json:"http_path"`
+	Sort       int    `gorm:"default:1;comment:菜单排序" json:"sort"`
 }
 
 func (Permission) TableName() string {
 	return "admin_permissions"
 }
 
-// RolePermission 角色权限关联表
-type RolePermission struct {
-	RoleID       int       `gorm:"primaryKey;comment:角色ID" json:"role_id"`
-	PermissionID int       `gorm:"primaryKey;comment:权限ID" json:"permission_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
+type PermissionMenu struct {
+	PermissionID int       `gorm:"primaryKey;column:permission_id" json:"permission_id"`
+	MenuID       int       `gorm:"primaryKey;column:menu_id" json:"menu_id"`
+	CreatedAt    time.Time `gorm:"column:created_at;autoCreateTime" json:"created_at"`
+	UpdatedAt    time.Time `gorm:"column:updated_at;autoUpdateTime" json:"updated_at"`
 }
 
-func (RolePermission) TableName() string {
-	return "admin_role_permissions"
+func (PermissionMenu) TableName() string {
+	return "admin_permission_menu"
 }

@@ -19,6 +19,8 @@ type AuthService interface {
 	GetPermissionsByRole(slug string) ([]entity.Permission, error)
 	// GetAllRoles 获取所有角色
 	GetAllRoles() ([]entity.Role, error)
+	// CheckUserPermission 检查用户是否拥有权限
+	CheckUserPermission(userID int, method string, path string) (bool, error)
 	// EnsureSSHSession 确保用户的SSH会话存在 (默认身份)
 	EnsureSSHSession(userID int) error
 	// EnsureSSHSessionByType 确保特定身份的SSH会话存在

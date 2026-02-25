@@ -9,7 +9,7 @@ import (
 func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	adminGroup := r.Group("/admin")
 	adminGroup.Use(middleware.Auth())
-	adminGroup.Use(middleware.RequirePermission(ctrl.authService, "user_manage")) // 需要用户管理权限
+	adminGroup.Use(middleware.RequirePermission(ctrl.authService))
 	adminGroup.Use(middleware.UserOperationLogs(ctrl.userOperationLogSer))
 	{
 		adminGroup.POST("/users", middleware.WithOperation("创建用户"), ctrl.CreateUser)

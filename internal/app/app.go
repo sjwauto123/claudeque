@@ -183,6 +183,8 @@ func (a *App) initDependencies() {
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
 	sessionRepo := repository.NewSessionRepository(a.redis)
 	redisRepo := repository.NewRedisRepository()
+	menuRepo := repository.NewMenuRepository(a.mysqlDB)
+	apiRepo := repository.NewAPIRepository(a.mysqlDB)
 	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
 
 	// 创建 SSH 会话管理器
@@ -225,6 +227,9 @@ func (a *App) initDependencies() {
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo)
+	roleSvc := service.NewRoleService(roleRepo)
+	apiSvc := service.NewAPIService(apiRepo)
+	menuSvc := service.NewMenuService(menuRepo)
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc, sessionRepo, sessionManager, sshConfig)
 
 	if a.cfg.Server.Enabled {
@@ -238,7 +243,23 @@ func (a *App) initDependencies() {
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 
 	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc, fileSvc, terminalSvc, a.wsPool, sessionManager)
+	a.router = api.NewRouter(
+		userLogSvc,
+		adminLogSvc,
+		infoService,
+		userSvc,
+		authSvc,
+		roleSvc,
+		apiSvc,
+		menuSvc,
+		jobSvc,
+		queueSvc,
+		jobRepo,
+		gpuSvc,
+		fileSvc,
+		terminalSvc,
+		a.wsPool,
+		sessionManager)
 }
 
 // Shutdown 关闭应用
