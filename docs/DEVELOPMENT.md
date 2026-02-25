@@ -145,10 +145,10 @@ func (s *productService) Create(req *request.CreateProductRequest) error {
 
 ### 步骤 5: 创建 Controller
 
-在 `internal/api/v1/product/` 创建控制器：
+在 `internal/api/product/` 创建控制器：
 
 ```go
-// internal/api/v1/product/controller.go
+// internal/api/product/controller.go
 package product
 
 type ProductController struct {
@@ -190,10 +190,10 @@ func (ctrl *ProductController) GetByID(c *gin.Context) {
 // 实现其他方法...
 ```
 
-在 `internal/api/v1/product/routes.go` 注册路由：
+在 `internal/api/product/routes.go` 注册路由：
 
 ```go
-// internal/api/v1/product/routes.go
+// internal/api/product/routes.go
 package product
 
 func (ctrl *ProductController) RegisterRoutes(r *gin.RouterGroup) {

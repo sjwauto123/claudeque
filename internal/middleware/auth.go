@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"log"
 	"strings"
 
 	"cloudque/internal/service"
@@ -57,40 +56,34 @@ func Auth() gin.HandlerFunc {
 }
 
 // RequirePermission 权限检查中间件
-func RequirePermission(authService service.AuthService, permission string) gin.HandlerFunc {
+func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. 获取用户角色slug
-		rolesInterface, exists := c.Get(ContextRoles)
+
+		// 取出 userID
+		userIDInterface, exists := c.Get(ContextUserID)
 		if !exists {
-			response.Forbidden(c, "无权访问")
+			response.Forbidden(c, "未登录")
 			c.Abort()
 			return
 		}
-		roles := rolesInterface.([]string)
 
-		// 2. 查到用户所有的权限
-		hasPermission := false
-		for _, roleSlug := range roles {
-			if roleSlug == "admin" {
-				hasPermission = true
-				break
-			}
+		userID, ok := userIDInterface.(int)
+		if !ok {
+			response.Forbidden(c, "用户信息异常")
+			c.Abort()
+			return
+		}
 
-			perms, err := authService.GetPermissionsByRole(roleSlug)
-			if err != nil {
-				log.Printf("获取角色 %s 权限失败: %v", roleSlug, err)
-				continue
-			}
+		// 获取当前请求信息
+		method := c.Request.Method
+		path := c.FullPath()
 
-			for _, p := range perms {
-				if p.Slug == permission {
-					hasPermission = true
-					break
-				}
-			}
-			if hasPermission {
-				break
-			}
+		// 数据库判断
+		hasPermission, err := authService.CheckUserPermission(userID, method, path)
+		if err != nil {
+			response.Forbidden(c, "权限校验失败")
+			c.Abort()
+			return
 		}
 
 		if !hasPermission {

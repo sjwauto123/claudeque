@@ -8,6 +8,7 @@ import (
 // JobsRoutes 任务路由
 func (ctrl *Controller) JobsRoutes(r *gin.RouterGroup) {
 	r.Use(middleware.Auth())
+	r.Use(middleware.RequirePermission(ctrl.authService))
 	r.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
 	{
 		r.POST("", middleware.WithOperation("提交任务"), ctrl.SubmitJob)

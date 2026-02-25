@@ -15,14 +15,14 @@ import (
 
 type Controller struct {
 	syInfoSvc               service.SystemInfoService
-	authSvc                 service.AuthService
+	authService             service.AuthService
 	userOperationLogService service.UserOperationLogService
 }
 
 func NewController(svc service.SystemInfoService, authSvc service.AuthService, userOperationLogService service.UserOperationLogService) *Controller {
 	return &Controller{
 		syInfoSvc:               svc,
-		authSvc:                 authSvc,
+		authService:             authSvc,
 		userOperationLogService: userOperationLogService,
 	}
 }
@@ -51,7 +51,7 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	userID := value.(uint)
+	userID := value.(int)
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)

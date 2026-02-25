@@ -14,11 +14,13 @@ const (
 	PongWait = 60 * time.Second
 	// PingPeriod 发送 Ping 的周期 (必须小于 PongWait)
 	PingPeriod = (PongWait * 9) / 10
+	// MaxMessageSize 最大消息大小
+	MaxMessageSize = 512
 )
 
 // SessionMetadata 会话元数据
 type SessionMetadata struct {
-	UserID      uint
+	UserID      int
 	SessionType string // "terminal" or "files" or "ws"
 	Role        string // "admin" or "user"
 	CreatedAt   int64
@@ -36,7 +38,7 @@ type Client struct {
 // ConnectionPool WebSocket连接池（优化版：读写分离、心跳检测）
 type ConnectionPool struct {
 	// userID -> { client -> struct{} }
-	userClients map[uint]map[*Client]struct{}
+	userClients map[int]map[*Client]struct{}
 	// 管理员客户端
 	adminClients map[*Client]struct{}
 	mu           sync.RWMutex
@@ -45,13 +47,13 @@ type ConnectionPool struct {
 // NewConnectionPool 创建连接池
 func NewConnectionPool() *ConnectionPool {
 	return &ConnectionPool{
-		userClients:  make(map[uint]map[*Client]struct{}),
+		userClients:  make(map[int]map[*Client]struct{}),
 		adminClients: make(map[*Client]struct{}),
 	}
 }
 
 // Add 创建并添加一个新客户端
-func (p *ConnectionPool) Add(userID uint, conn *websocket.Conn, metadata *SessionMetadata) {
+func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *SessionMetadata) *Client {
 	client := &Client{
 		Pool:     p,
 		Conn:     conn,
@@ -71,11 +73,13 @@ func (p *ConnectionPool) Add(userID uint, conn *websocket.Conn, metadata *Sessio
 	}
 	p.mu.Unlock()
 
-	// 启动写协程和读协程
+	// 启动写协程
 	go client.WritePump()
 
+	return client
 }
 
+// Close 关闭客户端连接
 func (c *Client) Close() {
 	c.once.Do(func() {
 		c.Pool.mu.Lock()
@@ -108,16 +112,12 @@ func (c *Client) WritePump() {
 	for {
 		select {
 		case message, ok := <-c.Send:
-			err := c.Conn.SetWriteDeadline(time.Now().Add(WriteWait))
-			if err != nil {
+			if err := c.Conn.SetWriteDeadline(time.Now().Add(WriteWait)); err != nil {
 				return
 			}
 			if !ok {
 				// 通道已关闭
-				err = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				if err != nil {
-					return
-				}
+				_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
@@ -134,16 +134,15 @@ func (c *Client) WritePump() {
 				w.Write(<-c.Send)
 			}
 
-			if err = w.Close(); err != nil {
+			if err := w.Close(); err != nil {
 				return
 			}
 
 		case <-ticker.C:
-			err := c.Conn.SetWriteDeadline(time.Now().Add(WriteWait))
-			if err != nil {
+			if err := c.Conn.SetWriteDeadline(time.Now().Add(WriteWait)); err != nil {
 				return
 			}
-			if err = c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
+			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
 			}
 		}
@@ -151,7 +150,7 @@ func (c *Client) WritePump() {
 }
 
 // SendToUser 发送消息给指定用户的所有客户端
-func (p *ConnectionPool) SendToUser(userID uint, data []byte) {
+func (p *ConnectionPool) SendToUser(userID int, data []byte) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -209,6 +208,7 @@ func (p *ConnectionPool) GetConnectionCount() int {
 	return count
 }
 
+// GetAdminConnectionCount 获取管理员连接数
 func (p *ConnectionPool) GetAdminConnectionCount() int {
 	p.mu.RLock()
 	defer p.mu.RUnlock()

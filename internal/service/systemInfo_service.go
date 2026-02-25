@@ -45,7 +45,7 @@ func NewSystemInfoService(pool *websocket.ConnectionPool, procRepo repository.Pr
 }
 
 // HandleSyMessage 处理请求创建连接
-func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID uint) {
+func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 	// 创建会话元数据，设置角色为管理员
 	metadata := &websocket.SessionMetadata{
 		UserID:      userID,

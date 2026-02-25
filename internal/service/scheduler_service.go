@@ -149,6 +149,10 @@ func (s *scheduler) terminateSingleJob(jobID int, jp *JobProcess) {
 				return
 			case <-time.After(10 * time.Second):
 				logger.Warn("任务未在规定时间内优雅退出，强制杀掉", zap.Int("job_id", jobID))
+				err = jp.cmd.Process.Kill()
+				if err != nil {
+					logger.Error("强制杀死进程失败：", zap.Int("pid", jp.cmd.Process.Pid))
+				}
 			}
 		}
 	}
@@ -450,7 +454,4 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 	if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
 		logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
 	}
-
-	// 尝试调度下一个任务
-	go s.processQueue()
 }

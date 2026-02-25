@@ -1,11 +1,9 @@
 package response
 
 import (
-	"math"
-
 	"cloudque/pkg/errors"
-
 	"github.com/gin-gonic/gin"
+	"math"
 )
 
 // Response 统一响应结构

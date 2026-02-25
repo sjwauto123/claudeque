@@ -1,8 +1,8 @@
 package app
 
 import (
-	"cloudque/pkg/websocket"
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -19,6 +19,8 @@ import (
 	"cloudque/pkg/config"
 	"cloudque/pkg/database"
 	"cloudque/pkg/logger"
+	"cloudque/pkg/ssh"
+	"cloudque/pkg/websocket"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
@@ -27,13 +29,14 @@ import (
 
 // App 应用结构体
 type App struct {
-	cfg       *config.Config
-	mysqlDB   *gorm.DB
-	redis     *redis.Client
-	router    *api.Router
-	server    *http.Server
-	scheduler service.Scheduler
-	pool      *websocket.ConnectionPool
+	cfg            *config.Config
+	mysqlDB        *gorm.DB
+	redis          *redis.Client
+	router         *api.Router
+	server         *http.Server
+	scheduler      service.Scheduler
+	sessionManager *ssh.SessionManager
+	wsPool         *websocket.ConnectionPool
 }
 
 // NewApp 创建应用实例
@@ -58,13 +61,21 @@ func (a *App) Initialize() error {
 		return err
 	}
 
-	// 4. 初始化 WebSocket连接池
-	a.pool = websocket.NewConnectionPool()
-
-	// 5. 初始化依赖
+	// 4. 初始化依赖
 	a.initDependencies()
 
-	// 6. 初始化路由
+	// 5. 初始化路由
+	// 打印 SSH 状态
+	if a.cfg.Server.Enabled {
+		logger.Info("SSH 远程服务器配置已就绪",
+			zap.String("host", a.cfg.Server.Host),
+			zap.String("root_user", a.cfg.Server.RootUsername),
+		)
+	} else {
+		logger.Warn("SSH 功能已在配置中禁用")
+	}
+
+	// 5. 初始化路由
 	a.initRouter()
 
 	// 7. 初始化服务器
@@ -96,6 +107,13 @@ func (a *App) initLogger() error {
 	logger.Info(fmt.Sprintf("模式: %s", a.cfg.App.Mode))
 	logger.Info("配置加载成功")
 	logger.Info("=========================================")
+
+	// Debug config
+	logger.Info("Debug DB Config",
+		zap.String("host", a.cfg.Database.MySQL.Host),
+		zap.Int("port", a.cfg.Database.MySQL.Port),
+		zap.String("user", a.cfg.Database.MySQL.Username),
+	)
 
 	return nil
 }
@@ -163,31 +181,92 @@ func (a *App) initDependencies() {
 	gpuCache := repository.NewGpuCacheRepository(a.redis)
 	queueRepo := repository.NewQueueRepository(a.redis)
 	roleRepo := repository.NewRoleRepository(a.mysqlDB)
+	sessionRepo := repository.NewSessionRepository(a.redis)
 	redisRepo := repository.NewRedisRepository()
+	menuRepo := repository.NewMenuRepository(a.mysqlDB)
+	apiRepo := repository.NewAPIRepository(a.mysqlDB)
 	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
+
+	// 创建 SSH 会话管理器
+	var sessionManager *ssh.SessionManager
+	var sshConfig *ssh.Config
+	if a.cfg.Server.Enabled {
+		logger.Info("初始化SSH会话管理器",
+			zap.String("host", a.cfg.Server.Host),
+			zap.String("base_path", a.cfg.Server.BasePath),
+			zap.Duration("session_timeout", a.cfg.Server.SessionTimeout),
+		)
+		sshConfig = &ssh.Config{
+			ServerHost:     a.cfg.Server.Host,
+			RootUsername:   a.cfg.Server.RootUsername,
+			Timeout:        a.cfg.Server.Timeout,
+			SessionTimeout: a.cfg.Server.SessionTimeout,
+		}
+		sessionManager = ssh.NewSessionManager(sshConfig, logger.GetLogger())
+		a.sessionManager = sessionManager
+
+		// 启动会话超时清理定时器
+		if a.cfg.Server.SessionTimeout > 0 {
+			go sessionManager.StartCleanupTimer()
+		}
+	} else {
+		logger.Info("SSH服务器未启用，文件和终端功能将受限")
+		sessionManager = nil
+		sshConfig = nil
+		a.sessionManager = nil
+	}
+
+	// 创建 WebSocket 连接池
+	a.wsPool = websocket.NewConnectionPool()
 
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
-	infoService := service.NewSystemInfoService(a.pool, procCacheRepo)
+	infoService := service.NewSystemInfoService(a.wsPool, procCacheRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo)
-	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc)
+	roleSvc := service.NewRoleService(roleRepo)
+	apiSvc := service.NewAPIService(apiRepo)
+	menuSvc := service.NewMenuService(menuRepo)
+	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc, sessionRepo, sessionManager, sshConfig)
+
+	if a.cfg.Server.Enabled {
+		authSvc.SetSSHServerHost(a.cfg.Server.Host)
+		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
+	}
+	fileSvc := service.NewFileService(sessionManager)
+	terminalSvc := service.NewTerminalService(sessionManager)
 
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
-	// 创建 Router
-	a.router = api.NewRouter(userLogSvc, adminLogSvc, infoService, userSvc, authSvc, jobSvc, queueSvc, jobRepo, gpuSvc)
 
+	// 创建 Router
+	a.router = api.NewRouter(
+		userLogSvc,
+		adminLogSvc,
+		infoService,
+		userSvc,
+		authSvc,
+		roleSvc,
+		apiSvc,
+		menuSvc,
+		jobSvc,
+		queueSvc,
+		jobRepo,
+		gpuSvc,
+		fileSvc,
+		terminalSvc,
+		a.wsPool,
+		sessionManager)
 }
 
 // Shutdown 关闭应用
 func (a *App) Shutdown() {
 	// 关闭 ConnectionPool
-	if a.pool != nil {
-		a.pool.CloseAll()
+	if a.wsPool != nil {
+		a.wsPool.CloseAll()
 	}
 }
 
@@ -227,7 +306,7 @@ func (a *App) Run() {
 			zap.String("addr", a.server.Addr),
 			zap.String("mode", a.cfg.App.Mode),
 		)
-		if err := a.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := a.server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			logger.Fatal("HTTP 服务器启动失败", zap.Error(err))
 		}
 	}()
@@ -257,9 +336,21 @@ func (a *App) gracefulShutdown() {
 		logger.Error("服务器关闭失败", zap.Error(err))
 	}
 
+	// 关闭所有 SSH 会话
+	if a.sessionManager != nil {
+		a.sessionManager.CloseAll()
+	}
+
 	// 关闭数据库连接
 	_ = database.CloseMySQL()
 	_ = database.CloseRedis()
+
+	// 关闭路由连接
+	if a.router != nil {
+		if err := a.router.Close(); err != nil {
+			logger.Error("关闭路由连接失败", zap.Error(err))
+		}
+	}
 
 	// 同步日志
 	_ = logger.Sync()
