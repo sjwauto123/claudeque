@@ -4,8 +4,10 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/entity"
 	bizerrors "cloudque/pkg/errors"
+	"cloudque/pkg/logger"
 	"cloudque/pkg/utils"
 
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -103,6 +105,14 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 		if err != nil {
 			return err
 		}
+		// 1. 同步修改虚拟机密码 (方案A：先修改VM，失败则终止)
+		if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+			if err := s.updateVMPassword(user.Username, pwd); err != nil {
+				logger.Error("Failed to update VM password during AdminUpdateUser", zap.String("username", user.Username), zap.Error(err))
+				return bizerrors.NewWithErr(bizerrors.CodeInternalError, "同步虚拟机密码失败，请稍后重试", err)
+			}
+		}
+		// 2. 更新数据库密码字段
 		user.Password = string(hashedPassword)
 	}
 
