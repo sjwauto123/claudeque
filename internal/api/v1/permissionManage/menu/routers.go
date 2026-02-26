@@ -8,6 +8,7 @@ import (
 // RegisterRoutes 注册菜单管理路由
 func (ctrl *MenuController) RegisterRoutes(r *gin.RouterGroup) {
 	menuGroup := r.Group("/permissionManage/menus")
+	menuGroup.Use(middleware.Auth())
 	menuGroup.Use(middleware.RequirePermission(ctrl.authService))
 	menuGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
 	{
