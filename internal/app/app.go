@@ -197,10 +197,13 @@ func (a *App) initDependencies() {
 			zap.Duration("session_timeout", a.cfg.Server.SessionTimeout),
 		)
 		sshConfig = &ssh.Config{
-			ServerHost:     a.cfg.Server.Host,
-			RootUsername:   a.cfg.Server.RootUsername,
-			Timeout:        a.cfg.Server.Timeout,
-			SessionTimeout: a.cfg.Server.SessionTimeout,
+			ServerHost:           a.cfg.Server.Host,
+			RootUsername:         a.cfg.Server.RootUsername,
+			RootPassword:         a.cfg.Server.RootPassword,         // 添加Root密码
+			PrivateKeyPath:       a.cfg.Server.PrivateKeyPath,       // 从配置文件读取私钥路径
+			PrivateKeyPassphrase: a.cfg.Server.PrivateKeyPassphrase, // 从配置文件读取私钥密码
+			Timeout:              a.cfg.Server.Timeout,
+			SessionTimeout:       a.cfg.Server.SessionTimeout,
 		}
 		sessionManager = ssh.NewSessionManager(sshConfig, logger.GetLogger())
 		a.sessionManager = sessionManager

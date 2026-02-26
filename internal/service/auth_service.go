@@ -113,10 +113,20 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	if s.sessionManager != nil {
 		sshUser := req.Username
 
-		if s.userHasPermission(user, PermissionRootSSH) {
+		// 判断用户是否拥有SSH root权限：拥有则使用root账号，否则使用自己的账号
+		isRoot := s.userHasPermission(user, PermissionRootSSH)
+
+		if isRoot {
 			sshUser = s.sessionManager.GetRootUsername()
 		}
-		sshClient, err = s.verifySSHCredentials(sshUser, req.Password)
+
+		// 确定用于SSH连接的密码
+		sshPassword := req.Password
+		if isRoot && s.sessionManager.Cfg.RootPassword != "" {
+			sshPassword = s.sessionManager.Cfg.RootPassword
+		}
+
+		sshClient, err = s.verifySSHCredentials(sshUser, sshPassword)
 		if err != nil && s.sshServerHost != "" {
 			// 如果配置了SSH服务器但验证失败，拒绝登录
 			logger.Error("SSH验证失败，拒绝登录",
@@ -181,7 +191,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 		// 如果已经通过SSH验证创建了客户端，复用；否则重新创建
 		if sshClient == nil {
-			session, err := s.sessionManager.CreateSession(user.ID, user.Username, req.Password, isRoot)
+			session, err := s.sessionManager.CreateSession(user.ID, user.Username, user.Password, isRoot)
 			if err != nil {
 				logger.Warn("SSH会话创建失败，文件功能将受限",
 					zap.Int("user_id", user.ID),
@@ -436,10 +446,12 @@ func (s *authService) verifySSHCredentials(username, password string) (*server.C
 	}
 
 	sshConfig := &server.Config{
-		Host:     s.sshServerHost,
-		Username: username,
-		Password: password,
-		Timeout:  s.sessionManager.GetTimeout(),
+		Host:                 s.sshServerHost,
+		Username:             username,
+		Password:             password,
+		PrivateKeyPath:       s.sessionManager.Cfg.PrivateKeyPath,       // 从sessionManager获取私钥路径
+		PrivateKeyPassphrase: s.sessionManager.Cfg.PrivateKeyPassphrase, // 从sessionManager获取私钥密码
+		Timeout:              s.sessionManager.GetTimeout(),
 	}
 
 	client, err := server.NewClient(sshConfig)

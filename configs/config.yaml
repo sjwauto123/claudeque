@@ -58,6 +58,8 @@ cors:
 server:
   host: "192.168.83.130:22"
   root_username: "root"
+  root_password: "123456"
+  private_key_path: "/data/users/2144515062@qq.com/id_rsa"
   base_path: "/data/users"
   timeout: "30s"
   session_timeout: "24h"

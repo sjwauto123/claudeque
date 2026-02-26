@@ -27,7 +27,7 @@ type FileService interface {
 	UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error
 	GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error)
 	CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error)
-	GetHomeDirectoriesList(userID int, req *request.FileListRequest) (*dto.FilesListData, error)
+	GetHomeDirectoriesList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
 }
 
 // fileService 文件服务实现
@@ -503,7 +503,7 @@ func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (i
 }
 
 // GetHomeDirectoriesList 获取 /home 目录下的所有用户目录列表
-func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRequest) (*dto.FilesListData, error) {
+func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error) {
 	opUserID := userID
 
 	// 启动对应的ftpclient，以root模式获取，因为要访问 /home
@@ -548,7 +548,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 
 	// 构建 UID -> Username 映射
 	uidToName := make(map[uint32]string)
-	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", true) // isRootMode = true
+	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", isRootMode) // isRootMode = true
 	if err == nil {
 		lines := strings.Split(passwdOut, "\n")
 		for _, line := range lines {

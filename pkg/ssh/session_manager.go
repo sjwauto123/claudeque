@@ -12,10 +12,13 @@ import (
 
 // Config SSH会话管理器配置
 type Config struct {
-	ServerHost     string        // 服务器地址，如 "192.168.1.100:22"
-	RootUsername   string        // 管理员用户名（默认root）
-	Timeout        time.Duration // 连接超时
-	SessionTimeout time.Duration // 会话超时时间，0表示永不超时
+	ServerHost           string        // 服务器地址
+	RootUsername         string        // 管理员用户名（默认root）
+	RootPassword         string        // 管理员密码
+	PrivateKeyPath       string        // 私钥文件路径
+	PrivateKeyPassphrase string        // 私钥密码
+	Timeout              time.Duration // 连接超时
+	SessionTimeout       time.Duration // 会话超时时间，0表示永不超时
 }
 
 // UserSession 用户SSH会话
@@ -62,7 +65,7 @@ func (s *UserSession) Close() error {
 
 // SessionManager SSH会话管理器
 type SessionManager struct {
-	cfg      *Config
+	Cfg      *Config
 	sessions map[string]*UserSession // 用户ID+身份到会话的映射，key格式: "userID:isRoot"
 	mu       sync.RWMutex            // 会话映射锁
 	logger   *zap.Logger
@@ -76,20 +79,20 @@ func (sm *SessionManager) getSessionKey(userID int, isRoot bool) string {
 
 // GetRootUsername 获取Root用户名
 func (sm *SessionManager) GetRootUsername() string {
-	return sm.cfg.RootUsername
+	return sm.Cfg.RootUsername
 }
 
 // SetTimeout 设置SSH连接超时
 func (sm *SessionManager) SetTimeout(timeout time.Duration) {
-	if sm.cfg != nil {
-		sm.cfg.Timeout = timeout
+	if sm.Cfg != nil {
+		sm.Cfg.Timeout = timeout
 	}
 }
 
 // GetTimeout 获取SSH连接超时
 func (sm *SessionManager) GetTimeout() time.Duration {
-	if sm.cfg != nil {
-		return sm.cfg.Timeout
+	if sm.Cfg != nil {
+		return sm.Cfg.Timeout
 	}
 	return 0 // 或者返回一个默认值，例如 time.Second * 30
 }
@@ -97,7 +100,7 @@ func (sm *SessionManager) GetTimeout() time.Duration {
 // NewSessionManager 创建SSH会话管理器
 func NewSessionManager(cfg *Config, logger *zap.Logger) *SessionManager {
 	return &SessionManager{
-		cfg:      cfg,
+		Cfg:      cfg,
 		sessions: make(map[string]*UserSession),
 		logger:   logger,
 		stopChan: make(chan struct{}),
@@ -113,15 +116,26 @@ func (sm *SessionManager) CreateSession(userID int, username, password string, i
 	// 构建SSH用户名
 	sshUsername := username
 	if isRoot {
-		sshUsername = sm.cfg.RootUsername
+		sshUsername = sm.Cfg.RootUsername
 	}
 
 	// 创建SSH配置
 	sshConfig := &server.Config{
-		Host:     sm.cfg.ServerHost,
+		Host:     sm.Cfg.ServerHost,
 		Username: sshUsername,
 		Password: password,
-		Timeout:  sm.cfg.Timeout,
+		Timeout:  sm.Cfg.Timeout,
+	}
+
+	// 只有当是root用户时，才添加私钥路径和私钥密码
+	if isRoot {
+		sshConfig.PrivateKeyPath = sm.Cfg.PrivateKeyPath
+		sshConfig.PrivateKeyPassphrase = sm.Cfg.PrivateKeyPassphrase
+	}
+
+	// 如果是root用户且配置了root密码，则优先使用配置的root密码
+	if isRoot && sm.Cfg.RootPassword != "" {
+		sshConfig.Password = sm.Cfg.RootPassword
 	}
 
 	// 创建SSH客户端
@@ -253,7 +267,7 @@ func (sm *SessionManager) GetAllSessions() []map[string]interface{} {
 
 // StartCleanupTimer 启动会话超时清理定时器
 func (sm *SessionManager) StartCleanupTimer() {
-	if sm.cfg.SessionTimeout <= 0 {
+	if sm.Cfg.SessionTimeout <= 0 {
 		return
 	}
 
@@ -278,7 +292,7 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 	now := time.Now()
 	for userID, session := range sm.sessions {
 		session.mu.RLock()
-		if now.Sub(session.LastUsedAt) > sm.cfg.SessionTimeout {
+		if now.Sub(session.LastUsedAt) > sm.Cfg.SessionTimeout {
 			sm.logger.Info("清理过期SSH会话",
 				zap.String("user_id", userID),
 				zap.Duration("idle_time", now.Sub(session.LastUsedAt)),
