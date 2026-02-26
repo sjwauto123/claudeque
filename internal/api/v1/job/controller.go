@@ -48,13 +48,13 @@ func (ctrl *Controller) handleJobList(c *gin.Context, fetchFunc func(request.Job
 		return
 	}
 	userID := middleware.GetUserID(c)
-	startTime, err := utils.ParseDateToStart(j.StartTime)
+	startTime, err := utils.ParseStartDate(j.StartTime)
 	if err != nil {
 		response.BadRequest(c, "开始时间格式错误")
 		return
 	}
 
-	endTime, err := utils.ParseDateToEnd(j.EndTime)
+	endTime, err := utils.ParseEndDate(j.EndTime)
 	if err != nil {
 		response.BadRequest(c, "截至时间格式错误")
 		return
