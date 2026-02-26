@@ -27,21 +27,38 @@ func NewController(svc service.SystemInfoService, authSvc service.AuthService, u
 	}
 }
 
-var upgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin") // 获取请求来源
-		allowedOrigins := []string{
-			"https://yourdomain.com",
-			//"http://localhost:3000",
-		}
-		for _, allowed := range allowedOrigins {
-			if origin == allowed {
-				return true // 白名单中的来源允许连接
-			}
-		}
-		return false // 其他来源拒绝连接
-	},
+// NewWebsocketUpgrader 创建WebSocket升级器
+func NewWebsocketUpgrader() *websocket.Upgrader {
+	return &websocket.Upgrader{
+		// 允许的来源列表
+		CheckOrigin: func(r *http.Request) bool {
+			//origin := r.Header.Get("Origin")
+			//allowedOrigins := []string{
+			//	"https://yourdomain.com",
+			//	"http://localhost:3000", // 开发环境允许本地连接
+			//	"http://127.0.0.1:3000",
+			//}
+			//
+			//// 检查来源是否在允许列表中
+			//for _, allowed := range allowedOrigins {
+			//	if origin == allowed {
+			//		return true
+			//	}
+			//}
+			//
+			//// 生产环境建议严格检查，开发环境可以暂时返回true
+			//// return false
+			return true
+		},
+
+		// 配置WebSocket参数
+		ReadBufferSize:  1024, // 读取缓冲区大小
+		WriteBufferSize: 1024, // 写入缓冲区大小
+	}
 }
+
+// 全局WebSocket升级器实例
+var upgrader = NewWebsocketUpgrader()
 
 func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 

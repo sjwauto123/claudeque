@@ -5,7 +5,8 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
+func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
+	router := r.Group("/operationLogs")
 	router.Use(middleware.Auth())
 	router.Use(middleware.RequirePermission(ctrl.authService))
 	// 系统关机重启操作日志路由

@@ -86,7 +86,7 @@ func UserOperationLogs(userLogService service.UserOperationLogService) gin.Handl
 		go func() {
 			if err := userLogService.CreateLog(log); err != nil {
 				// 日志保存失败时，输出到标准错误
-				logger.Info("日志保存失败")
+				logger.Info("用户操作日志保存失败")
 			}
 		}()
 	}
@@ -129,7 +129,6 @@ func getBusinessStatusCode(body []byte) int {
 	var resp struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
-		Msg     string `json:"msg"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
 		return 0

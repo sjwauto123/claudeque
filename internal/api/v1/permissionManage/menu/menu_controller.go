@@ -13,15 +13,17 @@ import (
 )
 
 type MenuController struct {
-	menuService service.MenuService
-	authService service.AuthService
+	menuService    service.MenuService
+	authService    service.AuthService
+	userLogService service.UserOperationLogService
 }
 
 // NewMenuController 创建菜单控制器实例
-func NewMenuController(menuService service.MenuService, authService service.AuthService) *MenuController {
+func NewMenuController(menuService service.MenuService, authService service.AuthService, userLogService service.UserOperationLogService) *MenuController {
 	return &MenuController{
-		menuService: menuService,
-		authService: authService,
+		menuService:    menuService,
+		authService:    authService,
+		userLogService: userLogService,
 	}
 }
 

@@ -33,6 +33,7 @@ const (
 	CodeInvalidParam     = 2001
 	CodeMissingParam     = 2002
 	CodeParamFormatError = 2003
+	CodeFileNotFound     = 2004
 
 	// 资源错误 3xxx
 	CodeResourceNotFound      = 3001
@@ -72,15 +73,16 @@ var codeMessages = map[int]string{
 	CodeInvalidParam:           "参数错误",
 	CodeMissingParam:           "缺少必要参数",
 	CodeParamFormatError:       "参数格式错误",
+	CodeFileNotFound:           "文件不存在",
 	CodeResourceNotFound:       "资源不存在",
 	CodeResourceAlreadyExists:  "资源已存在",
 	CodeResourceLocked:         "资源已被锁定",
-	CodeJobNotFound:           "任务不存在",
-	CodeJobAlreadyRunning:     "任务正在运行",
-	CodeJobCannotCancel:       "无法取消此任务",
-	CodeGPUInsufficient:       "显卡数量不足",
-	CodeJobSubmitFailed:       "提交任务失败",
-	CodeJobExecutionFailed:    "任务执行失败",
+	CodeJobNotFound:            "任务不存在",
+	CodeJobAlreadyRunning:      "任务正在运行",
+	CodeJobCannotCancel:        "无法取消此任务",
+	CodeGPUInsufficient:        "显卡数量不足",
+	CodeJobSubmitFailed:        "提交任务失败",
+	CodeJobExecutionFailed:     "任务执行失败",
 }
 
 // GetMessage 获取错误码对应的文本消息
