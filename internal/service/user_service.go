@@ -8,13 +8,18 @@ import (
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
+	"cloudque/pkg/server"
+	"cloudque/pkg/ssh"
 	"cloudque/pkg/utils"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"os"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
 )
 
@@ -22,13 +27,15 @@ import (
 type userService struct {
 	userRepo  repository.UserRepository
 	redisRepo repository.RedisRepository
+	sshConfig *ssh.Config
 }
 
 // NewUserService 创建用户服务
-func NewUserService(userRepo repository.UserRepository, redisRepo repository.RedisRepository) UserService {
+func NewUserService(userRepo repository.UserRepository, redisRepo repository.RedisRepository, sshConfig *ssh.Config) UserService {
 	return &userService{
 		userRepo:  userRepo,
 		redisRepo: redisRepo,
+		sshConfig: sshConfig,
 	}
 }
 
@@ -71,6 +78,7 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
+	log.Println(pwd)
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -91,6 +99,57 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 	if err := s.userRepo.AssignRoleByName(user.ID, "user"); err != nil {
 		return err
 	}
+
+	// 在VM中创建用户
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+		go func() {
+			if err := s.createVMUser(req.Username, pwd); err != nil {
+				logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
+			} else {
+				logger.Info("VM用户创建成功", zap.String("username", req.Username))
+			}
+		}()
+	}
+
+	return nil
+}
+
+// createVMUser 在虚拟机中创建用户
+func (s *userService) createVMUser(username, password string) error {
+	config := &server.Config{
+		Host:     s.sshConfig.ServerHost,
+		Username: s.sshConfig.RootUsername,
+		Password: s.sshConfig.RootPassword,
+		Timeout:  s.sshConfig.Timeout,
+	}
+
+	client, err := server.NewClient(config)
+	if err != nil {
+		return fmt.Errorf("connect to vm failed: %w", err)
+	}
+	defer client.Close()
+
+	// 1. Check if user exists
+	checkCmd := fmt.Sprintf("id -u %s", username)
+	if _, err := client.ExecuteCommand(checkCmd); err == nil {
+		logger.Warn("user already exists in VM", zap.String("username", username))
+		return nil
+	}
+
+	// 2. Create user
+	createCmd := fmt.Sprintf("useradd -m -s /bin/bash %s", username)
+	if out, err := client.ExecuteCommand(createCmd); err != nil {
+		return fmt.Errorf("useradd failed: %s, error: %w", out, err)
+	}
+
+	// 3. Set password
+	// Escape single quotes in password for shell safety
+	safePassword := strings.ReplaceAll(password, "'", "'\\''")
+	passCmd := fmt.Sprintf("echo '%s:%s' | chpasswd", username, safePassword)
+	if out, err := client.ExecuteCommand(passCmd); err != nil {
+		return fmt.Errorf("chpasswd failed: %s, error: %w", out, err)
+	}
+
 	return nil
 }
 
@@ -168,8 +227,47 @@ func (s *userService) ChangePassword(id int, req *request.ChangePasswordRequest)
 		return err
 	}
 
+	// 1. 同步修改虚拟机密码 (方案A：先修改VM，失败则终止)
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+		if err := s.updateVMPassword(user.Username, newPwd); err != nil {
+			logger.Error("Failed to update VM password during ChangePassword", zap.String("username", user.Username), zap.Error(err))
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "同步虚拟机密码失败，请稍后重试", err)
+		}
+	}
+
+	// 2. 修改数据库密码
 	user.Password = string(hashedPassword)
-	return s.userRepo.Update(user)
+	if err := s.userRepo.Update(user); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// updateVMPassword 修改虚拟机中的用户密码
+func (s *userService) updateVMPassword(username, password string) error {
+	config := &server.Config{
+		Host:     s.sshConfig.ServerHost,
+		Username: s.sshConfig.RootUsername,
+		Password: s.sshConfig.RootPassword,
+		Timeout:  s.sshConfig.Timeout,
+	}
+
+	client, err := server.NewClient(config)
+	if err != nil {
+		return fmt.Errorf("connect to vm failed: %w", err)
+	}
+	defer client.Close()
+
+	// Set password
+	// Escape single quotes in password for shell safety
+	safePassword := strings.ReplaceAll(password, "'", "'\\''")
+	passCmd := fmt.Sprintf("echo '%s:%s' | chpasswd", username, safePassword)
+	if out, err := client.ExecuteCommand(passCmd); err != nil {
+		return fmt.Errorf("chpasswd failed: %s, error: %w", out, err)
+	}
+
+	return nil
 }
 
 // ResetPassword 重置密码

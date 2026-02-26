@@ -134,7 +134,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		sshClient, err = s.verifySSHCredentials(sshUser, sshPassword, isRoot)
 		if err != nil && s.sshServerHost != "" {
 			// 如果配置了SSH服务器但验证失败，拒绝登录
-			logger.Error("SSH验证失败，拒绝登录",
+			logger.Info("SSH验证失败，拒绝登录",
 				zap.String("username", sshUser),
 				zap.Error(err),
 			)

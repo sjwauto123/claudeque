@@ -3,15 +3,12 @@ package utils
 import (
 	"cloudque/pkg/config"
 	bizerrors "cloudque/pkg/errors"
-	"cloudque/pkg/logger"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/md5"
 	"encoding/base64"
 	"os"
 	"strings"
-
-	"go.uber.org/zap"
 )
 
 func DecryptCryptoJSPassphrase(cipherBase64, passphrase string) (string, error) {
@@ -81,7 +78,6 @@ func DecryptIfCryptoJS(s string) string {
 	}
 	p, err := DecryptCryptoJSPassphrase(s, passphrase)
 	if err != nil {
-		logger.Error("DecryptIfCryptoJS failed", zap.Error(err), zap.String("input", s))
 		return s
 	}
 	return p

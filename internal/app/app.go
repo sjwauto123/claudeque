@@ -86,7 +86,7 @@ func (a *App) Initialize() error {
 
 // initConfig 加载配置
 func (a *App) initConfig() error {
-	cfg, err := config.Load("./config.yaml")
+	cfg, err := config.Load("")
 	if err != nil {
 		return fmt.Errorf("加载配置失败: %w", err)
 	}
@@ -230,7 +230,7 @@ func (a *App) initDependencies() {
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
-	userSvc := service.NewUserService(userRepo, redisRepo)
+	userSvc := service.NewUserService(userRepo, redisRepo, sshConfig)
 	roleSvc := service.NewRoleService(roleRepo)
 	apiSvc := service.NewAPIService(apiRepo)
 	menuSvc := service.NewMenuService(menuRepo)
