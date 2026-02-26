@@ -132,7 +132,7 @@ func (r *userRepository) ReplaceRolesByNames(userID int, names []string) error {
 		return r.db.Model(&user).Association("Roles").Clear()
 	}
 	var roles []entity.Role
-	if err := r.db.Where("name IN ?", names).Find(&roles).Error; err != nil {
+	if err := r.db.Where("slug IN ?", names).Find(&roles).Error; err != nil {
 		return err
 	}
 	return r.db.Model(&user).Association("Roles").Replace(&roles)
