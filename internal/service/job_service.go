@@ -10,7 +10,9 @@ import (
 	"cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
+	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
+	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -58,6 +60,14 @@ func (s *jobService) GetWaitJobList(req request.JobListRequest, startTime time.T
 
 // SubmitJob 提交任务
 func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error) {
+	// 检查文件路径是否存在
+	if _, err := os.Stat(req.FilePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil, errors.New(errors.CodeFileNotFound, "任务文件不存在: "+req.FilePath)
+		}
+		return nil, fmt.Errorf("检查任务文件失败: %w", err)
+	}
+
 	// 获取用户优先级
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
@@ -114,17 +124,17 @@ func (s *jobService) CancelJob(ctx context.Context, jobID int, userID int) error
 		return fmt.Errorf("获取任务失败: %w", err)
 	}
 	if job == nil {
-		return fmt.Errorf("任务不存在")
+		return errors.New(errors.CodeJobNotFound, "任务不存在")
 	}
 
 	// 验证权限
 	if job.UserId != userID {
-		return fmt.Errorf("无权取消此任务")
+		return errors.New(errors.CodeForbidden, "无权取消此任务")
 	}
 
 	// 只有排队中或等待显卡的任务可以取消
 	if job.Status != entity.JobStatusQueued && job.Status != entity.JobStatusWaitingGpu {
-		return fmt.Errorf("任务状态不允许取消")
+		return errors.New(errors.CodeJobCannotCancel, "任务状态不允许取消")
 	}
 
 	// 从队列中移除
