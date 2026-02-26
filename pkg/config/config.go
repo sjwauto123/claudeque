@@ -87,6 +87,7 @@ type CORSConfig struct {
 type ServerConfig struct {
 	Host           string        `mapstructure:"host"`            // 服务器地址，如 "192.168.1.100:22"
 	RootUsername   string        `mapstructure:"root_username"`   // 管理员SSH用户名（默认root）
+	RootPassword   string        `mapstructure:"root_password"`   // 管理员SSH密码
 	BasePath       string        `mapstructure:"base_path"`       // 服务器上的基础文件路径
 	Timeout        time.Duration `mapstructure:"timeout"`         // 连接超时
 	SessionTimeout time.Duration `mapstructure:"session_timeout"` // 会话超时时间，0表示永不超时

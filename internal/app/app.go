@@ -200,6 +200,7 @@ func (a *App) initDependencies() {
 		sshConfig = &ssh.Config{
 			ServerHost:     a.cfg.Server.Host,
 			RootUsername:   a.cfg.Server.RootUsername,
+			RootPassword:   a.cfg.Server.RootPassword,
 			Timeout:        a.cfg.Server.Timeout,
 			SessionTimeout: a.cfg.Server.SessionTimeout,
 		}
@@ -227,7 +228,7 @@ func (a *App) initDependencies() {
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
-	userSvc := service.NewUserService(userRepo, redisRepo)
+	userSvc := service.NewUserService(userRepo, redisRepo, sshConfig)
 	roleSvc := service.NewRoleService(roleRepo)
 	apiSvc := service.NewAPIService(apiRepo)
 	menuSvc := service.NewMenuService(menuRepo)
