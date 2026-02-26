@@ -59,6 +59,7 @@ cors:
 server:
   host: "38.135.24.184:1211"
   root_username: "root"
+  root_password: "20041211wzwaicjW."
   base_path: "/data/users"
   timeout: "30s"
   session_timeout: "24h"
