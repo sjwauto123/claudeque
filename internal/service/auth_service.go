@@ -12,6 +12,7 @@ import (
 	"cloudque/pkg/logger"
 	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
+	"cloudque/pkg/utils"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -107,6 +108,8 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		return nil, bizerrors.ErrUserDisabled
 	}
 
+	pwd := utils.DecryptIfCryptoJS(req.Password)
+
 	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
 	// 判断用户是否拥有SSH root权限
 	isRoot := s.userHasPermission(user, PermissionRootSSH)
@@ -120,7 +123,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		}
 
 		// 确定用于SSH连接的密码
-		sshPassword := req.Password
+		sshPassword := pwd
 		if isRoot && s.sessionManager.Cfg.RootPassword != "" {
 			sshPassword = s.sessionManager.Cfg.RootPassword
 		}
@@ -145,10 +148,10 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	// 验证数据库密码 (如果SSH验证通过，则跳过DB密码验证并同步密码；否则必须验证DB密码)
 	if sshClient != nil {
 		// SSH验证通过，同步密码到数据库（如果不同）
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err == nil {
 			// 我们直接更新密码，或者先检查是否匹配
-			if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+			if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 				// 密码不匹配，更新为新密码
 				user.Password = string(hashedPassword)
 				if err := s.userRepo.Update(user); err != nil {
@@ -160,13 +163,13 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		}
 	} else {
 		// 未进行SSH验证（例如未配置SSH Host），必须验证DB密码
-		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 			return nil, bizerrors.ErrInvalidCredentials
 		}
 	}
 
 	// 将用户凭证存入Redis（供终端模块重连使用）
-	if err := s.saveUserCredentialsToRedis(user.ID, req.Username, req.Password); err != nil {
+	if err := s.saveUserCredentialsToRedis(user.ID, req.Username, pwd); err != nil {
 		logger.Warn("存储用户凭证到Redis失败", zap.Error(err))
 	}
 
@@ -188,7 +191,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {
 		// 1. 首先创建普通用户会话（总是创建，用于普通文件操作）
-		normalSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, req.Password, false)
+		normalSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, false)
 		if err != nil {
 			logger.Warn("普通用户SSH会话创建失败",
 				zap.Int("user_id", user.ID),
@@ -207,7 +210,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 		// 2. 如果用户有root权限，额外创建root会话
 		if isRoot {
-			rootSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, req.Password, true)
+			rootSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, true)
 			if err != nil {
 				logger.Warn("Root SSH会话创建失败",
 					zap.Int("user_id", user.ID),

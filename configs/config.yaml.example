@@ -60,8 +60,8 @@ server:
   host: "38.135.24.184:1211"
   root_username: "root"
   root_password: "123456"
-  private_key_path: "/data/users/2144515062@qq.com/id_rsa"
-  base_path: "/data/users"
+  private_key_path: "/data/users/2144515062@qq.com/id_rsa"   #用于root用户连接的私钥地址
+  base_path: "/home"
   timeout: "30s"
   session_timeout: "24h"
   enabled: true
