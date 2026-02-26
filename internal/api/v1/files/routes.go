@@ -12,16 +12,17 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	r := router.Group("/files")
 	r.Use(middleware.Auth())
 	r.Use(middleware.RequirePermission(ctrl.authService))
+	r.Use(middleware.UserOperationLogs(ctrl.userLogService))
 	{
 		// 文件管理 (通过 :mode 参数区分 system/user)
 		fileGroup := r.Group("/:mode")
 		{
-			fileGroup.GET("/list", ctrl.GetFileList)
-			fileGroup.DELETE("/delete", ctrl.DeleteFile)
-			fileGroup.POST("/upload", ctrl.UploadFile)
-			fileGroup.GET("/download", ctrl.DownloadFile)
-			fileGroup.POST("/unzip", ctrl.UnzipFile)
-			fileGroup.GET("/size", ctrl.CalculateSize)
+			fileGroup.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
+			fileGroup.DELETE("/delete", middleware.WithOperation("删除文件"), ctrl.DeleteFile)
+			fileGroup.POST("/upload", middleware.WithOperation("上传文件"), ctrl.UploadFile)
+			fileGroup.GET("/download", middleware.WithOperation("下载文件"), ctrl.DownloadFile)
+			fileGroup.POST("/unzip", middleware.WithOperation("解压文件"), ctrl.UnzipFile)
+			fileGroup.GET("/size", middleware.WithOperation("计算文件大小"), ctrl.CalculateSize)
 		}
 
 	}
@@ -32,8 +33,8 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	userDirGroup.Use(middleware.RequirePermission(ctrl.authService))
 	{
 		// 计算目录磁盘占比和大小
-		userDirGroup.GET("/calculate-usage", ctrl.GetDiskUsage)
+		userDirGroup.GET("/calculate-usage", middleware.WithOperation("计算目录磁盘占比和大小"), ctrl.GetDiskUsage)
 		// 列出 /home 目录下的所有用户目录
-		userDirGroup.GET("/list-home", ctrl.ListHomeDirectories)
+		userDirGroup.GET("/list-home", middleware.WithOperation("列出 /home 目录下的所有用户目录"), ctrl.ListHomeDirectories)
 	}
 }

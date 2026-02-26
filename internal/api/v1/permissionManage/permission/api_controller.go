@@ -13,14 +13,16 @@ import (
 )
 
 type APIController struct {
-	apiService  service.APIService
-	authService service.AuthService
+	apiService     service.APIService
+	authService    service.AuthService
+	userLogService service.UserOperationLogService
 }
 
-func NewAPIController(apiService service.APIService, authService service.AuthService) *APIController {
+func NewAPIController(apiService service.APIService, authService service.AuthService, userLogService service.UserOperationLogService) *APIController {
 	return &APIController{
-		apiService:  apiService,
-		authService: authService,
+		apiService:     apiService,
+		authService:    authService,
+		userLogService: userLogService,
 	}
 }
 

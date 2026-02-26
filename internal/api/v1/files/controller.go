@@ -14,15 +14,17 @@ import (
 
 // Controller 文件控制器
 type Controller struct {
-	fileService service.FileService
-	authService service.AuthService
+	fileService    service.FileService
+	authService    service.AuthService
+	userLogService service.UserOperationLogService
 }
 
 // NewController 创建文件控制器
-func NewController(fileService service.FileService, authService service.AuthService) *Controller {
+func NewController(fileService service.FileService, authService service.AuthService, userLogService service.UserOperationLogService) *Controller {
 	return &Controller{
-		fileService: fileService,
-		authService: authService,
+		fileService:    fileService,
+		authService:    authService,
+		userLogService: userLogService,
 	}
 }
 

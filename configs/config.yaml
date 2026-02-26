@@ -4,7 +4,8 @@ app:
   version: "1.0.0"
   mode: "debug"  # debug, release, test
   port: 8080
-  aes: 1234567890abcdef
+  aes_secret: 1234567890abcdef
+
 
 # 数据库配置
 database:

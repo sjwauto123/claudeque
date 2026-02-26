@@ -112,7 +112,7 @@ func (r *userRepository) ExistsByEmail(email string) (bool, error) {
 // AssignRoleByName 为用户分配指定角色（按名称）
 func (r *userRepository) AssignRoleByName(userID int, name string) error {
 	var role entity.Role
-	if err := r.db.Where("name = ?", name).First(&role).Error; err != nil {
+	if err := r.db.Where("slug = ?", name).First(&role).Error; err != nil {
 		return err
 	}
 	user := entity.User{BaseEntity: entity.BaseEntity{ID: userID}}

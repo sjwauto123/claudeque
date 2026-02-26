@@ -12,9 +12,11 @@ import (
 	"cloudque/pkg/logger"
 	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
+	"cloudque/pkg/utils"
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"sort"
 	"time"
@@ -101,11 +103,13 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	if user == nil {
 		return nil, bizerrors.ErrInvalidCredentials
 	}
-
 	// 检查用户状态是否启用
 	if user.Status != 1 {
 		return nil, bizerrors.ErrUserDisabled
 	}
+	pwd := utils.DecryptIfCryptoJS(req.Password)
+
+	log.Println(pwd)
 
 	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
 	// SSH 拨号验证 - 确保Web账号与系统账号同步
@@ -116,7 +120,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		if s.userHasPermission(user, PermissionRootSSH) {
 			sshUser = s.sessionManager.GetRootUsername()
 		}
-		sshClient, err = s.verifySSHCredentials(sshUser, req.Password)
+		sshClient, err = s.verifySSHCredentials(sshUser, pwd)
 		if err != nil && s.sshServerHost != "" {
 			// 如果配置了SSH服务器但验证失败，拒绝登录
 			logger.Error("SSH验证失败，拒绝登录",
@@ -131,11 +135,11 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	if sshClient != nil {
 		// SSH验证通过，同步密码到数据库（如果不同）
 		// 注意：这里我们信任SSH验证的结果
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err == nil {
 
 			// 我们直接更新密码，或者先检查是否匹配
-			if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+			if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 				// 密码不匹配，更新为新密码
 				user.Password = string(hashedPassword)
 				if err := s.userRepo.Update(user); err != nil {
@@ -148,13 +152,13 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	} else {
 
 		// 未进行SSH验证（例如未配置SSH Host），必须验证DB密码
-		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 			return nil, bizerrors.ErrInvalidCredentials
 		}
 	}
 
 	// 将用户凭证存入Redis（供终端模块重连使用）
-	if err := s.saveUserCredentialsToRedis(user.ID, req.Username, req.Password); err != nil {
+	if err := s.saveUserCredentialsToRedis(user.ID, req.Username, pwd); err != nil {
 		logger.Warn("存储用户凭证到Redis失败", zap.Error(err))
 	}
 

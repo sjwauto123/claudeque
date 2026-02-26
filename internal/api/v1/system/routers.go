@@ -10,5 +10,5 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	router.Use(middleware.Auth())
 	router.Use(middleware.RequirePermission(ctrl.authService))
 	router.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
-	router.GET("/cpuInfo", middleware.WithOperation("获取系统信息"), ctrl.HandleWebSocket)
+	router.GET("", middleware.WithOperation("获取系统信息"), ctrl.HandleWebSocket)
 }
