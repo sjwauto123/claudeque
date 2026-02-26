@@ -17,7 +17,7 @@ type RoleRepository interface {
 	// Create 新建用户
 	Create(role *entity.Role) error
 	// Update 修改用户信息
-	Update(role *entity.Role) error
+	Update(id int, updates map[string]interface{}) error
 	// Delete 删除用户
 	Delete(id int) error
 	// BatchDelete 批量删除用户

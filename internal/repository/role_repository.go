@@ -4,7 +4,6 @@ import (
 	"cloudque/internal/model/entity"
 	"errors"
 	"gorm.io/gorm"
-	"time"
 )
 
 // roleRepository 角色仓储实现
@@ -75,21 +74,9 @@ func (r *roleRepository) Create(role *entity.Role) error {
 	return r.db.Create(role).Error
 }
 
-func (r *roleRepository) Update(role *entity.Role) error {
-	updates := make(map[string]interface{})
-	if role.Name != "" {
-		updates["name"] = role.Name
-	}
-	if role.Slug != "" {
-		updates["slug"] = role.Slug
-	}
-	if role.Status != 0 {
-		updates["status"] = role.Status
-	}
-	updates["updated_at"] = time.Now()
-
+func (r *roleRepository) Update(id int, updates map[string]interface{}) error {
 	return r.db.Model(&entity.Role{}).
-		Where("id = ? AND deleted_at IS NULL", role.ID).
+		Where("id = ? AND deleted_at IS NULL", id).
 		Updates(updates).Error
 }
 

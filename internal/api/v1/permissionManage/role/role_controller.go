@@ -88,7 +88,7 @@ func (ctrl *RoleController) Update(c *gin.Context) {
 		response.BizError(c, err)
 		return
 	}
-	response.Success(c, "成功")
+	response.Success(c, "修改成功")
 }
 func (ctrl *RoleController) Delete(c *gin.Context) {
 	idStr := c.Param("id")

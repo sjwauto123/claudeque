@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/rand"
 	"sort"
 	"time"
@@ -26,7 +25,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const PermissionRootSSH = "cloud:feature:cmd:root" // 定义SSH root权限slug
+const PermissionRootSSH = "cloud:feature:cmd" // 匹配数据库中的最新 slug
 
 // sshCredentials 用于存储用户的SSH凭证
 type sshCredentials struct {
@@ -103,24 +102,39 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	if user == nil {
 		return nil, bizerrors.ErrInvalidCredentials
 	}
+
 	// 检查用户状态是否启用
 	if user.Status != 1 {
 		return nil, bizerrors.ErrUserDisabled
 	}
+
 	pwd := utils.DecryptIfCryptoJS(req.Password)
 
-	log.Println(pwd)
-
 	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
+	// 判断用户是否拥有SSH root权限
+	isRoot := s.userHasPermission(user, PermissionRootSSH)
+
 	// SSH 拨号验证 - 确保Web账号与系统账号同步
 	var sshClient *server.Client
 	if s.sessionManager != nil {
 		sshUser := req.Username
-
-		if s.userHasPermission(user, PermissionRootSSH) {
+		if isRoot {
 			sshUser = s.sessionManager.GetRootUsername()
 		}
-		sshClient, err = s.verifySSHCredentials(sshUser, pwd)
+
+		// 确定用于SSH连接的密码
+		sshPassword := pwd
+		if isRoot && s.sessionManager.Cfg.RootPassword != "" {
+			sshPassword = s.sessionManager.Cfg.RootPassword
+		}
+
+		logger.Info("Attempting SSH verification",
+			zap.String("sshUser", sshUser),
+			zap.String("sshPassword", "********"), // Mask password for security
+			zap.Bool("isRoot", isRoot),
+		)
+
+		sshClient, err = s.verifySSHCredentials(sshUser, sshPassword, isRoot)
 		if err != nil && s.sshServerHost != "" {
 			// 如果配置了SSH服务器但验证失败，拒绝登录
 			logger.Info("SSH验证失败，拒绝登录",
@@ -134,7 +148,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	// 验证数据库密码 (如果SSH验证通过，则跳过DB密码验证并同步密码；否则必须验证DB密码)
 	if sshClient != nil {
 		// SSH验证通过，同步密码到数据库（如果不同）
-		// 注意：这里我们信任SSH验证的结果
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err == nil {
 			// 我们直接更新密码，或者先检查是否匹配
@@ -149,7 +162,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			}
 		}
 	} else {
-
 		// 未进行SSH验证（例如未配置SSH Host），必须验证DB密码
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 			return nil, bizerrors.ErrInvalidCredentials
@@ -178,46 +190,40 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {
+		// 1. 首先创建普通用户会话（总是创建，用于普通文件操作）
+		normalSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, false)
+		if err != nil {
+			logger.Warn("普通用户SSH会话创建失败",
+				zap.Int("user_id", user.ID),
+				zap.String("username", req.Username),
+				zap.Error(err),
+			)
+		} else {
+			if s.sessionRepo != nil {
+				_ = s.sessionRepo.SaveSession(user.ID, normalSession.GetUsername(), false, normalSession.CreatedAt)
+			}
+			logger.Info("普通用户SSH会话已就绪",
+				zap.Int("user_id", user.ID),
+				zap.String("username", req.Username),
+			)
+		}
 
-		// 判断用户是否拥有SSH root权限：拥有则使用root账号，否则使用自己的账号
-		isRoot := s.userHasPermission(user, PermissionRootSSH)
-
-		// 如果已经通过SSH验证创建了客户端，复用；否则重新创建
-		if sshClient == nil {
-			session, err := s.sessionManager.CreateSession(user.ID, user.Username, req.Password, isRoot)
+		// 2. 如果用户有root权限，额外创建root会话
+		if isRoot {
+			rootSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, true)
 			if err != nil {
-				logger.Warn("SSH会话创建失败，文件功能将受限",
+				logger.Warn("Root SSH会话创建失败",
 					zap.Int("user_id", user.ID),
-					zap.String("username", user.Username),
-					zap.Bool("is_root", isRoot),
 					zap.Error(err),
 				)
 			} else {
-				// 保存会话元数据到仓库
 				if s.sessionRepo != nil {
-					_ = s.sessionRepo.SaveSession(user.ID, session.GetUsername(), session.IsRoot(), session.CreatedAt)
+					_ = s.sessionRepo.SaveSession(user.ID, rootSession.GetUsername(), true, rootSession.CreatedAt)
 				}
-			}
-		} else {
-			// 使用已验证的SSH客户端创建会话
-			session := &ssh.UserSession{
-				Client:     sshClient,
-				UserID:     user.ID,
-				Username:   req.Username,
-				CreatedAt:  time.Now(),
-				LastUsedAt: time.Now(),
-				IsRootUser: isRoot,
-			}
-			// 将session添加到SessionManager中
-			s.sessionManager.AddSession(user.ID, session)
-			logger.Info("SSH会话已创建（复用验证连接）",
-				zap.Int("user_id", user.ID),
-				zap.String("username", req.Username),
-				zap.Bool("is_root", isRoot),
-			)
-			// 保存会话元数据到仓库
-			if s.sessionRepo != nil {
-				_ = s.sessionRepo.SaveSession(user.ID, session.GetUsername(), session.IsRoot(), session.CreatedAt)
+				logger.Info("Root SSH会话已就绪",
+					zap.Int("user_id", user.ID),
+					zap.String("username", rootSession.GetUsername()),
+				)
 			}
 		}
 	}
@@ -341,10 +347,10 @@ func (s *authService) EnsureSSHSession(userID int) error {
 	// 获取用户信息（需要角色）
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return fmt.Errorf("获取用户信息失败: %v", err)
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取用户信息失败", err)
 	}
 	if user == nil {
-		return fmt.Errorf("用户不存在")
+		return bizerrors.ErrUserNotFound
 	}
 
 	isRoot := s.userHasPermission(user, PermissionRootSSH)
@@ -354,33 +360,43 @@ func (s *authService) EnsureSSHSession(userID int) error {
 // EnsureSSHSessionByType 确保特定身份的SSH会话存在
 func (s *authService) EnsureSSHSessionByType(userID int, isRoot bool) error {
 	if s.sessionManager == nil {
-		return fmt.Errorf("SSH会话管理器未配置")
+		return bizerrors.New(bizerrors.CodeInternalError, "SSH会话管理器未配置")
 	}
 
-	// 1. 检查会话是否已存在
+	// 1. 检查会话是否已存在且有效
 	if s.sessionManager.HasSession(userID, isRoot) {
-		return nil
+		// 额外验证会话是否仍然有效（可选，如果GetOrCreateSession内部已验证可跳过）
+		session, err := s.sessionManager.GetSession(userID, isRoot)
+		if err == nil && session != nil {
+			// 简单验证：尝试获取SFTP客户端
+			if sftpClient := session.Client.GetSFTPClient(); sftpClient != nil {
+				return nil // 会话有效
+			}
+		}
+		// 会话无效，删除后重新创建
+		_ = s.sessionManager.DeleteSession(userID, isRoot)
 	}
 
 	// 2. 获取用户凭证
 	creds, err := s.GetUserCredentialsFromRedis(userID)
 	if err != nil {
-		return fmt.Errorf("无法恢复SSH会话，请重新登录: %v", err)
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "无法恢复SSH会话，请重新登录", err)
 	}
 
-	// 3. 获取用户信息
+	// 3. 获取用户信息以确定用户名
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return fmt.Errorf("获取用户信息失败: %v", err)
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取用户信息失败", err)
 	}
 	if user == nil {
-		return fmt.Errorf("用户不存在")
+		return bizerrors.ErrUserNotFound
 	}
 
-	// 4. 创建SSH会话
-	session, err := s.sessionManager.CreateSession(user.ID, user.Username, creds.Password, isRoot)
+	// 4. 使用 GetOrCreateSession 创建或恢复会话
+	// 注意：这里使用Redis中保存的原始用户名和密码
+	session, err := s.sessionManager.GetOrCreateSession(userID, creds.Username, creds.Password, isRoot)
 	if err != nil {
-		return fmt.Errorf("创建SSH会话失败: %v", err)
+		return bizerrors.NewWithErr(bizerrors.CodeSSHCommandExecutionFailed, "创建SSH会话失败", err)
 	}
 
 	// 5. 保存会话元数据
@@ -390,7 +406,7 @@ func (s *authService) EnsureSSHSessionByType(userID int, isRoot bool) error {
 
 	logger.Info("SSH会话已恢复",
 		zap.Int("user_id", userID),
-		zap.String("username", user.Username),
+		zap.String("username", session.GetUsername()),
 		zap.Bool("is_root", isRoot),
 	)
 
@@ -433,9 +449,9 @@ func (s *authService) RefreshToken(token string) (string, error) {
 }
 
 // verifySSHCredentials 验证SSH凭据
-func (s *authService) verifySSHCredentials(username, password string) (*server.Client, error) {
+func (s *authService) verifySSHCredentials(username, password string, isRoot bool) (*server.Client, error) {
 	if s.sshServerHost == "" {
-		return nil, fmt.Errorf("SSH服务器地址未配置")
+		return nil, bizerrors.New(bizerrors.CodeInternalError, "SSH服务器地址未配置")
 	}
 
 	sshConfig := &server.Config{
@@ -444,10 +460,15 @@ func (s *authService) verifySSHCredentials(username, password string) (*server.C
 		Password: password,
 		Timeout:  s.sessionManager.GetTimeout(),
 	}
+	// 只有当是root用户时，才添加私钥路径和私钥密码
+	if isRoot {
+		sshConfig.PrivateKeyPath = s.sessionManager.Cfg.PrivateKeyPath
+		sshConfig.PrivateKeyPassphrase = s.sessionManager.Cfg.PrivateKeyPassphrase
+	}
 
 	client, err := server.NewClient(sshConfig)
 	if err != nil {
-		return nil, fmt.Errorf("SSH凭据验证失败: %w", err)
+		return nil, bizerrors.NewWithErr(403, "SSH凭据验证失败", err)
 	}
 	return client, nil
 }
@@ -460,7 +481,7 @@ func (s *authService) saveUserCredentialsToRedis(userID int, username, password 
 	}
 	credsJSON, err := json.Marshal(creds)
 	if err != nil {
-		return fmt.Errorf("序列化SSH凭证失败: %w", err)
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "序列化SSH凭证失败", err)
 	}
 
 	ctx := context.Background()
@@ -468,7 +489,7 @@ func (s *authService) saveUserCredentialsToRedis(userID int, username, password 
 	// 凭证有效期设置为7天
 	err = s.redisRepo.Set(ctx, key, string(credsJSON), 7*24*time.Hour)
 	if err != nil {
-		return fmt.Errorf("保存SSH凭证到Redis失败: %w", err)
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "保存SSH凭证到Redis失败", err)
 	}
 	return nil
 }
@@ -479,7 +500,7 @@ func (s *authService) GetUserCredentialsFromRedis(userID int) (*sshCredentials, 
 	key := fmt.Sprintf("ssh_creds:%d", userID)
 	credsJSON, err := s.redisRepo.Get(ctx, key)
 	if err != nil {
-		return nil, fmt.Errorf("从Redis获取SSH凭证失败: %w", err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "从Redis获取SSH凭证失败", err)
 	}
 	if credsJSON == "" {
 		return nil, bizerrors.ErrSSHCredentialsNotFound
@@ -488,7 +509,7 @@ func (s *authService) GetUserCredentialsFromRedis(userID int) (*sshCredentials, 
 	var creds sshCredentials
 	err = json.Unmarshal([]byte(credsJSON), &creds)
 	if err != nil {
-		return nil, fmt.Errorf("反序列化SSH凭证失败: %w", err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "反序列化SSH凭证失败", err)
 	}
 	return &creds, nil
 }
@@ -529,6 +550,8 @@ func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, er
 
 	return role.Permissions, nil
 }
+
+// CheckUserPermission 根据权限表里的path来鉴权
 func (s *authService) CheckUserPermission(userID int, method string, path string) (bool, error) {
 	return s.roleRepo.CheckUserPermission(userID, method, path)
 }
@@ -550,14 +573,20 @@ func (s *authService) SetSSHTimeout(timeout time.Duration) {
 	}
 }
 
-// HasSystemAccess 检查用户是否拥有系统级权限
+// HasSystemAccess 检查用户是否拥有系统级权限 (管理员身份)
 func (s *authService) HasSystemAccess(userID int) (bool, error) {
-	user, err := s.userRepo.FindByID(userID)
-	if err != nil {
-		return false, err
+	// 检查是否拥有管理员专属路径的权限 (例如用户管理接口，对应您截图中的 ID 204)
+	// 如果用户能访问管理员接口，则认定其为 RootMode 身份
+	hasAdminPerm, err := s.CheckUserPermission(userID, "GET", "/api/v1/admin/users")
+	if err == nil && hasAdminPerm {
+		return true, nil
 	}
-	if user == nil {
-		return false, bizerrors.ErrUserNotFound
+
+	// 也可以增加对系统管理接口的检查 (对应 ID 210)
+	hasSystemPerm, err := s.CheckUserPermission(userID, "GET", "/api/v1/system")
+	if err == nil && hasSystemPerm {
+		return true, nil
 	}
-	return s.userHasPermission(user, PermissionRootSSH), nil
+
+	return false, nil
 }
