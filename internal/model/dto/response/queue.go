@@ -8,7 +8,7 @@ type QueueJobResponse struct {
 	JobName     string    `json:"job_name"`
 	Description string    `json:"description"`
 	Status      int       `json:"status"`
-	SubmittedAt time.Time `json:"submitted_at"`
+	SubmittedAt time.Time `json:"submittedAt"`
 	WaitSeconds int       `json:"wait_seconds"`
 	FrontCount  int       `json:"front_count"`
 }

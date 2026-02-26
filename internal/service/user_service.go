@@ -227,8 +227,47 @@ func (s *userService) ChangePassword(id int, req *request.ChangePasswordRequest)
 		return err
 	}
 
+	// 1. 同步修改虚拟机密码 (方案A：先修改VM，失败则终止)
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+		if err := s.updateVMPassword(user.Username, newPwd); err != nil {
+			logger.Error("Failed to update VM password during ChangePassword", zap.String("username", user.Username), zap.Error(err))
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "同步虚拟机密码失败，请稍后重试", err)
+		}
+	}
+
+	// 2. 修改数据库密码
 	user.Password = string(hashedPassword)
-	return s.userRepo.Update(user)
+	if err := s.userRepo.Update(user); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// updateVMPassword 修改虚拟机中的用户密码
+func (s *userService) updateVMPassword(username, password string) error {
+	config := &server.Config{
+		Host:     s.sshConfig.ServerHost,
+		Username: s.sshConfig.RootUsername,
+		Password: s.sshConfig.RootPassword,
+		Timeout:  s.sshConfig.Timeout,
+	}
+
+	client, err := server.NewClient(config)
+	if err != nil {
+		return fmt.Errorf("connect to vm failed: %w", err)
+	}
+	defer client.Close()
+
+	// Set password
+	// Escape single quotes in password for shell safety
+	safePassword := strings.ReplaceAll(password, "'", "'\\''")
+	passCmd := fmt.Sprintf("echo '%s:%s' | chpasswd", username, safePassword)
+	if out, err := client.ExecuteCommand(passCmd); err != nil {
+		return fmt.Errorf("chpasswd failed: %s, error: %w", out, err)
+	}
+
+	return nil
 }
 
 // ResetPassword 重置密码
@@ -262,6 +301,15 @@ func (s *userService) ResetPassword(req *request.ResetPasswordRequest) error {
 	if err != nil {
 		return err
 	}
+
+	// 3. 同步修改虚拟机密码 (方案A：先修改VM，失败则终止)
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+		if err := s.updateVMPassword(user.Username, newPwd); err != nil {
+			logger.Error("Failed to update VM password during ResetPassword", zap.String("username", user.Username), zap.Error(err))
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "同步虚拟机密码失败，请稍后重试", err)
+		}
+	}
+
 	user.Password = string(hashedPassword)
 
 	// 4. 保存并删除验证码
