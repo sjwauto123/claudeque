@@ -7,6 +7,7 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
 	"strings"
+	"time"
 )
 
 type roleService struct {
@@ -71,22 +72,44 @@ func (s *roleService) Create(req *request.CreateRoleRequest) error {
 }
 
 func (s *roleService) Update(req *request.UpdateRoleRequest) error {
-	role := &entity.Role{
-		BaseEntity: entity.BaseEntity{
-			ID: req.ID,
-		},
-		Name:   req.Name,
-		Slug:   req.Slug,
-		Status: *req.Status,
-	}
-	if req.Status != nil {
-		role.Status = *req.Status
+	updates := make(map[string]interface{})
+	if req.Name != "" {
+		// 👇 通过 repo 校验
+		exists, err := s.roleRepo.ExistsByName(req.Name)
+		if err != nil {
+			return errors.NewWithErr(errors.CodeInternalError, "校验角色名失败", err)
+		}
+		if exists {
+			return errors.New(errors.CodeResourceAlreadyExists, "角色名已存在")
+		}
+		updates["name"] = req.Name
 	}
 
-	if err := s.roleRepo.Update(role); err != nil {
+	if req.Slug != "" {
+		exists, err := s.roleRepo.ExistsBySlug(req.Slug)
+		if err != nil {
+			return errors.NewWithErr(errors.CodeInternalError, "校验角色标识失败", err)
+		}
+		if exists {
+			return errors.New(errors.CodeResourceAlreadyExists, "角色标识已存在")
+		}
+		updates["slug"] = req.Slug
+	}
+
+	//Status: 指针非nil才更新
+	if req.Status != nil {
+		updates["status"] = *req.Status
+	}
+	if len(updates) == 0 {
+		return nil // 没有字段要更新
+	}
+
+	updates["updated_at"] = time.Now()
+	// 调用 repository
+	err := s.roleRepo.Update(req.ID, updates)
+	if err != nil {
 		return errors.NewWithErr(errors.CodeInternalError, "更新角色失败!", err)
 	}
-
 	return nil
 }
 

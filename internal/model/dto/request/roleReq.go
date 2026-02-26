@@ -17,9 +17,9 @@ type CreateRoleRequest struct {
 
 type UpdateRoleRequest struct {
 	ID     int    `json:"id"`
-	Name   string `json:"name" binding:"omitempty,min=2,max=50"`
-	Status *int   `json:"status" binding:"oneof=0 1"`
-	Slug   string `json:"slug" binding:"required"`
+	Name   string `json:"name" binding:"omitempty,max=50"`
+	Status *int   `json:"status" binding:"omitempty,oneof=0 1"`
+	Slug   string `json:"slug" binding:"omitempty"`
 }
 type UpdateRolePermissionRequest struct {
 	MenuIDs       []int `json:"menu_ids" binding:"required"`
