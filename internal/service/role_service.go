@@ -167,14 +167,20 @@ func (s *roleService) BatchDelete(ids []int) error {
 //		return roots, nil
 //	}
 func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionResponse, error) {
-
 	menus, permissions, roleMenuMap, rolePermMap, err :=
 		s.roleRepo.GetRolePermissionByID(roleID)
 	if err != nil {
 		return nil, err
 	}
+
 	menuTree := s.buildMenuTree(menus, roleMenuMap)
-	apiGroups := s.buildApiPermissions(permissions, rolePermMap)
+
+	// 👇 新增：提取 category 顺序
+	categoryOrder := s.extractCategoryOrder(menuTree)
+
+	// 👇 修改：传入 categoryOrder
+	apiGroups := s.buildApiPermissions(permissions, rolePermMap, categoryOrder)
+
 	return &dto.RolePermissionResponse{
 		Menu: menuTree,
 		Api:  apiGroups,
@@ -205,7 +211,11 @@ func (s *roleService) buildMenuTree(menus []entity.Menu, roleMenuMap map[int]boo
 }
 
 // 构建权限api树
-func (s *roleService) buildApiPermissions(perms []entity.Permission, rolePermMap map[int]bool) []*dto.ApiPermissionGroupRes {
+func (s *roleService) buildApiPermissions(
+	perms []entity.Permission,
+	rolePermMap map[int]bool,
+	categoryOrder []string,
+) []*dto.ApiPermissionGroupRes {
 
 	groupMap := make(map[string][]*dto.ApiPermissionRes)
 
@@ -218,10 +228,29 @@ func (s *roleService) buildApiPermissions(perms []entity.Permission, rolePermMap
 		})
 	}
 
-	var res []*dto.ApiPermissionGroupRes
-	for category, list := range groupMap {
+	// 构建 category -> index 映射
+	orderMap := make(map[string]int)
+	for i, cat := range categoryOrder {
+		orderMap[cat] = i
+	}
+
+	// 按 categoryOrder 的顺序构建结果
+	res := make([]*dto.ApiPermissionGroupRes, 0, len(groupMap))
+
+	for _, cat := range categoryOrder {
+		if list, exists := groupMap[cat]; exists {
+			res = append(res, &dto.ApiPermissionGroupRes{
+				Category: cat,
+				List:     list,
+			})
+			delete(groupMap, cat) // 避免重复
+		}
+	}
+
+	// 处理不在菜单中的 category
+	for cat, list := range groupMap {
 		res = append(res, &dto.ApiPermissionGroupRes{
-			Category: category,
+			Category: cat,
 			List:     list,
 		})
 	}
@@ -231,4 +260,21 @@ func (s *roleService) buildApiPermissions(perms []entity.Permission, rolePermMap
 
 func (s *roleService) UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error {
 	return s.roleRepo.UpdateRolePermission(roleID, req.MenuIDs, req.PermissionIDs)
+}
+
+// extractCategoryOrder 从菜单树中提取所有叶子节点的 Title（即 category 顺序）
+func (s *roleService) extractCategoryOrder(menuTree []*dto.MenuNodeResponse) []string {
+	var order []string
+	for _, node := range menuTree {
+		if len(node.Children) == 0 {
+			// 一级叶子菜单
+			order = append(order, node.Title)
+		} else {
+			// 有子菜单，遍历子菜单作为 category
+			for _, child := range node.Children {
+				order = append(order, child.Title)
+			}
+		}
+	}
+	return order
 }
