@@ -116,7 +116,7 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 
 	userID := middleware.GetUserID(c)
 	if err := ctrl.jobService.CancelJob(c.Request.Context(), jobID, userID); err != nil {
-		response.BizError(c, err)
+		response.Error(c, 4001, err.Error())
 		return
 	}
 
