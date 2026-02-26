@@ -157,7 +157,7 @@ func (r *jobRepository) GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJ
 			j.created_at AS submitted_at,
 			u.username AS user_name
 		`).
-		Joins("LEFT JOIN users u ON u.id = j.user_id").
+		Joins("LEFT JOIN admin_users u ON u.id = j.user_id").
 		Where("j.id IN ?", jobIDs).
 		Scan(&rows).Error
 
@@ -188,7 +188,7 @@ func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request
 			j.created_at AS submitted_at,
 			u.username AS user_name
 		`).
-		Joins("LEFT JOIN users u ON u.id = j.user_id").
+		Joins("LEFT JOIN admin_users u ON u.id = j.user_id").
 		Where("j.id IN ?", orderedJobIDs)
 	// 只查排队的和等待显卡的
 	baseDB = baseDB.Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
