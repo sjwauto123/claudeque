@@ -4,15 +4,20 @@ import (
 	"bytes"
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
+	"cloudque/pkg/config"
 	"cloudque/pkg/errors"
+	"cloudque/pkg/logger"
 	"cloudque/pkg/ssh"
 	"fmt"
 	"io"
 	"mime/multipart"
-	"path/filepath"
+	"os"
+	"path"
 	"sort"
 	"strconv"
 	"strings"
+
+	"go.uber.org/zap"
 
 	"github.com/pkg/sftp"
 	xssh "golang.org/x/crypto/ssh"
@@ -45,15 +50,18 @@ func NewFileService(sessionManager *ssh.SessionManager) FileService {
 // getSftpClient 获取用户的SFTP客户端
 func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, error) {
 	if s.sessionManager == nil {
+		logger.Errorf("SSH会话管理器未初始化: userID=%d", userID)
 		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
 	}
 
 	session, err := s.sessionManager.GetSession(userID, isRoot)
 	if err != nil {
+		logger.Errorf("获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
 	}
 
 	if session.Client == nil {
+		logger.Errorf("SSH客户端未连接: userID=%d", userID)
 		return nil, errors.New(errors.CodeInternalError, "SSH客户端未连接")
 	}
 
@@ -63,10 +71,12 @@ func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, erro
 // getSSHClient 获取用户的SSH客户端
 func (s *fileService) getSSHClient(userID int, isRoot bool) (*xssh.Client, error) {
 	if s.sessionManager == nil {
+		logger.Errorf("SSH会话管理器未初始化: userID=%d", userID)
 		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
 	}
 	session, err := s.sessionManager.GetSession(userID, isRoot)
 	if err != nil {
+		logger.Errorf("获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
 	}
 	return session.Client.GetSSHClient(), nil
@@ -76,17 +86,19 @@ func (s *fileService) getSSHClient(userID int, isRoot bool) (*xssh.Client, error
 func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (string, error) {
 	client, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
+		logger.Errorf("获取SSH客户端失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		return "", err
 	}
 
 	session, err := client.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("创建SSH会话失败: %v", err)
+		logger.Errorf("创建SSH会话失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
+		return "", errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "创建SSH会话失败", err)
 	}
 	defer func(session *xssh.Session) {
 		err := session.Close()
 		if err != nil {
-
+			logger.Errorf("关闭SSH会话失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
 		}
 	}(session)
 
@@ -95,47 +107,76 @@ func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (st
 	session.Stderr = &stderr
 
 	if err := session.Run(cmd); err != nil {
-		return "", fmt.Errorf("执行命令失败: %s, 错误: %v", stderr.String(), err)
+		logger.Errorf("执行命令失败: userID=%d, cmd=%s, stderr=%s, err=%v", userID, cmd, stderr.String(), err)
+		return "", errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("执行命令失败: %s", stderr.String()), err)
 	}
 
 	return stdout.String(), nil
 }
 
 // resolvePath 解析路径并应用权限隔离
-func (s *fileService) resolvePath(userID int, path string, isRootMode bool) (string, error) {
+func (s *fileService) resolvePath(userID int, p string, isRootMode bool) (string, error) {
 	session, err := s.sessionManager.GetSession(userID, isRootMode)
 	if err != nil {
+		logger.Errorf("获取SSH会话失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
 		return "", err
 	}
 	//
 	//管理员模式:只需要处理为空的情况，不需要验证路径直接返回
 	if isRootMode {
 		//防止所传path为空的情况
-		if path == "" || path == "." {
+		if p == "" || p == "." {
 			return "/", nil
 		}
-		return path, nil
+		return p, nil
 	}
 
-	// 用户模式：限制在 /home/{username}
-	homeDir := "/home/" + session.Username
+	// 用户模式：限制在 base_path/{username}
+	basePath := config.Get().Server.BasePath
+	if basePath == "" {
+		basePath = "/home"
+	}
+	homeDir := path.Join(basePath, session.Username)
+
+	// 检查并创建用户主目录，如果不存在
+	sftpClient := session.Client.GetSFTPClient()
+	_, err = sftpClient.Stat(homeDir)
+	if err != nil && os.IsNotExist(err) {
+		logger.Infof("用户主目录不存在，尝试创建: userID=%d, homeDir=%s", userID, homeDir)
+		if err = session.Client.MkdirAll(homeDir); err != nil {
+			logger.Errorf("创建用户主目录失败: userID=%d, homeDir=%s, err=%v", userID, homeDir, err)
+			return "", errors.NewWithErr(errors.CodeInternalError, "创建用户主目录失败", err)
+		}
+		logger.Infof("用户主目录创建成功: userID=%d, homeDir=%s", userID, homeDir)
+	} else if err != nil {
+		logger.Errorf("检查用户主目录状态失败: userID=%d, homeDir=%s, err=%v", userID, homeDir, err)
+		return "", errors.NewWithErr(errors.CodeInternalError, "检查用户主目录状态失败", err)
+	}
+
 	//防止所传path为空的情况
-	if path == "" || path == "." || path == "/" {
+	if p == "" || p == "." || p == "/" {
 		return homeDir, nil
 	}
 
 	// 如果路径已经是绝对路径且不在家目录下，或者包含 .. 试图越权，则纠正或拒绝
 	//先进行标准化处理，再判断是否满足条件
-	cleanPath := filepath.Clean(path)
-	if strings.HasPrefix(cleanPath, homeDir) {
-		return cleanPath, nil
+	cleanPath := path.Clean(p)
+	if path.IsAbs(cleanPath) {
+		if strings.HasPrefix(cleanPath, homeDir) {
+			return cleanPath, nil
+		}
+		// 如果是绝对路径但不以 homeDir 开头，则重新拼接到 homeDir 下
+		// 去掉前导斜杠
+		relPath := strings.TrimPrefix(cleanPath, "/")
+		return path.Join(homeDir, relPath), nil
 	}
 
 	// 拼接到家目录下
-	finalPath := filepath.ToSlash(filepath.Join(homeDir, path))
+	finalPath := path.Join(homeDir, cleanPath)
 	//二次确认
 	if !strings.HasPrefix(finalPath, homeDir) {
-		return "", fmt.Errorf("越权访问被拒绝")
+		logger.Errorf("越权访问被拒绝: userID=%d, path=%s, finalPath=%s", userID, p, finalPath)
+		return "", errors.New(errors.CodeForbidden, "越权访问被拒绝")
 	}
 
 	return finalPath, nil
@@ -145,9 +186,15 @@ func (s *fileService) resolvePath(userID int, path string, isRootMode bool) (str
 func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error) {
 	opUserID := userID
 
+	logger.Info("GetFileList 被调用",
+		zap.Int("user_id", userID),
+		zap.Bool("isRootMode", isRootMode),
+		zap.String("path", req.Path),
+	)
 	//启动对应的ftpclient
 	client, err := s.getSftpClient(opUserID, isRootMode)
 	if err != nil {
+		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", opUserID, isRootMode, err)
 		return nil, err
 	}
 
@@ -159,21 +206,24 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 	}
 
 	//解析出权限正确的路径
-	path, err := s.resolvePath(opUserID, req.Path, isRootMode)
+	resolvedPath, err := s.resolvePath(opUserID, req.Path, isRootMode)
 	if err != nil {
+		logger.Errorf("解析路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", opUserID, req.Path, isRootMode, err)
 		return nil, err
 	}
 
 	//传化为真实可用的路径
-	realPath, err := client.RealPath(path)
+	realPath, err := client.RealPath(resolvedPath)
 	if err != nil {
-		return nil, fmt.Errorf("无法解析路径: %v", err)
+		logger.Errorf("无法解析真实路径: userID=%d, path=%s, err=%v", opUserID, resolvedPath, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("无法解析路径: %s", resolvedPath), err)
 	}
 
 	//读取目标目录下的所有文件和目录
 	entries, err := client.ReadDir(realPath)
 	if err != nil {
-		return nil, fmt.Errorf("读取目录失败: %v", err)
+		logger.Errorf("读取目录失败: userID=%d, realPath=%s, err=%v", opUserID, realPath, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("读取目录失败: %s", realPath), err)
 	}
 
 	var dirs []*dto.DirectoryItem
@@ -184,7 +234,9 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 	uidToName := make(map[uint32]string)
 
 	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", isRootMode)
-	if err == nil {
+	if err != nil {
+		logger.Errorf("执行SSH命令获取passwd失败: userID=%d, err=%v", opUserID, err)
+	} else {
 		lines := strings.Split(passwdOut, "\n")
 		for _, line := range lines {
 			parts := strings.Split(line, ":")
@@ -223,7 +275,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 			dirs = append(dirs, &dto.DirectoryItem{
 				Name:      entry.Name(),
 				UpdatedAt: entry.ModTime(),
-				Path:      filepath.ToSlash(filepath.Join(realPath, entry.Name())),
+				Path:      path.Join(realPath, entry.Name()),
 				Owner:     owner,
 			})
 		} else {
@@ -231,7 +283,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 				Filename:  entry.Name(),
 				FileSize:  entry.Size(),
 				UpdatedAt: entry.ModTime(),
-				Path:      filepath.ToSlash(filepath.Join(realPath, entry.Name())),
+				Path:      path.Join(realPath, entry.Name()),
 				Owner:     owner,
 			})
 		}
@@ -299,30 +351,30 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 	}, nil
 }
 
-func buildBreadcrumb(path string) []*dto.BreadcrumbItem {
-	parts := strings.Split(path, "/")
+func buildBreadcrumb(p string) []*dto.BreadcrumbItem {
+	parts := strings.Split(p, "/")
 	var items []*dto.BreadcrumbItem
 
 	// Always add Root for absolute paths
-	if strings.HasPrefix(path, "/") {
+	if strings.HasPrefix(p, "/") {
 		items = append(items, &dto.BreadcrumbItem{Name: "/", Path: "/"})
 	}
 
 	currentPath := ""
-	for _, p := range parts {
-		if p == "" {
+	for _, part := range parts {
+		if part == "" {
 			if currentPath == "" {
 				currentPath = "/"
 			}
 			continue
 		}
 		if currentPath == "/" {
-			currentPath += p
+			currentPath += part
 		} else {
-			currentPath += "/" + p
+			currentPath += "/" + part
 		}
 		items = append(items, &dto.BreadcrumbItem{
-			Name: p,
+			Name: part,
 			Path: currentPath,
 		})
 	}
@@ -333,31 +385,35 @@ func buildBreadcrumb(path string) []*dto.BreadcrumbItem {
 func (s *fileService) UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error) {
 	client, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
+		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
 		return nil, err
 	}
 
-	path, err := s.resolvePath(userID, targetPath, isRootMode)
+	resolvedPath, err := s.resolvePath(userID, targetPath, isRootMode)
 	if err != nil {
+		logger.Errorf("解析目标路径失败: userID=%d, targetPath=%s, isRootMode=%t, err=%v", userID, targetPath, isRootMode, err)
 		return nil, err
 	}
 
 	// Ensure target directory exists
-	_ = client.MkdirAll(path)
+	_ = client.MkdirAll(resolvedPath)
 
-	remotePath := filepath.ToSlash(filepath.Join(path, header.Filename))
+	remotePath := path.Join(resolvedPath, header.Filename)
 	dst, err := client.Create(remotePath)
 	if err != nil {
-		return nil, fmt.Errorf("创建远程文件失败: %v", err)
+		logger.Errorf("创建远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("创建远程文件失败: %s", remotePath), err)
 	}
 	defer func(dst *sftp.File) {
 		err := dst.Close()
 		if err != nil {
-
+			logger.Errorf("关闭远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
 		}
 	}(dst)
 
 	if _, err := io.Copy(dst, file); err != nil {
-		return nil, fmt.Errorf("写入文件失败: %v", err)
+		logger.Errorf("写入文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("写入文件失败: %s", remotePath), err)
 	}
 
 	return &dto.FileUploadData{
@@ -366,29 +422,33 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 }
 
 // DownloadFile 下载文件
-func (s *fileService) DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, error) {
+func (s *fileService) DownloadFile(userID int, p string, isRootMode bool) (io.ReadCloser, string, error) {
 	client, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
+		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
 		return nil, "", err
 	}
 
-	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
+		logger.Errorf("解析下载路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, p, isRootMode, err)
 		return nil, "", err
 	}
 
 	f, err := client.Open(resolvedPath)
 	if err != nil {
-		return nil, "", fmt.Errorf("打开文件失败: %v", err)
+		logger.Errorf("打开文件失败: userID=%d, resolvedPath=%s, err=%v", userID, resolvedPath, err)
+		return nil, "", errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("打开文件失败: %s", resolvedPath), err)
 	}
 
-	return f, filepath.Base(resolvedPath), nil
+	return f, path.Base(resolvedPath), nil
 }
 
 // DeleteFile 删除文件或目录
-func (s *fileService) DeleteFile(userID int, path string, isRootMode bool) error {
-	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+func (s *fileService) DeleteFile(userID int, p string, isRootMode bool) error {
+	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
+		logger.Errorf("解析删除路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, p, isRootMode, err)
 		return err
 	}
 
@@ -397,17 +457,23 @@ func (s *fileService) DeleteFile(userID int, path string, isRootMode bool) error
 	cmd := fmt.Sprintf("rm -rf %s", safePath)
 
 	_, err = s.executeSSHCommand(userID, cmd, isRootMode)
-	return err
+	if err != nil {
+		logger.Errorf("执行删除命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
+		return err
+	}
+	return nil
 }
 
 // UnzipFile 解压文件
 func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error {
 	resolvedPath, err := s.resolvePath(userID, req.Path, isRootMode)
 	if err != nil {
+		logger.Errorf("解析解压源路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, req.Path, isRootMode, err)
 		return err
 	}
 	resolvedTarget, err := s.resolvePath(userID, req.TargetPath, isRootMode)
 	if err != nil {
+		logger.Errorf("解析解压目标路径失败: userID=%d, targetPath=%s, isRootMode=%t, err=%v", userID, req.TargetPath, isRootMode, err)
 		return err
 	}
 
@@ -416,13 +482,18 @@ func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMod
 
 	cmd := fmt.Sprintf("unzip -o %s -d %s", safePath, safeTarget)
 	_, err = s.executeSSHCommand(userID, cmd, isRootMode)
-	return err
+	if err != nil {
+		logger.Errorf("执行解压命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
+		return err
+	}
+	return nil
 }
 
 // GetDiskUsage 计算目录大小
-func (s *fileService) GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error) {
-	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.DiskUsageData, error) {
+	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
+		logger.Errorf("解析磁盘使用路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, p, isRootMode, err)
 		return nil, err
 	}
 
@@ -431,16 +502,30 @@ func (s *fileService) GetDiskUsage(userID int, path string, isRootMode bool) (*d
 
 	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
+		logger.Errorf("执行du命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
 		return nil, err
 	}
 
 	sizeStr := strings.TrimSpace(output)
-	size, _ := strconv.ParseInt(sizeStr, 10, 64)
+	size, parseErr := strconv.ParseInt(sizeStr, 10, 64)
+	if parseErr != nil {
+		logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, parseErr)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小失败: %s", sizeStr), parseErr)
+	}
 
 	// Get filesystem usage percentage
 	cmdUsage := fmt.Sprintf("df --output=pcent %s | tail -1 | tr -dc '0-9'", safePath)
-	outputUsage, _ := s.executeSSHCommand(userID, cmdUsage, isRootMode)
-	usage, _ := strconv.ParseFloat(strings.TrimSpace(outputUsage), 64)
+	outputUsage, err := s.executeSSHCommand(userID, cmdUsage, isRootMode)
+	if err != nil {
+		logger.Errorf("执行df命令失败: userID=%d, cmd=%s, err=%v", userID, cmdUsage, err)
+		// Non-critical error, proceed with 0 usage
+		outputUsage = "0"
+	}
+	usage, parseErr := strconv.ParseFloat(strings.TrimSpace(outputUsage), 64)
+	if parseErr != nil {
+		logger.Errorf("解析磁盘使用百分比失败: userID=%d, outputUsage=%s, err=%v", userID, outputUsage, parseErr)
+		usage = 0
+	}
 
 	return &dto.DiskUsageData{
 		DirectorySize: size,
@@ -449,9 +534,10 @@ func (s *fileService) GetDiskUsage(userID int, path string, isRootMode bool) (*d
 }
 
 // CalculateSize 计算目录或文件大小
-func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error) {
-	resolvedPath, err := s.resolvePath(userID, path, isRootMode)
+func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int64, string, float64, error) {
+	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
+		logger.Errorf("解析计算大小路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, p, isRootMode, err)
 		return 0, "", 0, err
 	}
 
@@ -464,24 +550,28 @@ func (s *fileService) CalculateSize(userID int, path string, isRootMode bool) (i
 	var bytess int64
 
 	if err != nil {
+		logger.Errorf("执行du -sb命令失败，尝试du -sk: userID=%d, cmd=%s, err=%v", userID, cmd, err)
 		// 如果 du -sb 失败，尝试 du -sk (千字节)
 		cmd = fmt.Sprintf("du -sk %s | awk '{print $1}'", quotedPath)
 		out, err = s.executeSSHCommand(userID, cmd, isRootMode)
 		if err != nil {
+			logger.Errorf("执行du -sk命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
 			return 0, "", 0, err
 		}
 		// 转换为字节
 		kbStr := strings.TrimSpace(out)
 		kb, parseErr := strconv.ParseInt(kbStr, 10, 64)
 		if parseErr != nil {
-			return 0, "", 0, fmt.Errorf("解析大小失败: %v", parseErr)
+			logger.Errorf("解析千字节大小失败: userID=%d, kbStr=%s, err=%v", userID, kbStr, parseErr)
+			return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小失败: %s", kbStr), parseErr)
 		}
 		bytess = kb * 1024
 	} else {
 		sizeStr := strings.TrimSpace(out)
 		bytess, err = strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
-			return 0, "", 0, fmt.Errorf("解析大小失败: %v", err)
+			logger.Errorf("解析字节大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, err)
+			return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小失败: %s", sizeStr), err)
 		}
 	}
 
@@ -519,29 +609,32 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 		req.PageSize = 100
 	}
 
-	// 解析路径并限制在 /home 目录下
-	basePath := "/home"
+	// 解析路径并限制在 base_path 目录下
+	basePath := config.Get().Server.BasePath
+	if basePath == "" {
+		basePath = "/home"
+	}
 	var currentPath string
 	if req.Path == "" || req.Path == "." || req.Path == "/" {
 		currentPath = basePath
 	} else {
 		// 拼接并清理路径
-		joinedPath := filepath.Join(basePath, req.Path)
-		cleanPath := filepath.Clean(joinedPath)
+		joinedPath := path.Join(basePath, req.Path)
+		cleanPath := path.Clean(joinedPath)
 
 		// 确保路径没有越权
 		if !strings.HasPrefix(cleanPath, basePath) {
-			return nil, fmt.Errorf("越权访问被拒绝: %s", req.Path)
+			return nil, errors.New(errors.CodeForbidden, fmt.Sprintf("越权访问被拒绝: %s", req.Path))
 		}
 		currentPath = cleanPath
 	}
 
-	realPath := filepath.ToSlash(currentPath)
+	realPath := currentPath
 
 	// 读取目标目录下的所有文件和目录
 	entries, err := client.ReadDir(realPath)
 	if err != nil {
-		return nil, fmt.Errorf("读取目录失败: %v", err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("读取目录失败: %s", realPath), err)
 	}
 
 	var dirs []*dto.DirectoryItem
@@ -589,7 +682,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 			dirs = append(dirs, &dto.DirectoryItem{
 				Name:      entry.Name(),
 				UpdatedAt: entry.ModTime(),
-				Path:      filepath.ToSlash(filepath.Join(realPath, entry.Name())),
+				Path:      path.Join(realPath, entry.Name()),
 				Owner:     owner,
 			})
 		}

@@ -92,8 +92,8 @@ go mod tidy
 
 3. 配置数据库
 ```bash
-# config.yaml.example重命名 config.yaml
-# 编辑 configs/config.yaml，修改数据库连接信息
+# config.yaml.example.example重命名 config.yaml.example
+# 编辑 configs/config.yaml.example，修改数据库连接信息
 # 或使用环境变量覆盖
 export MYSQL_PASSWORD=your_password
 ```

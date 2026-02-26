@@ -43,7 +43,11 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 
 	data, err := ctrl.fileService.GetFileList(userID, &req, isRootMode)
 	if err != nil {
@@ -82,7 +86,11 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 
 	data, err := ctrl.fileService.GetDiskUsage(userID, req.Path, isRootMode)
 	if err != nil {
@@ -107,12 +115,11 @@ func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 		return
 	}
 
-	// 如果 mode 未提供，则默认为 system
-	if req.Mode == "" {
-		req.Mode = request.System
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
-
-	isRootMode := (req.Mode == request.System)
 
 	data, err := ctrl.fileService.GetHomeDirectoriesList(userID, &req, isRootMode)
 	if err != nil {
@@ -132,7 +139,11 @@ func (ctrl *Controller) CalculateSize(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 
 	size, sizeStr, usage, err := ctrl.fileService.CalculateSize(userID, req.Path, isRootMode)
 	if err != nil {
@@ -156,9 +167,13 @@ func (ctrl *Controller) DeleteFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 
-	err := ctrl.fileService.DeleteFile(userID, req.Path, isRootMode)
+	err = ctrl.fileService.DeleteFile(userID, req.Path, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -189,7 +204,11 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 	}(file)
 
 	// 判断是系统模式还是用户模式
-	isRootMode := (req.Mode == request.System)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 
 	data, err := ctrl.fileService.UploadFile(userID, file, req.File, req.TargetPath, isRootMode)
 	if err != nil {
@@ -209,7 +228,11 @@ func (ctrl *Controller) DownloadFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 
 	reader, filename, err := ctrl.fileService.DownloadFile(userID, req.Path, isRootMode)
 	if err != nil {
@@ -240,9 +263,13 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
 
-	err := ctrl.fileService.UnzipFile(userID, &req, isRootMode)
+	err = ctrl.fileService.UnzipFile(userID, &req, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return

@@ -77,7 +77,7 @@ func NewClient(config *Config) (*Client, error) {
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         config.Timeout,
 	}
-
+	/////////////////////////////////////////////////
 	sshClient, err := ssh.Dial("tcp", config.Host, sshConfig)
 	if err != nil {
 		return nil, fmt.Errorf("SSH连接失败: %w", err)
