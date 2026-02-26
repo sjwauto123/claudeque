@@ -27,7 +27,7 @@ import (
 type FileService interface {
 	GetFileList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
 	UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error)
-	DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, error)
+	DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, int64, error)
 	DeleteFile(userID int, path string, isRootMode bool) error
 	UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error
 	GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error)
@@ -422,26 +422,33 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 }
 
 // DownloadFile 下载文件
-func (s *fileService) DownloadFile(userID int, p string, isRootMode bool) (io.ReadCloser, string, error) {
+func (s *fileService) DownloadFile(userID int, p string, isRootMode bool) (io.ReadCloser, string, int64, error) {
 	client, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
 		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
-		return nil, "", err
+		return nil, "", 0, err
 	}
 
 	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
 		logger.Errorf("解析下载路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, p, isRootMode, err)
-		return nil, "", err
+		return nil, "", 0, err
 	}
 
 	f, err := client.Open(resolvedPath)
 	if err != nil {
 		logger.Errorf("打开文件失败: userID=%d, resolvedPath=%s, err=%v", userID, resolvedPath, err)
-		return nil, "", errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("打开文件失败: %s", resolvedPath), err)
+		return nil, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("打开文件失败: %s", resolvedPath), err)
 	}
 
-	return f, path.Base(resolvedPath), nil
+	stat, err := f.Stat()
+	if err != nil {
+		_ = f.Close()
+		logger.Errorf("获取文件状态失败: userID=%d, resolvedPath=%s, err=%v", userID, resolvedPath, err)
+		return nil, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("获取文件状态失败: %s", resolvedPath), err)
+	}
+
+	return f, path.Base(resolvedPath), stat.Size(), nil
 }
 
 // DeleteFile 删除文件或目录

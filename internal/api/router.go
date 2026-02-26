@@ -16,7 +16,6 @@ import (
 	"cloudque/internal/middleware"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -99,55 +98,32 @@ func (r *Router) Setup(engine *gin.Engine) {
 		// 用户路由
 		r.userCtrl.RegisterRoutes(v1)
 
-	}
-
-	//API v2 路由组 操作日志输出
-	v2 := engine.Group("/api/operationLogs")
-	{
-		r.operationLogCtrl.RegisterRoutes(v2)
-	}
-
-	//API v3 路由组 展示系统信息
-	v3 := engine.Group("/api/system")
-	{
-		r.systemInfoCtrl.RegisterRoutes(v3)
-	}
-
-	// api v4 路由组，展示任务信息
-	v4 := engine.Group("/api/job")
-	{
-		r.jobCtrl.JobsRoutes(v4)
-	}
-
-	// api v5 路由组，展示队列信息
-	v5 := engine.Group("/api/queue")
-	{
-		r.queueCtrl.QueueRoutes(v5)
-	}
-
-	// api v6 路由组，文件
-	v6 := engine.Group("/api/files")
-	{
-		r.filesCtrl.RegisterRoutes(v6)
-	}
-
-	// api v7 路由组，终端
-	v7 := engine.Group("/api/terminal")
-	{
-		// 终端路由
-		r.terminalCtrl.RegisterRoutes(v7)
-	}
-	// api v8 路由组，展示队列信息
-	v8 := engine.Group("/api")
-	{
 		// API管理路由
-		r.apiCtrl.RegisterRoutes(v8)
+		r.apiCtrl.RegisterRoutes(v1)
 
 		// 菜单管理路由
-		r.menuCtrl.RegisterRoutes(v8)
+		r.menuCtrl.RegisterRoutes(v1)
 
 		// 角色路由
-		r.roleCtrl.RegisterRoutes(v8)
+		r.roleCtrl.RegisterRoutes(v1)
+
+		// 终端路由
+		r.terminalCtrl.RegisterRoutes(v1)
+
+		// 日志路由
+		r.operationLogCtrl.RegisterRoutes(v1)
+
+		// 系统路由
+		r.systemInfoCtrl.RegisterRoutes(v1)
+
+		// 任务路由
+		r.jobCtrl.JobsRoutes(v1)
+
+		// 队列路由
+		r.queueCtrl.QueueRoutes(v1)
+
+		// 文件路由
+		r.filesCtrl.RegisterRoutes(v1)
 	}
 
 }

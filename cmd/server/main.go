@@ -11,7 +11,7 @@ func main() {
 	// 定义命令行参数
 	flag.Parse()
 
-	// 创建应用实例
+	// 创建应用实例  创建应用实例
 	application := app.NewApp()
 
 	// 初始化应用

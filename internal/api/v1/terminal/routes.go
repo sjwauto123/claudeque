@@ -11,7 +11,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	r.Use(middleware.Auth())
 	r.Use(middleware.RequirePermission(ctrl.authService))
 	r.Use(middleware.UserOperationLogs(ctrl.userLogService))
-
+	router := r.Group("/terminal")
 	// 终端连接
-	r.GET("/ws", middleware.WithOperation("连接终端"), ctrl.WebSocketTerminal)
+	router.GET("/ws", middleware.WithOperation("连接终端"), ctrl.WebSocketTerminal)
 }
