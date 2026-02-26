@@ -7,7 +7,7 @@ import (
 
 // JobsRoutes 任务路由
 func (ctrl *Controller) JobsRoutes(router *gin.RouterGroup) {
-	r := router.Group("/api/job")
+	r := router.Group("/job")
 	r.Use(middleware.Auth())
 	r.Use(middleware.RequirePermission(ctrl.authService))
 	r.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))

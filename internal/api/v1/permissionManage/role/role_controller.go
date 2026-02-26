@@ -12,14 +12,16 @@ import (
 )
 
 type RoleController struct {
-	roleService service.RoleService
-	authService service.AuthService
+	roleService    service.RoleService
+	authService    service.AuthService
+	userLogService service.UserOperationLogService
 }
 
-func NewRoleController(roleService service.RoleService, authService service.AuthService) *RoleController {
+func NewRoleController(roleService service.RoleService, authService service.AuthService, userLogService service.UserOperationLogService) *RoleController {
 	return &RoleController{
-		roleService: roleService,
-		authService: authService,
+		roleService:    roleService,
+		authService:    authService,
+		userLogService: userLogService,
 	}
 }
 func (ctrl *RoleController) GetRoleByID(c *gin.Context) {
