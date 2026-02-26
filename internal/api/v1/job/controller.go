@@ -93,7 +93,7 @@ func (ctrl *Controller) SubmitJob(c *gin.Context) {
 
 	job, err := ctrl.jobService.SubmitJob(c.Request.Context(), req, userID)
 	if err != nil {
-		response.InternalError(c, err.Error())
+		response.BizError(c, err)
 		return
 	}
 
@@ -116,7 +116,7 @@ func (ctrl *Controller) CancelJob(c *gin.Context) {
 
 	userID := middleware.GetUserID(c)
 	if err := ctrl.jobService.CancelJob(c.Request.Context(), jobID, userID); err != nil {
-		response.InternalError(c, err.Error())
+		response.Error(c, 4001, err.Error())
 		return
 	}
 
