@@ -14,6 +14,7 @@ import (
 type Config struct {
 	ServerHost     string        // 服务器地址，如 "192.168.1.100:22"
 	RootUsername   string        // 管理员用户名（默认root）
+	RootPassword   string        // 管理员密码
 	Timeout        time.Duration // 连接超时
 	SessionTimeout time.Duration // 会话超时时间，0表示永不超时
 }

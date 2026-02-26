@@ -123,7 +123,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		sshClient, err = s.verifySSHCredentials(sshUser, pwd)
 		if err != nil && s.sshServerHost != "" {
 			// 如果配置了SSH服务器但验证失败，拒绝登录
-			logger.Error("SSH验证失败，拒绝登录",
+			logger.Info("SSH验证失败，拒绝登录",
 				zap.String("username", sshUser),
 				zap.Error(err),
 			)
@@ -137,7 +137,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 		// 注意：这里我们信任SSH验证的结果
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err == nil {
-
 			// 我们直接更新密码，或者先检查是否匹配
 			if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
 				// 密码不匹配，更新为新密码
