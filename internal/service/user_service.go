@@ -301,6 +301,15 @@ func (s *userService) ResetPassword(req *request.ResetPasswordRequest) error {
 	if err != nil {
 		return err
 	}
+
+	// 3. 同步修改虚拟机密码 (方案A：先修改VM，失败则终止)
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+		if err := s.updateVMPassword(user.Username, newPwd); err != nil {
+			logger.Error("Failed to update VM password during ResetPassword", zap.String("username", user.Username), zap.Error(err))
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "同步虚拟机密码失败，请稍后重试", err)
+		}
+	}
+
 	user.Password = string(hashedPassword)
 
 	// 4. 保存并删除验证码
