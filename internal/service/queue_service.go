@@ -71,6 +71,10 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 		return nil, 0, 0, 0, err
 	}
 
+	if req.PageSize <= 0 {
+		req.PageSize = 10
+	}
+
 	if len(members) == 0 {
 		return []response.QueueJobResponse{}, 0, req.Page, req.PageSize, err
 	}
@@ -82,9 +86,6 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 			continue
 		}
 		orderedJobIDs = append(orderedJobIDs, jobID)
-	}
-	if req.PageSize <= 0 {
-		req.PageSize = 10
 	}
 
 	rows, total, err := s.jobRepo.GetQueueJobListFiltered(orderedJobIDs, req, startTime, endTime)
