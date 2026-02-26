@@ -7,6 +7,7 @@ import (
 
 func (ctrl *RoleController) RegisterRoutes(r *gin.RouterGroup) {
 	roleGroup := r.Group("/permissionManage/roles")
+	roleGroup.Use(middleware.Auth())
 	roleGroup.Use(middleware.RequirePermission(ctrl.authService))
 	roleGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
 	{
