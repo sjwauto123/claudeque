@@ -102,13 +102,12 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 
 	// 在VM中创建用户
 	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
-		go func() {
-			if err := s.createVMUser(req.Username, pwd); err != nil {
-				logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
-			} else {
-				logger.Info("VM用户创建成功", zap.String("username", req.Username))
-			}
-		}()
+		if err := s.createVMUser(req.Username, pwd); err != nil {
+			logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
+
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建虚拟机用户失败", err)
+		}
+		logger.Info("VM用户创建成功", zap.String("username", req.Username))
 	}
 
 	return nil
