@@ -11,7 +11,7 @@ type RolePageQueryRequest struct {
 type CreateRoleRequest struct {
 	entity.BaseEntity
 	Name   string `json:"name" binding:"required,min=2,max=50"`
-	Status *int   `json:"status" binding:"oneof=0 1"` // 0=禁用, 1=启用
+	Status *int   `json:"status" binding:"required,oneof=0 1"` // 0=禁用, 1=启用
 	Slug   string `json:"slug" binding:"required"`
 }
 

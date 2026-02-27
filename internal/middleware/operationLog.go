@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -156,9 +157,9 @@ func getDataFormPath(c *gin.Context, requestData string) string {
 		if requestData != "" {
 			requestData += "&"
 		}
-		// 将路径参数转换为查询字符串格式
+		// 将路径参数转换为查询字符串格式（进行URL编码）
 		for key, value := range params {
-			requestData += key + "=" + value + "&"
+			requestData += url.QueryEscape(key) + "=" + url.QueryEscape(value) + "&"
 		}
 		// 去除最后的 &
 		requestData = strings.TrimSuffix(requestData, "&")
@@ -199,16 +200,16 @@ func getDataFormBody(c *gin.Context, requestData string) string {
 			// 构建请求数据
 			var dataParts []string
 
-			// 添加普通表单字段
+			// 添加普通表单字段（进行URL编码）
 			for key, value := range formData {
-				dataParts = append(dataParts, key+"="+value)
+				dataParts = append(dataParts, url.QueryEscape(key)+"="+url.QueryEscape(value))
 			}
 
 			// 添加文件信息
 			if len(fileInfo) > 0 {
 				fileInfoJSON, err := json.Marshal(fileInfo)
 				if err == nil {
-					dataParts = append(dataParts, "files="+string(fileInfoJSON))
+					dataParts = append(dataParts, "files="+url.QueryEscape(string(fileInfoJSON)))
 				}
 			}
 
@@ -230,7 +231,7 @@ func getDataFormBody(c *gin.Context, requestData string) string {
 			if err == nil {
 				// 如果已有请求数据，追加请求体
 				if requestData != "" {
-					requestData += "&body=" + string(requestBody)
+					requestData += "&body=" + url.QueryEscape(string(requestBody))
 				} else {
 					requestData = string(requestBody)
 				}
@@ -243,7 +244,7 @@ func getDataFormBody(c *gin.Context, requestData string) string {
 		if requestData == "" {
 			if err := c.Request.ParseForm(); err == nil {
 				if len(c.Request.PostForm) > 0 {
-					requestData = c.Request.PostForm.Encode()
+					requestData = c.Request.PostForm.Encode() // PostForm.Encode() 会自动进行URL编码
 				}
 			}
 		}

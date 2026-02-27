@@ -18,21 +18,9 @@ func NewUserOperationLogRepository(db *gorm.DB) UserOperationLogRepository {
 
 // FindUserLogs 查询非关机或重启类型的日志
 func (u *userOperationLogRepository) FindUserLogs(offset int, size int, username string, actionType string, start time.Time, end time.Time) (*[]dto.UserLogsResponse, int64, error) {
-	// 先获取最新的5000条记录的ID
-	var latestIDs []int
-	if err := u.db.Model(&entity.UserOperationLog{}).
-		Select("id").
-		Order("created_at DESC").
-		Limit(5000).
-		Pluck("id", &latestIDs).Error; err != nil {
-		return nil, 0, err
-	}
-
-	if len(latestIDs) == 0 {
-		return &[]dto.UserLogsResponse{}, 0, nil
-	}
-
-	query := u.db.Model(&entity.UserOperationLog{}).Where("id IN ?", latestIDs)
+	// 使用 EXISTS 子查询限制查询范围为最新的5000条记录
+	query := u.db.Model(&entity.UserOperationLog{}).
+		Where("EXISTS (SELECT 1 FROM (SELECT id FROM operation_logs ORDER BY created_at DESC LIMIT 5000) AS latest WHERE latest.id = operation_logs.id)")
 
 	// 操作类型
 	if actionType != "" {

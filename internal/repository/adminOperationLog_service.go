@@ -16,21 +16,9 @@ func NewAdminOperationLogRepository(db *gorm.DB) AdminOperationLogRepository {
 }
 
 func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWord string) (*[]dto.AdminLogResponse, int64, error) {
-	// 先获取最新的5000条记录的ID
-	var latestIDs []int
-	if err := a.db.Model(&entity.AdminOperationLog{}).
-		Select("id").
-		Order("created_at DESC").
-		Limit(5000).
-		Pluck("id", &latestIDs).Error; err != nil {
-		return nil, 0, err
-	}
-
-	if len(latestIDs) == 0 {
-		return &[]dto.AdminLogResponse{}, 0, nil
-	}
-
-	query := a.db.Model(&entity.AdminOperationLog{}).Select("username, action_type, object, status, created_at").Where("id IN ?", latestIDs)
+	// 使用 EXISTS 子查询限制查询范围为最新的5000条记录
+	query := a.db.Model(&entity.AdminOperationLog{}).
+		Where("EXISTS (SELECT 1 FROM (SELECT id FROM admin_operation_log ORDER BY created_at DESC LIMIT 5000) AS latest WHERE latest.id = admin_operation_log.id)")
 
 	if keyWord != "" {
 		query = query.Where("username LIKE ? OR action_type LIKE ? OR object LIKE  ?", "%"+keyWord+"%", "%"+keyWord+"%", "%"+keyWord+"%")
