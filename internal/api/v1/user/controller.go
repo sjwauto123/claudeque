@@ -59,37 +59,6 @@ func (ctrl *Controller) GetProfile(c *gin.Context) {
 	response.Success(c, userResp)
 }
 
-// UpdateProfile 更新用户信息
-// @Summary 更新用户信息
-// @Description 更新当前登录用户的信息
-// @Tags 用户
-// @Accept json
-// @Produce json
-// @Security Bearer
-// @Param request body request.UpdateUserRequest true "更新信息"
-// @Success 200 {object} response.Response
-// @Router /api/v1/user/profile [put]
-func (ctrl *Controller) UpdateProfile(c *gin.Context) {
-	userID := middleware.GetUserID(c)
-	if userID == 0 {
-		response.Unauthorized(c, "用户未登录")
-		return
-	}
-
-	var req request.UpdateUserRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
-	}
-
-	if err := ctrl.userService.UpdateUser(userID, &req); err != nil {
-		response.BizError(c, err)
-		return
-	}
-
-	response.Success(c, nil)
-}
-
 // ChangePassword 修改密码
 // @Summary 修改密码
 // @Description 修改当前登录用户的密码

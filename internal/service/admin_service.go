@@ -73,17 +73,6 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 		return bizerrors.ErrUserNotFound
 	}
 
-	if req.Username != "" {
-		existing, err := s.userRepo.FindByUsername(req.Username)
-		if err != nil {
-			return err
-		}
-		if existing != nil && existing.ID != id {
-			return bizerrors.ErrUserAlreadyExists
-		}
-		user.Username = req.Username
-	}
-
 	if req.Email != "" {
 		existing, err := s.userRepo.FindByEmail(req.Email)
 		if err != nil {

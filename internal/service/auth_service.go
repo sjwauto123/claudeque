@@ -190,8 +190,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {
-		// 异步建立会话，避免阻塞登录响应
-		// 注意：此时密码已经验证通过，所以这里只是建立长连接
 		go func() {
 			// 1. 首先创建普通用户会话（总是创建，用于普通文件操作）
 			normalSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, false)
