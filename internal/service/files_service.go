@@ -46,37 +46,75 @@ func NewFileService(sessionManager *ssh.SessionManager) FileService {
 	}
 }
 
-// getSftpClient 获取用户的SFTP客户端
-func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, error) {
+// getOrReconnectSession 获取会话，如果断开则自动重连
+func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserSession, error) {
 	if s.sessionManager == nil {
 		logger.Errorf("SSH会话管理器未初始化: userID=%d", userID)
 		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
 	}
 
+	// 1. 获取现有会话
 	session, err := s.sessionManager.GetSession(userID, isRoot)
 	if err != nil {
 		logger.Errorf("获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
 	}
 
-	if session.Client == nil {
-		logger.Errorf("SSH客户端未连接: userID=%d", userID)
+	// 2. 检查会话及客户端是否有效
+	isValid := false
+	if session != nil && session.Client != nil {
+		// 尝试轻量级 ping
+		if _, pingErr := session.Client.ExecuteCommand("echo 1"); pingErr == nil {
+			// 确保 SFTP 客户端也存在
+			if session.Client.GetSFTPClient() != nil {
+				isValid = true
+			}
+		}
+	}
+
+	if isValid {
+		return session, nil
+	}
+
+	// 3. 会话无效或已断开，尝试重连
+	logger.Infof("SSH会话已断开，尝试自动重连: userID=%d, isRoot=%t", userID, isRoot)
+
+	// 使用 session 中保存的凭据重新创建会话
+	// 注意：GetSession 已经返回了 session 对象（即使连接断开），其中包含了 Username/Password
+	// 如果 session 为 nil（极少见，除非 GetSession 返回 err），则无法重连
+	if session == nil {
+		return nil, errors.New(errors.CodeUnauthorized, "无法恢复SSH会话，请重新登录")
+	}
+
+	newSession, recErr := s.sessionManager.GetOrCreateSession(userID, session.GetUsername(), session.Password, isRoot)
+	if recErr != nil {
+		logger.Errorf("SSH会话重连失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, recErr)
+		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已断开且重连失败，请重新登录")
+	}
+
+	// 4. 验证新会话
+	if newSession == nil || newSession.Client == nil || newSession.Client.GetSFTPClient() == nil {
+		logger.Errorf("SSH会话重连后客户端不可用: userID=%d, isRoot=%t", userID, isRoot)
 		return nil, errors.New(errors.CodeInternalError, "SSH客户端未连接")
 	}
 
+	return newSession, nil
+}
+
+// getSftpClient 获取用户的SFTP客户端
+func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, error) {
+	session, err := s.getOrReconnectSession(userID, isRoot)
+	if err != nil {
+		return nil, err
+	}
 	return session.Client.GetSFTPClient(), nil
 }
 
 // getSSHClient 获取用户的SSH客户端
 func (s *fileService) getSSHClient(userID int, isRoot bool) (*server.Client, error) {
-	if s.sessionManager == nil {
-		logger.Errorf("SSH会话管理器未初始化: userID=%d", userID)
-		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
-	}
-	session, err := s.sessionManager.GetSession(userID, isRoot)
+	session, err := s.getOrReconnectSession(userID, isRoot)
 	if err != nil {
-		logger.Errorf("获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
-		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
+		return nil, err
 	}
 	return session.Client, nil
 }
@@ -100,7 +138,7 @@ func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (st
 
 // resolvePath 解析路径并应用权限隔离
 func (s *fileService) resolvePath(userID int, p string, isRootMode bool) (string, error) {
-	session, err := s.sessionManager.GetSession(userID, isRootMode)
+	session, err := s.getOrReconnectSession(userID, isRootMode)
 	if err != nil {
 		logger.Errorf("获取SSH会话失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
 		return "", err

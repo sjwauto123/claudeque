@@ -29,9 +29,29 @@ type Client struct {
 	sftpClient *sftp.Client
 	config     *Config
 
-	mu          sync.Mutex
-	termSession *ssh.Session
-	termStdin   io.WriteCloser
+	mu sync.Mutex
+}
+
+// TerminalSession 独立的终端会话
+type TerminalSession struct {
+	Session *ssh.Session
+	Stdin   io.WriteCloser
+}
+
+// Resize 调整终端大小
+func (ts *TerminalSession) Resize(cols, rows int) error {
+	if ts.Session == nil {
+		return fmt.Errorf("会话未初始化")
+	}
+	return ts.Session.WindowChange(rows, cols)
+}
+
+// Close 关闭终端会话
+func (ts *TerminalSession) Close() error {
+	if ts.Session != nil {
+		return ts.Session.Close()
+	}
+	return nil
 }
 
 // NewClient 创建新的SSH/SFTP客户端，尝试所有配置的认证方式
@@ -72,17 +92,10 @@ func NewClient(config *Config) (*Client, error) {
 		}
 	}
 
-	// 2. 添加密码认证（普通密码 + 键盘交互式）
+	// 2. 添加密码认证（普通密码 ）
 	if config.Password != "" {
 		authMethods = append(authMethods, ssh.Password(config.Password))
-		// 添加键盘交互式认证作为备选，某些服务器配置需要
-		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
-			answers := make([]string, len(questions))
-			for i := range questions {
-				answers[i] = config.Password
-			}
-			return answers, nil
-		}))
+
 	}
 
 	if len(authMethods) == 0 {
@@ -131,11 +144,7 @@ func dialAndCreateClient(config *Config, sshConfig *ssh.ClientConfig) (*Client, 
 // Close 关闭连接
 func (c *Client) Close() error {
 	c.mu.Lock()
-	if c.termSession != nil {
-		_ = c.termSession.Close()
-		c.termSession = nil
-	}
-	c.mu.Unlock()
+	defer c.mu.Unlock()
 
 	if c.sftpClient != nil {
 		_ = c.sftpClient.Close()
@@ -208,65 +217,46 @@ func (c *Client) ExecuteCommand(cmd string) (string, error) {
 	return buf.String(), nil
 }
 
-// RunInteractiveSession 启动交互式shell
-func (c *Client) RunInteractiveSession(stdin io.Reader, stdout, stderr io.Writer) error {
+// NewTerminalSession 创建一个新的终端会话
+func (c *Client) NewTerminalSession(stdin io.Reader, stdout, stderr io.Writer, cols, rows int) (*TerminalSession, error) {
 	session, err := c.sshClient.NewSession()
 	if err != nil {
-		return fmt.Errorf("创建会话失败: %w", err)
+		return nil, fmt.Errorf("创建会话失败: %w", err)
 	}
 
-	if err := session.RequestPty("xterm-256color", 24, 80, ssh.TerminalModes{ssh.ECHO: 1}); err != nil {
+	// 如果未指定大小，使用默认值
+	if cols == 0 {
+		cols = 80
+	}
+	if rows == 0 {
+		rows = 24
+	}
+
+	if err := session.RequestPty("xterm-256color", rows, cols, ssh.TerminalModes{ssh.ECHO: 1}); err != nil {
 		session.Close()
-		return fmt.Errorf("请求PTY失败: %w", err)
+		return nil, fmt.Errorf("请求PTY失败: %w", err)
 	}
 
 	termIn, err := session.StdinPipe()
 	if err != nil {
 		session.Close()
-		return fmt.Errorf("获取stdin失败: %w", err)
+		return nil, fmt.Errorf("获取stdin失败: %w", err)
 	}
 	session.Stdout = stdout
 	session.Stderr = stderr
 
-	c.mu.Lock()
-	c.termSession = session
-	c.termStdin = termIn
-	c.mu.Unlock()
-
 	if err := session.Shell(); err != nil {
 		session.Close()
-		return fmt.Errorf("启动shell失败: %w", err)
+		return nil, fmt.Errorf("启动shell失败: %w", err)
 	}
 
 	go func() {
-		io.Copy(termIn, stdin)
+		_, _ = io.Copy(termIn, stdin)
 		_ = termIn.Close()
 	}()
 
-	err = session.Wait()
-
-	c.mu.Lock()
-	c.termSession = nil
-	return err
-}
-
-// ResizeTerminal 调整终端大小
-func (c *Client) ResizeTerminal(cols, rows int) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.termSession == nil {
-		return fmt.Errorf("无活跃终端会话")
-	}
-	return c.termSession.WindowChange(rows, cols)
-}
-
-// WriteToTerminal 写入数据到终端
-func (c *Client) WriteToTerminal(data string) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if c.termStdin == nil {
-		return fmt.Errorf("无活跃终端输入流")
-	}
-	_, err := c.termStdin.Write([]byte(data))
-	return err
+	return &TerminalSession{
+		Session: session,
+		Stdin:   termIn,
+	}, nil
 }

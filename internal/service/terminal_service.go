@@ -33,11 +33,11 @@ func (s *terminalService) getSSHClient(userID int, isRoot bool) (*server.Client,
 	return session.Client, nil
 }
 
-// RunInteractiveSession 运行交互式会话（PTY 透传）
-func (s *terminalService) RunInteractiveSession(userID int, stdin io.Reader, stdout, stderr io.Writer, isRoot bool) error {
+// NewTerminalSession 创建新的交互式会话
+func (s *terminalService) NewTerminalSession(userID int, stdin io.Reader, stdout, stderr io.Writer, isRoot bool, cols, rows int) (*server.TerminalSession, error) {
 	sshClient, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	return sshClient.RunInteractiveSession(stdin, stdout, stderr)
+	return sshClient.NewTerminalSession(stdin, stdout, stderr, cols, rows)
 }

@@ -140,49 +140,51 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
 	// 判断用户是否拥有SSH root权限
 	isRoot, _ := s.HasSystemAccess(user.ID, AccessTypeFile)
+	logger.Info("用户登录权限检查", zap.Int("user_id", user.ID), zap.String("username", user.Username), zap.Bool("is_root", isRoot))
 
 	// SSH 拨号验证 - 确保Web账号与系统账号同步
-	var sshClient *server.Client
+	var sshSuccess bool
 	if s.sessionManager != nil {
-		var sshUser, sshPassword string
-
-		// 确定 SSH 用户名和密码
-		if isRoot {
-			sshUser = s.sessionManager.GetRootUsername()
-			if s.sessionManager.Cfg.RootPassword != "" {
-				sshPassword = s.sessionManager.Cfg.RootPassword
-			} else {
-				// 如果未配置 root 密码，则尝试使用请求密码（虽然通常 root 用私钥或特定密码）
-				sshPassword = pwd
-			}
-		} else {
-			// 普通用户使用请求中的用户名和密码
-			sshUser = req.Username
-			sshPassword = pwd
-		}
-
-		logger.Info("Attempting SSH verification",
-			zap.String("sshUser", sshUser),
-			zap.String("sshPassword", "********"), // Mask password for security
-			zap.Bool("isRoot", isRoot),
-		)
-
 		var err error
-		sshClient, err = s.verifySSHCredentials(sshUser, sshPassword, isRoot)
+		var session *ssh.UserSession
+
+		// 尝试建立主会话（如果是Root权限则建立Root会话，否则建立普通会话）
+		// GetOrCreateSession 内部处理 Root 用户名/密码逻辑
+		session, err = s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, isRoot)
+
 		if err != nil {
-			// 如果配置了SSH服务器但验证失败，拒绝登录
-			logger.Info("SSH验证失败，拒绝登录",
-				zap.String("username", sshUser),
-				zap.Error(err),
-			)
-			return nil, bizerrors.ErrInvalidCredentials
+			// 尝试自动修复：如果不是root用户且验证失败，可能是系统用户不存在或密码不一致
+			if !isRoot {
+				logger.Info("SSH验证失败，尝试同步系统用户", zap.String("username", req.Username))
+				if syncErr := s.syncSystemUser(req.Username, pwd); syncErr != nil {
+					logger.Warn("同步系统用户失败", zap.Error(syncErr))
+				} else {
+					// 同步成功后重试
+					session, err = s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, isRoot)
+				}
+			}
+
+			if err != nil {
+				// 如果配置了SSH服务器但验证失败，拒绝登录
+				logger.Info("SSH验证失败，拒绝登录",
+					zap.String("username", req.Username),
+					zap.Error(err),
+				)
+				return nil, bizerrors.ErrInvalidCredentials
+			}
 		}
-		// 验证成功后关闭连接
-		defer sshClient.Close()
+
+		sshSuccess = true
+
+		// 保存会话信息
+		if s.sessionRepo != nil && session != nil {
+			_ = s.sessionRepo.SaveSession(user.ID, session.GetUsername(), isRoot, session.CreatedAt)
+		}
+
 	}
 
 	// 验证数据库密码 (如果SSH验证通过，则跳过DB密码验证并同步密码；否则必须验证DB密码)
-	if sshClient != nil {
+	if sshSuccess {
 		// SSH验证通过，同步密码到数据库（如果不同）
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err == nil {
@@ -220,52 +222,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	token, err := jwt.GenerateToken(user.ID, user.Username, roles)
 	if err != nil {
 		return nil, err
-	}
-
-	//////////////////////////建立SSH会话/////////////////////
-
-	// 创建SSH会话（如果会话管理器已启用）
-	if s.sessionManager != nil {
-		// 异步建立会话，避免阻塞登录响应
-		// 注意：此时密码已经验证通过，所以这里只是建立长连接
-		go func() {
-			// 1. 首先创建普通用户会话（总是创建，用于普通文件操作）
-			normalSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, false)
-			if err != nil {
-				logger.Warn("普通用户SSH会话创建失败",
-					zap.Int("user_id", user.ID),
-					zap.String("username", req.Username),
-					zap.Error(err),
-				)
-			} else {
-				if s.sessionRepo != nil {
-					_ = s.sessionRepo.SaveSession(user.ID, normalSession.GetUsername(), false, normalSession.CreatedAt)
-				}
-				logger.Info("普通用户SSH会话已就绪",
-					zap.Int("user_id", user.ID),
-					zap.String("username", req.Username),
-				)
-			}
-
-			// 2. 如果用户有root权限，额外创建root会话
-			if isRoot {
-				rootSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, true)
-				if err != nil {
-					logger.Warn("Root SSH会话创建失败",
-						zap.Int("user_id", user.ID),
-						zap.Error(err),
-					)
-				} else {
-					if s.sessionRepo != nil {
-						_ = s.sessionRepo.SaveSession(user.ID, rootSession.GetUsername(), true, rootSession.CreatedAt)
-					}
-					logger.Info("Root SSH会话已就绪",
-						zap.Int("user_id", user.ID),
-						zap.String("username", rootSession.GetUsername()),
-					)
-				}
-			}
-		}()
 	}
 
 	// 组装用户信息
@@ -509,6 +465,48 @@ func (s *authService) verifySSHCredentials(username, password string, isRoot boo
 		return nil, bizerrors.NewWithErr(403, "SSH凭据验证失败", err)
 	}
 	return client, nil
+}
+
+func (s *authService) syncSystemUser(username, password string) error {
+	if s.sessionManager == nil || s.sessionManager.Cfg == nil {
+		return fmt.Errorf("SSH会话管理器未配置")
+	}
+	if s.sshServerHost == "" {
+		return fmt.Errorf("SSH服务器地址未配置")
+	}
+
+	cfg := &server.Config{
+		Host:                 s.sshServerHost,
+		Username:             s.sessionManager.GetRootUsername(),
+		Password:             s.sessionManager.Cfg.RootPassword,
+		Timeout:              s.sessionManager.GetTimeout(),
+		PrivateKeyPath:       s.sessionManager.Cfg.PrivateKeyPath,
+		PrivateKeyPassphrase: s.sessionManager.Cfg.PrivateKeyPassphrase,
+	}
+
+	client, err := server.NewClient(cfg)
+	if err != nil {
+		return fmt.Errorf("root连接失败: %w", err)
+	}
+	defer client.Close()
+
+	safeUser := "'" + strings.ReplaceAll(username, "'", "'\\''") + "'"
+	checkCmd := fmt.Sprintf("id -u %s", safeUser)
+	if _, err := client.ExecuteCommand(checkCmd); err != nil {
+		createCmd := fmt.Sprintf("useradd -m -s /bin/bash %s", safeUser)
+		if out, err := client.ExecuteCommand(createCmd); err != nil {
+			return fmt.Errorf("useradd失败: %s, error: %w", out, err)
+		}
+	}
+
+	safeEchoUser := strings.ReplaceAll(username, "'", "'\\''")
+	safeEchoPwd := strings.ReplaceAll(password, "'", "'\\''")
+	passCmd := fmt.Sprintf("echo '%s:%s' | chpasswd", safeEchoUser, safeEchoPwd)
+	if out, err := client.ExecuteCommand(passCmd); err != nil {
+		return fmt.Errorf("chpasswd失败: %s, error: %w", out, err)
+	}
+
+	return nil
 }
 
 // saveUserCredentialsToRedis 将用户的SSH凭证保存到Redis

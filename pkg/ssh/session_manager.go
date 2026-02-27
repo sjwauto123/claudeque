@@ -2,6 +2,7 @@ package ssh
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -148,6 +149,12 @@ func (sm *SessionManager) CreateSession(userID int, username, password string, i
 	// 创建SSH客户端
 	client, err := server.NewClient(sshConfig)
 	if err != nil {
+		sm.logger.Warn("创建SSH会话失败",
+			zap.Int("user_id", userID),
+			zap.String("ssh_username", sshUsername),
+			zap.Bool("is_root", isRoot),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("SSH连接失败: %w", err)
 	}
 
@@ -187,7 +194,12 @@ func (sm *SessionManager) AddSession(userID int, session *UserSession) {
 	key := sm.getSessionKey(userID, session.IsRootUser)
 	// 如果存在旧会话，先关闭
 	if old, ok := sm.sessions[key]; ok {
-		go old.Close()
+		go func() {
+			err := old.Close()
+			if err != nil {
+				log.Printf("无法关闭旧的ssh会话")
+			}
+		}()
 	}
 	sm.sessions[key] = session
 	sm.mu.Unlock()
@@ -216,7 +228,7 @@ func (sm *SessionManager) GetSession(userID int, isRoot bool) (*UserSession, err
 	return session, nil
 }
 
-// GetOrCreateSession 获取会话，如果不存在则使用提供的凭据创建（推荐）
+// GetOrCreateSession 获取会话，如果不存在则使用提供的凭据创建
 func (sm *SessionManager) GetOrCreateSession(userID int, username, password string, isRoot bool) (*UserSession, error) {
 	// 先尝试获取现有会话
 	session, err := sm.GetSession(userID, isRoot)
@@ -226,7 +238,10 @@ func (sm *SessionManager) GetOrCreateSession(userID int, username, password stri
 			return session, nil
 		}
 		// 无效则删除
-		sm.DeleteSession(userID, isRoot)
+		err := sm.DeleteSession(userID, isRoot)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	// 创建新会话
@@ -344,7 +359,12 @@ func (sm *SessionManager) cleanupExpiredSessions() {
 				zap.String("key", key),
 				zap.Duration("idle", now.Sub(lastUsed)),
 			)
-			go session.Close()
+			go func() {
+				err := session.Close()
+				if err != nil {
+					log.Println("清除会话失败", err)
+				}
+			}()
 			delete(sm.sessions, key)
 		}
 	}

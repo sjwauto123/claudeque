@@ -109,6 +109,16 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 
 	var sessionErr error
 	var wg sync.WaitGroup
+
+	// 创建终端会话
+	// 默认大小 80x24，后续可通过 resize 消息调整
+	ts, err := ctrl.terminalService.NewTerminalSession(userID, stdinReader, stdoutWriter, stderrWriter, isRoot, 80, 24)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	defer ts.Close()
+
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -124,7 +134,9 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 				logger.Error("stderrWriter关闭失败")
 			}
 		}(stderrWriter)
-		sessionErr = ctrl.terminalService.RunInteractiveSession(userID, stdinReader, stdoutWriter, stderrWriter, isRoot)
+
+		// 等待会话结束
+		sessionErr = ts.Session.Wait()
 	}()
 
 	type inboundMsg struct {
@@ -199,6 +211,10 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		case "input":
 			if _, err := stdinWriter.Write([]byte(in.Data)); err != nil {
 				break
+			}
+		case "resize":
+			if in.Cols > 0 && in.Rows > 0 {
+				_ = ts.Resize(in.Cols, in.Rows)
 			}
 		case "ping":
 			sendJSON(map[string]any{"type": "pong"})
