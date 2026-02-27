@@ -1,12 +1,12 @@
 package service
 
 import (
-	"bytes"
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
 	"cloudque/pkg/config"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
+	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
 	"fmt"
 	"io"
@@ -20,7 +20,6 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/pkg/sftp"
-	xssh "golang.org/x/crypto/ssh"
 )
 
 // FileService 文件服务接口
@@ -69,7 +68,7 @@ func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, erro
 }
 
 // getSSHClient 获取用户的SSH客户端
-func (s *fileService) getSSHClient(userID int, isRoot bool) (*xssh.Client, error) {
+func (s *fileService) getSSHClient(userID int, isRoot bool) (*server.Client, error) {
 	if s.sessionManager == nil {
 		logger.Errorf("SSH会话管理器未初始化: userID=%d", userID)
 		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
@@ -79,7 +78,7 @@ func (s *fileService) getSSHClient(userID int, isRoot bool) (*xssh.Client, error
 		logger.Errorf("获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
 	}
-	return session.Client.GetSSHClient(), nil
+	return session.Client, nil
 }
 
 // executeSSHCommand 执行SSH命令
@@ -90,28 +89,13 @@ func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (st
 		return "", err
 	}
 
-	session, err := client.NewSession()
+	output, err := client.ExecuteCommand(cmd)
 	if err != nil {
-		logger.Errorf("创建SSH会话失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-		return "", errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "创建SSH会话失败", err)
-	}
-	defer func(session *xssh.Session) {
-		err := session.Close()
-		if err != nil {
-			logger.Errorf("关闭SSH会话失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-		}
-	}(session)
-
-	var stdout, stderr bytes.Buffer
-	session.Stdout = &stdout
-	session.Stderr = &stderr
-
-	if err := session.Run(cmd); err != nil {
-		logger.Errorf("执行命令失败: userID=%d, cmd=%s, stderr=%s, err=%v", userID, cmd, stderr.String(), err)
-		return "", errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("执行命令失败: %s", stderr.String()), err)
+		logger.Errorf("执行命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
+		return "", errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("执行命令失败: %v", err), err)
 	}
 
-	return stdout.String(), nil
+	return output, nil
 }
 
 // resolvePath 解析路径并应用权限隔离
@@ -411,7 +395,9 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 		}
 	}(dst)
 
-	if _, err := io.Copy(dst, file); err != nil {
+	// 使用较大的缓冲区进行复制，提高大文件传输效率
+	buf := make([]byte, 1024*1024) // 1MB buffer
+	if _, err := io.CopyBuffer(dst, file, buf); err != nil {
 		logger.Errorf("写入文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
 		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("写入文件失败: %s", remotePath), err)
 	}
@@ -575,6 +561,11 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 		bytess = kb * 1024
 	} else {
 		sizeStr := strings.TrimSpace(out)
+		// 修复：如果 du -sb 输出包含文件名，只取第一列
+		fields := strings.Fields(sizeStr)
+		if len(fields) > 0 {
+			sizeStr = fields[0]
+		}
 		bytess, err = strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
 			logger.Errorf("解析字节大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, err)

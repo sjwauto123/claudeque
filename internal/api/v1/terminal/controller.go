@@ -66,7 +66,7 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 
 	// 判断身份：根据用户权限决定是 root 终端还是普通用户终端
 	// 如果用户拥有系统级权限，则使用 root 终端，否则使用普通用户终端
-	isRoot, err := ctrl.authService.HasSystemAccess(userID)
+	isRoot, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeTerminal)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -202,8 +202,6 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 			}
 		case "ping":
 			sendJSON(map[string]any{"type": "pong"})
-		case "resize":
-			_ = ctrl.terminalService.ResizePTY(userID, in.Cols, in.Rows, isRoot)
 		case "close":
 			_ = stdinWriter.Close()
 			goto end

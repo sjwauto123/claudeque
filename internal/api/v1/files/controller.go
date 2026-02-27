@@ -53,7 +53,7 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 		_ = c.ShouldBindJSON(&req)
 	}
 
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -96,7 +96,7 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 		return
 	}
 
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -133,13 +133,7 @@ func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 		_ = c.ShouldBindJSON(&req)
 	}
 
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
-	if err != nil {
-		response.BizError(c, err)
-		return
-	}
-
-	data, err := ctrl.fileService.GetHomeDirectoriesList(userID, &req, isRootMode)
+	data, err := ctrl.fileService.GetHomeDirectoriesList(userID, &req, true)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -165,7 +159,7 @@ func (ctrl *Controller) CalculateSize(c *gin.Context) {
 		_ = c.ShouldBindJSON(&req)
 	}
 
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -193,7 +187,7 @@ func (ctrl *Controller) DeleteFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -230,7 +224,7 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 	}(file)
 
 	// 判断是系统模式还是用户模式
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -268,7 +262,7 @@ func (ctrl *Controller) DownloadFile(c *gin.Context) {
 		}
 	}
 
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -302,7 +296,7 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
 		response.BizError(c, err)
 		return

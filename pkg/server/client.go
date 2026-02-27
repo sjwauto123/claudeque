@@ -6,7 +6,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"time"
 
@@ -35,95 +34,75 @@ type Client struct {
 	termStdin   io.WriteCloser
 }
 
-// NewClient 创建新的SSH/SFTP客户端，按优先级尝试认证方式
+// NewClient 创建新的SSH/SFTP客户端，尝试所有配置的认证方式
 func NewClient(config *Config) (*Client, error) {
 	if config.Timeout == 0 {
 		config.Timeout = 30 * time.Second
 	}
 
-	// 尝试顺序：1. 私钥无密码 -> 2. 私钥+密码 -> 3. 普通密码
-	var lastErr error
+	var authMethods []ssh.AuthMethod
 
-	// ========== 第1层：私钥认证（无密码） ==========
+	// 1. 尝试加载私钥认证
 	if config.PrivateKeyPath != "" {
-		client, err := tryKeyAuth(config, "")
+		key, err := os.ReadFile(config.PrivateKeyPath)
 		if err == nil {
-			return client, nil
-		}
-		lastErr = fmt.Errorf("私钥无密码认证失败: %w", err)
+			// 去除可能的空白字符
+			key = bytes.TrimSpace(key)
+			var signer ssh.Signer
 
-		// 如果错误不是因为需要密码（比如文件不存在），直接返回
-		if !isPassphraseRequired(err) {
-			return nil, lastErr
-		}
-
-		// ========== 第2层：私钥 + 密码短语 ==========
-		if config.PrivateKeyPassphrase != "" {
-			client, err = tryKeyAuth(config, config.PrivateKeyPassphrase)
-			if err == nil {
-				return client, nil
+			// 优先尝试带密码解析（如果配置了密码）
+			if config.PrivateKeyPassphrase != "" {
+				s, err := ssh.ParsePrivateKeyWithPassphrase(key, []byte(config.PrivateKeyPassphrase))
+				if err == nil {
+					signer = s
+				}
 			}
-			lastErr = fmt.Errorf("私钥+密码短语认证失败: %w", err)
+
+			// 如果signer仍为空（没配置密码，或带密码解析失败），尝试无密码解析
+			if signer == nil {
+				s, err := ssh.ParsePrivateKey(key)
+				if err == nil {
+					signer = s
+				}
+			}
+
+			if signer != nil {
+				authMethods = append(authMethods, ssh.PublicKeys(signer))
+			}
 		}
 	}
 
-	// ========== 第3层：普通密码认证 ==========
+	// 2. 添加密码认证（普通密码 + 键盘交互式）
 	if config.Password != "" {
-		client, err := tryPasswordAuth(config)
-		if err == nil {
-			return client, nil
-		}
-		lastErr = fmt.Errorf("密码认证失败: %w", err)
+		authMethods = append(authMethods, ssh.Password(config.Password))
+		// 添加键盘交互式认证作为备选，某些服务器配置需要
+		authMethods = append(authMethods, ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
+			answers := make([]string, len(questions))
+			for i := range questions {
+				answers[i] = config.Password
+			}
+			return answers, nil
+		}))
 	}
 
-	return nil, fmt.Errorf("所有认证方式均失败，最后的错误: %w", lastErr)
-}
-
-// tryKeyAuth 尝试密钥认证，passphrase可为空
-func tryKeyAuth(config *Config, passphrase string) (*Client, error) {
-	key, err := os.ReadFile(config.PrivateKeyPath)
-	if err != nil {
-		return nil, fmt.Errorf("读取私钥文件失败: %w", err)
-	}
-
-	var signer ssh.Signer
-	if passphrase == "" {
-		signer, err = ssh.ParsePrivateKey(key)
-	} else {
-		signer, err = ssh.ParsePrivateKeyWithPassphrase(key, []byte(passphrase))
-	}
-
-	if err != nil {
-		return nil, err // 返回原始错误，让上层判断是否需要密码
+	if len(authMethods) == 0 {
+		return nil, fmt.Errorf("未配置任何有效的认证方式 (私钥解析失败且无密码)")
 	}
 
 	sshConfig := &ssh.ClientConfig{
 		User:            config.Username,
-		Auth:            []ssh.AuthMethod{ssh.PublicKeys(signer)},
+		Auth:            authMethods,
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
 		Timeout:         config.Timeout,
-	}
-
-	return dialAndCreateClient(config, sshConfig)
-}
-
-// tryPasswordAuth 尝试密码认证（包含键盘交互式作为备选）
-func tryPasswordAuth(config *Config) (*Client, error) {
-	sshConfig := &ssh.ClientConfig{
-		User: config.Username,
-		Auth: []ssh.AuthMethod{
-			ssh.Password(config.Password),
-			// 某些服务器需要键盘交互式而不是纯密码
-			ssh.KeyboardInteractive(func(user, instruction string, questions []string, echos []bool) ([]string, error) {
-				answers := make([]string, len(questions))
-				for i := range questions {
-					answers[i] = config.Password
-				}
-				return answers, nil
-			}),
+		// 增加对旧版加密算法的支持，以防服务器较旧或算法不匹配
+		HostKeyAlgorithms: []string{
+			ssh.KeyAlgoRSA,
+			ssh.KeyAlgoDSA,
+			ssh.KeyAlgoECDSA256,
+			ssh.KeyAlgoECDSA384,
+			ssh.KeyAlgoECDSA521,
+			ssh.KeyAlgoED25519,
 		},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         config.Timeout,
 	}
 
 	return dialAndCreateClient(config, sshConfig)
@@ -133,7 +112,7 @@ func tryPasswordAuth(config *Config) (*Client, error) {
 func dialAndCreateClient(config *Config, sshConfig *ssh.ClientConfig) (*Client, error) {
 	sshClient, err := ssh.Dial("tcp", config.Host, sshConfig)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("SSH连接失败: %w", err)
 	}
 
 	sftpClient, err := sftp.NewClient(sshClient)
@@ -147,19 +126,6 @@ func dialAndCreateClient(config *Config, sshConfig *ssh.ClientConfig) (*Client, 
 		sftpClient: sftpClient,
 		config:     config,
 	}, nil
-}
-
-// isPassphraseRequired 检查错误是否因为私钥需要密码
-func isPassphraseRequired(err error) bool {
-	if err == nil {
-		return false
-	}
-	errStr := err.Error()
-	// 匹配常见的需要密码短语的错误信息
-	return strings.Contains(errStr, "cannot decode encrypted private keys") ||
-		strings.Contains(errStr, "password protected") ||
-		strings.Contains(errStr, "passphrase") ||
-		strings.Contains(errStr, "decrypt")
 }
 
 // Close 关闭连接
@@ -227,7 +193,11 @@ func (c *Client) ExecuteCommand(cmd string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("创建会话失败: %w", err)
 	}
-	defer session.Close()
+	defer func() {
+		if err := session.Close(); err != nil && err != io.EOF {
+			// 仅记录非 EOF 错误，或者直接忽略
+		}
+	}()
 
 	var buf bytes.Buffer
 	session.Stdout = &buf
@@ -277,29 +247,26 @@ func (c *Client) RunInteractiveSession(stdin io.Reader, stdout, stderr io.Writer
 
 	c.mu.Lock()
 	c.termSession = nil
-	c.termStdin = nil
-	c.mu.Unlock()
-
 	return err
 }
 
-// ResizePTY 调整当前活跃交互式PTY窗口大小
-func (c *Client) ResizePTY(cols, rows int) error {
+// ResizeTerminal 调整终端大小
+func (c *Client) ResizeTerminal(cols, rows int) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.termSession == nil {
-		return nil
+		return fmt.Errorf("无活跃终端会话")
 	}
 	return c.termSession.WindowChange(rows, cols)
 }
 
-// SendInput 向当前交互式会话发送输入
-func (c *Client) SendInput(input string) error {
+// WriteToTerminal 写入数据到终端
+func (c *Client) WriteToTerminal(data string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.termStdin == nil {
-		return fmt.Errorf("没有活跃的交互式会话")
+		return fmt.Errorf("无活跃终端输入流")
 	}
-	_, err := c.termStdin.Write([]byte(input))
+	_, err := c.termStdin.Write([]byte(data))
 	return err
 }

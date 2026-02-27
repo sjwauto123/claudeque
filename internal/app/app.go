@@ -86,7 +86,7 @@ func (a *App) Initialize() error {
 
 // initConfig 加载配置
 func (a *App) initConfig() error {
-	cfg, err := config.Load("")
+	cfg, err := config.Load("./config.yaml")
 	if err != nil {
 		return fmt.Errorf("加载配置失败: %w", err)
 	}
@@ -288,10 +288,10 @@ func (a *App) initServer() {
 
 	// 创建 HTTP 服务器
 	a.server = &http.Server{
-		Addr:           fmt.Sprintf(":%d", a.cfg.App.Port),
-		Handler:        engine,
-		ReadTimeout:    60 * time.Second,
-		WriteTimeout:   60 * time.Second,
+		Addr:    fmt.Sprintf(":%d", a.cfg.App.Port),
+		Handler: engine,
+		// ReadTimeout:    60 * time.Second, // 移除超时限制，避免大文件上传中断
+		// WriteTimeout:   60 * time.Second, // 移除超时限制，避免大文件下载中断
 		MaxHeaderBytes: 1 << 20, // 1 MB
 	}
 }

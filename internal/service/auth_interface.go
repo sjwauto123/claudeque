@@ -7,6 +7,14 @@ import (
 	"time"
 )
 
+// SystemAccessType 系统权限类型
+type SystemAccessType string
+
+const (
+	AccessTypeTerminal SystemAccessType = "terminal"
+	AccessTypeFile     SystemAccessType = "file"
+)
+
 // AuthService 认证服务接口
 type AuthService interface {
 	// Login 用户登录
@@ -29,6 +37,6 @@ type AuthService interface {
 	SetSSHServerHost(host string)
 	// SetSSHTimeout 设置SSH连接超时
 	SetSSHTimeout(timeout time.Duration)
-	// HasSystemAccess 检查用户是否拥有系统级权限
-	HasSystemAccess(userID int) (bool, error)
+	// HasSystemAccess 检查用户是否拥有系统级权限 (根据访问类型)
+	HasSystemAccess(userID int, accessType SystemAccessType) (bool, error)
 }

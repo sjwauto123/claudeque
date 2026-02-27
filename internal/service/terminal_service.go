@@ -41,12 +41,3 @@ func (s *terminalService) RunInteractiveSession(userID int, stdin io.Reader, std
 	}
 	return sshClient.RunInteractiveSession(stdin, stdout, stderr)
 }
-
-// ResizePTY 调整窗口大小
-func (s *terminalService) ResizePTY(userID int, cols, rows int, isRoot bool) error {
-	sshClient, err := s.getSSHClient(userID, isRoot)
-	if err != nil {
-		return err
-	}
-	return sshClient.ResizePTY(cols, rows)
-}

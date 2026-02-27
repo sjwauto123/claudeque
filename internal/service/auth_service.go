@@ -16,8 +16,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"math/rand"
 	"sort"
+	"strings"
 	"time"
 
 	"go.uber.org/zap"
@@ -25,7 +27,10 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-const PermissionRootSSH = "cloud:feature:cmd" // 匹配数据库中的最新 slug
+const (
+	PrefixRootFile     = "cloud:file:root:"
+	PrefixRootTerminal = "cloud:terminal:root:"
+)
 
 // sshCredentials 用于存储用户的SSH凭证
 type sshCredentials struct {
@@ -87,6 +92,27 @@ func (s *authService) userHasPermission(user *entity.User, permissionSlug string
 	return false
 }
 
+// userHasPermissionPrefix 检查用户是否拥有以特定前缀开头的权限
+func (s *authService) userHasPermissionPrefix(user *entity.User, prefix string) bool {
+	for _, role := range user.Roles {
+		if role.Status != 1 {
+			continue
+		}
+		// 从数据库加载角色的权限
+		fullRole, err := s.roleRepo.FindBySlug(role.Slug)
+		if err != nil || fullRole == nil {
+			logger.Warn("加载角色权限失败", zap.String("role_slug", role.Slug), zap.Error(err))
+			continue
+		}
+		for _, perm := range fullRole.Permissions {
+			if strings.HasPrefix(perm.Slug, prefix) && perm.Status == 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Login 用户登录
 func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, error) {
 	// 校验验证码
@@ -109,23 +135,30 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
+	log.Printf(pwd)
 
 	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
 	// 判断用户是否拥有SSH root权限
-	isRoot := s.userHasPermission(user, PermissionRootSSH)
+	isRoot, _ := s.HasSystemAccess(user.ID, AccessTypeFile)
 
 	// SSH 拨号验证 - 确保Web账号与系统账号同步
 	var sshClient *server.Client
 	if s.sessionManager != nil {
-		sshUser := req.Username
+		var sshUser, sshPassword string
+
+		// 确定 SSH 用户名和密码
 		if isRoot {
 			sshUser = s.sessionManager.GetRootUsername()
-		}
-
-		// 确定用于SSH连接的密码
-		sshPassword := pwd
-		if isRoot && s.sessionManager.Cfg.RootPassword != "" {
-			sshPassword = s.sessionManager.Cfg.RootPassword
+			if s.sessionManager.Cfg.RootPassword != "" {
+				sshPassword = s.sessionManager.Cfg.RootPassword
+			} else {
+				// 如果未配置 root 密码，则尝试使用请求密码（虽然通常 root 用私钥或特定密码）
+				sshPassword = pwd
+			}
+		} else {
+			// 普通用户使用请求中的用户名和密码
+			sshUser = req.Username
+			sshPassword = pwd
 		}
 
 		logger.Info("Attempting SSH verification",
@@ -134,8 +167,9 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			zap.Bool("isRoot", isRoot),
 		)
 
+		var err error
 		sshClient, err = s.verifySSHCredentials(sshUser, sshPassword, isRoot)
-		if err != nil && s.sshServerHost != "" {
+		if err != nil {
 			// 如果配置了SSH服务器但验证失败，拒绝登录
 			logger.Info("SSH验证失败，拒绝登录",
 				zap.String("username", sshUser),
@@ -143,6 +177,8 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 			)
 			return nil, bizerrors.ErrInvalidCredentials
 		}
+		// 验证成功后关闭连接
+		defer sshClient.Close()
 	}
 
 	// 验证数据库密码 (如果SSH验证通过，则跳过DB密码验证并同步密码；否则必须验证DB密码)
@@ -346,14 +382,13 @@ func buildMenuTree(menus []entity.Menu) []dto.MenuTreeNode {
 func (s *authService) EnsureSSHSession(userID int) error {
 	// 获取用户信息（需要角色）
 	user, err := s.userRepo.FindByID(userID)
+	isRoot, err := s.HasSystemAccess(userID, AccessTypeTerminal) // 默认假设是终端访问
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取用户信息失败", err)
 	}
 	if user == nil {
 		return bizerrors.ErrUserNotFound
 	}
-
-	isRoot := s.userHasPermission(user, PermissionRootSSH)
 	return s.EnsureSSHSessionByType(userID, isRoot)
 }
 
@@ -453,7 +488,6 @@ func (s *authService) verifySSHCredentials(username, password string, isRoot boo
 	if s.sshServerHost == "" {
 		return nil, bizerrors.New(bizerrors.CodeInternalError, "SSH服务器地址未配置")
 	}
-
 	sshConfig := &server.Config{
 		Host:     s.sshServerHost,
 		Username: username,
@@ -574,19 +608,24 @@ func (s *authService) SetSSHTimeout(timeout time.Duration) {
 }
 
 // HasSystemAccess 检查用户是否拥有系统级权限 (管理员身份)
-func (s *authService) HasSystemAccess(userID int) (bool, error) {
-	// 检查是否拥有管理员专属路径的权限 (例如用户管理接口，对应您截图中的 ID 204)
-	// 如果用户能访问管理员接口，则认定其为 RootMode 身份
-	hasAdminPerm, err := s.CheckUserPermission(userID, "GET", "/api/v1/admin/users")
-	if err == nil && hasAdminPerm {
-		return true, nil
+func (s *authService) HasSystemAccess(userID int, accessType SystemAccessType) (bool, error) {
+	// 获取用户信息（包含角色）
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return false, err
+	}
+	if user == nil {
+		return false, nil
 	}
 
-	// 也可以增加对系统管理接口的检查 (对应 ID 210)
-	hasSystemPerm, err := s.CheckUserPermission(userID, "GET", "/api/v1/system")
-	if err == nil && hasSystemPerm {
-		return true, nil
+	switch accessType {
+	case AccessTypeTerminal:
+		// 检查是否有 Root 终端权限前缀 OR 旧的 Root 权限
+		return s.userHasPermissionPrefix(user, PrefixRootTerminal), nil
+	case AccessTypeFile:
+		// 检查是否有 Root 文件权限前缀 OR 为了兼容性，如果有 PermissionRootSSH 也认为是 Root 文件权限
+		return s.userHasPermissionPrefix(user, PrefixRootFile), nil
+	default:
+		return false, nil
 	}
-
-	return false, nil
 }
