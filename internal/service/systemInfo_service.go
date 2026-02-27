@@ -140,10 +140,6 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 // 获取磁盘信息（以根分区为例）
 func getDiskInfo() (*response.CpuInfoResponse, error) {
 	mountPoint := "/"
-	//if runtime.GOOS == "windows" {
-	//	mountPoint = "C:\\"
-	//}
-
 	usage, err := disk.Usage(mountPoint)
 	if err != nil {
 		return nil, err
