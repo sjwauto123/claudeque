@@ -190,42 +190,46 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {
-		// 1. 首先创建普通用户会话（总是创建，用于普通文件操作）
-		normalSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, false)
-		if err != nil {
-			logger.Warn("普通用户SSH会话创建失败",
-				zap.Int("user_id", user.ID),
-				zap.String("username", req.Username),
-				zap.Error(err),
-			)
-		} else {
-			if s.sessionRepo != nil {
-				_ = s.sessionRepo.SaveSession(user.ID, normalSession.GetUsername(), false, normalSession.CreatedAt)
-			}
-			logger.Info("普通用户SSH会话已就绪",
-				zap.Int("user_id", user.ID),
-				zap.String("username", req.Username),
-			)
-		}
-
-		// 2. 如果用户有root权限，额外创建root会话
-		if isRoot {
-			rootSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, true)
+		// 异步建立会话，避免阻塞登录响应
+		// 注意：此时密码已经验证通过，所以这里只是建立长连接
+		go func() {
+			// 1. 首先创建普通用户会话（总是创建，用于普通文件操作）
+			normalSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, false)
 			if err != nil {
-				logger.Warn("Root SSH会话创建失败",
+				logger.Warn("普通用户SSH会话创建失败",
 					zap.Int("user_id", user.ID),
+					zap.String("username", req.Username),
 					zap.Error(err),
 				)
 			} else {
 				if s.sessionRepo != nil {
-					_ = s.sessionRepo.SaveSession(user.ID, rootSession.GetUsername(), true, rootSession.CreatedAt)
+					_ = s.sessionRepo.SaveSession(user.ID, normalSession.GetUsername(), false, normalSession.CreatedAt)
 				}
-				logger.Info("Root SSH会话已就绪",
+				logger.Info("普通用户SSH会话已就绪",
 					zap.Int("user_id", user.ID),
-					zap.String("username", rootSession.GetUsername()),
+					zap.String("username", req.Username),
 				)
 			}
-		}
+
+			// 2. 如果用户有root权限，额外创建root会话
+			if isRoot {
+				rootSession, err := s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, true)
+				if err != nil {
+					logger.Warn("Root SSH会话创建失败",
+						zap.Int("user_id", user.ID),
+						zap.Error(err),
+					)
+				} else {
+					if s.sessionRepo != nil {
+						_ = s.sessionRepo.SaveSession(user.ID, rootSession.GetUsername(), true, rootSession.CreatedAt)
+					}
+					logger.Info("Root SSH会话已就绪",
+						zap.Int("user_id", user.ID),
+						zap.String("username", rootSession.GetUsername()),
+					)
+				}
+			}
+		}()
 	}
 
 	// 组装用户信息
