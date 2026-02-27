@@ -6,6 +6,7 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
 	"strings"
+	"time"
 )
 
 type apiService struct {
@@ -40,34 +41,20 @@ func (s *apiService) Create(req *request.CreateAPIRequest) error {
 	if req.HTTPMethod == "" {
 		return errors.NewDefault(errors.CodeMissingParam)
 	}
-
-	// 2. 检查API名称是否重复
-	exists, err := s.apiRepo.ExistsByName(req.Name)
-	if err != nil {
-		return errors.NewWithErr(errors.CodeInternalError, "检查API名称是否重复失败", err)
-	} else if exists {
-		return errors.New(errors.CodeResourceAlreadyExists, "API名称已存在")
+	// 校验 http_path 格式
+	if !strings.HasPrefix(req.HTTPPath, "/api") {
+		return errors.New(errors.CodeInvalidParam, "路径必须以/api开头")
 	}
 
-	// 3. 检查API标识是否重复
-	exists, err = s.apiRepo.ExistsBySlug(req.Slug)
+	// 检查API标识是否重复
+	exists, err := s.apiRepo.ExistsBySlug(req.Slug)
 	if err != nil {
 		return errors.NewWithErr(errors.CodeInternalError, "检查API标识是否重复失败", err)
 	} else if exists {
 		return errors.New(errors.CodeResourceAlreadyExists, "API标识已存在")
 	}
 
-	// 4. 检查HTTP路径是否重复（如果提供了路径）
-	if req.HTTPPath != "" {
-		exists, err = s.apiRepo.ExistsByHTTPPath(req.HTTPPath)
-		if err != nil {
-			return errors.NewWithErr(errors.CodeInternalError, "检查HTTP路径是否重复失败", err)
-		} else if exists {
-			return errors.New(errors.CodeResourceAlreadyExists, "HTTP路径已存在")
-		}
-	}
-
-	// 5. 构造实体对象并保存到数据库
+	// 构造实体对象并保存到数据库
 	api := &entity.Permission{
 		Name:       req.Name,
 		Category:   req.Category,
@@ -78,10 +65,10 @@ func (s *apiService) Create(req *request.CreateAPIRequest) error {
 		Sort:       req.Sort,
 	}
 
-	// 6. 保存到数据库
+	// 保存到数据库
 	err = s.apiRepo.Create(api)
 	if err != nil {
-		// 处理唯一约束冲突（兜底方案）
+		// 处理唯一约束冲突
 		if strings.Contains(err.Error(), "Duplicate entry") ||
 			strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return errors.NewDefault(errors.CodeResourceAlreadyExists)
@@ -93,7 +80,7 @@ func (s *apiService) Create(req *request.CreateAPIRequest) error {
 }
 
 func (s *apiService) Update(req *request.UpdateAPIRequest) error {
-	// 1. 先检查API是否存在
+	// 根据id判断API是否存在
 	existingAPI, err := s.apiRepo.GetAPIByID(req.ID)
 	if err != nil {
 		return errors.NewWithErr(errors.CodeInternalError, "查询API信息失败", err)
@@ -102,46 +89,52 @@ func (s *apiService) Update(req *request.UpdateAPIRequest) error {
 		return errors.New(errors.CodeResourceNotFound, "API不存在")
 	}
 
-	// 2. 构造更新对象
-	api := &entity.Permission{
-		BaseEntity: entity.BaseEntity{
-			ID: req.ID,
-		},
-	}
+	updates := make(map[string]interface{})
 
-	// 3. 更新非空字段
 	if req.Name != "" {
-		api.Name = req.Name
+		updates["name"] = req.Name
 	}
+
 	if req.Category != "" {
-		api.Category = req.Category
+		updates["category"] = req.Category
 	}
+
 	if req.Slug != "" {
-		api.Slug = req.Slug
-	}
-	if req.Status != nil {
-		api.Status = *req.Status
-	}
-	if req.HTTPMethod != "" {
-		api.HttpMethod = req.HTTPMethod
-	}
-	if req.HTTPPath != "" {
-		api.HttpPath = req.HTTPPath
-	}
-	if req.Sort != nil {
-		api.Sort = *req.Sort
-	}
-
-	// 4. 调用Repository层更新数据
-	if err := s.apiRepo.Update(api); err != nil {
-		// 处理唯一约束冲突
-		if strings.Contains(err.Error(), "Duplicate entry") ||
-			strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return errors.NewDefault(errors.CodeResourceAlreadyExists)
+		exists, err := s.apiRepo.ExistsBySlug(req.Slug)
+		if err != nil {
+			return errors.NewWithErr(errors.CodeInternalError, "校验API标识失败", err)
 		}
-		return errors.NewWithErr(errors.CodeInternalError, "更新API失败!", err)
+		if exists {
+			return errors.New(errors.CodeResourceAlreadyExists, "API标识已存在")
+		}
+		updates["slug"] = req.Slug
 	}
 
+	if req.Status != nil {
+		updates["status"] = *req.Status
+	}
+
+	if req.HTTPMethod != "" {
+		updates["http_method"] = req.HTTPMethod
+	}
+
+	if req.HTTPPath != "" {
+		updates["http_path"] = req.HTTPPath
+	}
+
+	if req.Sort != nil {
+		updates["sort"] = *req.Sort
+	}
+
+	if len(updates) == 0 {
+		return nil
+	}
+
+	updates["updated_at"] = time.Now()
+
+	if err := s.apiRepo.Update(req.ID, updates); err != nil {
+		return errors.NewWithErr(errors.CodeInternalError, "更新API失败", err)
+	}
 	return nil
 }
 

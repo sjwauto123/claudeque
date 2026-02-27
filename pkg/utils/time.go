@@ -2,25 +2,34 @@ package utils
 
 import "time"
 
-// GetCurrentTimestamp 获取当前时间戳（秒）
-func GetCurrentTimestamp() int {
-	return int(time.Now().Unix())
-}
+var local = time.Local // 固定时区
 
-// GetCurrentMilliTimestamp 获取当前时间戳（毫秒）
-func GetCurrentMilliTimestamp() int {
-	return int(time.Now().UnixMilli())
-}
-
-// FormatTime 格式化时间
-func FormatTime(t time.Time) string {
-	return t.Format("2006-01-02 15:04:05")
-}
-
-// ParseTime 解析时间字符串（使用本地时区）
-func ParseTime(s string) (time.Time, error) {
+func ParseStartDate(s string) (time.Time, error) {
 	if s == "" {
 		return time.Time{}, nil
 	}
-	return time.ParseInLocation("2006-01-02 15:04:05", s, time.Local)
+
+	t, err := time.ParseInLocation("2006-01-02", s, local)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return start, nil
+}
+
+func ParseEndDate(s string) (time.Time, error) {
+	if s == "" {
+		return time.Time{}, nil
+	}
+
+	t, err := time.ParseInLocation("2006-01-02", s, local)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	// 推荐写法：次日 00:00:00 - 1ns
+	end := time.Date(t.Year(), t.Month(), t.Day()+1, 0, 0, 0, 0, t.Location()).Add(-1)
+
+	return end, nil
 }

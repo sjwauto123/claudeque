@@ -72,9 +72,17 @@ func (s *roleService) Create(req *request.CreateRoleRequest) error {
 }
 
 func (s *roleService) Update(req *request.UpdateRoleRequest) error {
+	// 首先根据id查询该角色是否存在
+	existing, err := s.roleRepo.GetRoleByID(req.ID)
+	if err != nil {
+		return errors.NewWithErr(errors.CodeInternalError, "查询角色失败", err)
+	}
+	if existing == nil {
+		return errors.New(errors.CodeResourceNotFound, "角色不存在")
+	}
+
 	updates := make(map[string]interface{})
 	if req.Name != "" {
-		// 👇 通过 repo 校验
 		exists, err := s.roleRepo.ExistsByName(req.Name)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验角色名失败", err)
@@ -96,17 +104,16 @@ func (s *roleService) Update(req *request.UpdateRoleRequest) error {
 		updates["slug"] = req.Slug
 	}
 
-	//Status: 指针非nil才更新
 	if req.Status != nil {
 		updates["status"] = *req.Status
 	}
 	if len(updates) == 0 {
-		return nil // 没有字段要更新
+		return nil
 	}
 
 	updates["updated_at"] = time.Now()
 	// 调用 repository
-	err := s.roleRepo.Update(req.ID, updates)
+	err = s.roleRepo.Update(req.ID, updates)
 	if err != nil {
 		return errors.NewWithErr(errors.CodeInternalError, "更新角色失败!", err)
 	}

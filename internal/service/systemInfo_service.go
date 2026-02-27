@@ -139,7 +139,6 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 
 // 获取磁盘信息（以根分区为例）
 func getDiskInfo() (*response.CpuInfoResponse, error) {
-	// 获取主挂载点（Linux/macOS 用 "/", Windows 用 "C:\\")
 	mountPoint := "/"
 	//if runtime.GOOS == "windows" {
 	//	mountPoint = "C:\\"
@@ -151,7 +150,7 @@ func getDiskInfo() (*response.CpuInfoResponse, error) {
 	}
 
 	return &response.CpuInfoResponse{
-		DeviceName: "disk", // ·关键：标识为磁盘
+		DeviceName: "磁盘",
 		TotalCap:   bytesToGB(usage.Total),
 		UseCap:     bytesToGB(usage.Used),
 		RemainCap:  bytesToGB(usage.Free),
@@ -171,7 +170,7 @@ func getMemoryInfo() (*response.CpuInfoResponse, error) {
 	free := vmStat.Available
 
 	return &response.CpuInfoResponse{
-		DeviceName: "memory", //  关键：标识为内存
+		DeviceName: "内存",
 		TotalCap:   bytesToGB(total),
 		UseCap:     bytesToGB(used),
 		RemainCap:  bytesToGB(free),
@@ -245,7 +244,6 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 	for _, p := range processes {
 		// 通过本地命令获取进程的详细信息
 		info, err := getProcessDetails(p)
-		fmt.Println("获取的进程详情：", info)
 		if err != nil {
 			logger.Infof("获取进程详细信息失败:%v", err)
 		}
@@ -289,7 +287,7 @@ func getProcessDetails(pid int) (response.ProcessInfoResponse, error) {
 		PID:       strconv.Itoa(pid),
 		GPUname:   gpuName,
 		StartTime: startTime,
-		IsNormal:  1, // 假设进程正常运行
+		IsNormal:  1,
 		Runtime:   r,
 		Command:   cmdline,
 	}, nil

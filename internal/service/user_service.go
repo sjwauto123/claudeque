@@ -101,14 +101,13 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 	}
 
 	// 在VM中创建用户
-	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
-		go func() {
-			if err := s.createVMUser(req.Username, pwd); err != nil {
-				logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
-			} else {
-				logger.Info("VM用户创建成功", zap.String("username", req.Username))
-			}
-		}()
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
+		if err := s.createVMUser(req.Username, pwd); err != nil {
+			logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
+
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建虚拟机用户失败", err)
+		}
+		logger.Info("VM用户创建成功", zap.String("username", req.Username))
 	}
 
 	return nil
@@ -117,10 +116,12 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 // createVMUser 在虚拟机中创建用户
 func (s *userService) createVMUser(username, password string) error {
 	config := &server.Config{
-		Host:     s.sshConfig.ServerHost,
-		Username: s.sshConfig.RootUsername,
-		Password: s.sshConfig.RootPassword,
-		Timeout:  s.sshConfig.Timeout,
+		Host:                 s.sshConfig.ServerHost,
+		Username:             s.sshConfig.RootUsername,
+		Password:             s.sshConfig.RootPassword,
+		PrivateKeyPath:       s.sshConfig.PrivateKeyPath,
+		PrivateKeyPassphrase: s.sshConfig.PrivateKeyPassphrase,
+		Timeout:              s.sshConfig.Timeout,
 	}
 
 	client, err := server.NewClient(config)
@@ -228,7 +229,7 @@ func (s *userService) ChangePassword(id int, req *request.ChangePasswordRequest)
 	}
 
 	// 1. 同步修改虚拟机密码 (方案A：先修改VM，失败则终止)
-	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
 		if err := s.updateVMPassword(user.Username, newPwd); err != nil {
 			logger.Error("Failed to update VM password during ChangePassword", zap.String("username", user.Username), zap.Error(err))
 			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "同步虚拟机密码失败，请稍后重试", err)
@@ -247,10 +248,12 @@ func (s *userService) ChangePassword(id int, req *request.ChangePasswordRequest)
 // updateVMPassword 修改虚拟机中的用户密码
 func (s *userService) updateVMPassword(username, password string) error {
 	config := &server.Config{
-		Host:     s.sshConfig.ServerHost,
-		Username: s.sshConfig.RootUsername,
-		Password: s.sshConfig.RootPassword,
-		Timeout:  s.sshConfig.Timeout,
+		Host:                 s.sshConfig.ServerHost,
+		Username:             s.sshConfig.RootUsername,
+		Password:             s.sshConfig.RootPassword,
+		PrivateKeyPath:       s.sshConfig.PrivateKeyPath,
+		PrivateKeyPassphrase: s.sshConfig.PrivateKeyPassphrase,
+		Timeout:              s.sshConfig.Timeout,
 	}
 
 	client, err := server.NewClient(config)
@@ -302,8 +305,8 @@ func (s *userService) ResetPassword(req *request.ResetPasswordRequest) error {
 		return err
 	}
 
-	// 3. 同步修改虚拟机密码 (方案A：先修改VM，失败则终止)
-	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.RootPassword != "" {
+	// 3. 同步修改虚拟机密码
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
 		if err := s.updateVMPassword(user.Username, newPwd); err != nil {
 			logger.Error("Failed to update VM password during ResetPassword", zap.String("username", user.Username), zap.Error(err))
 			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "同步虚拟机密码失败，请稍后重试", err)

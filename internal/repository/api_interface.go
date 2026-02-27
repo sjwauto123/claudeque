@@ -12,7 +12,7 @@ type APIRepository interface {
 	Create(api *entity.Permission) error
 
 	// Update 更新API
-	Update(api *entity.Permission) error
+	Update(id int, updates map[string]interface{}) error
 
 	// Delete 根据ID删除API
 	Delete(id int) error
@@ -23,12 +23,6 @@ type APIRepository interface {
 	// GetAPIByID 根据ID获取API详情
 	GetAPIByID(id int) (*entity.Permission, error)
 
-	// ExistsByName 判断API名称是否存在
-	ExistsByName(name string) (bool, error)
-
 	// ExistsBySlug 判断API标识是否存在
 	ExistsBySlug(slug string) (bool, error)
-
-	// ExistsByHTTPPath 判断HTTP路径是否存在
-	ExistsByHTTPPath(httpPath string) (bool, error)
 }

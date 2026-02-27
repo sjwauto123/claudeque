@@ -61,39 +61,14 @@ func (r *apiRepository) PageList(offset, limit int, httpPath string, status *int
 	return apis, total, nil
 }
 
-// Create 创建API
 func (r *apiRepository) Create(api *entity.Permission) error {
 	return r.db.Create(api).Error
 }
 
-// Update 更新API
-func (r *apiRepository) Update(api *entity.Permission) error {
-	// 只更新非零值字段，避免更新created_at等字段
-	updates := make(map[string]interface{})
-
-	if api.Name != "" {
-		updates["name"] = api.Name
-	}
-	if api.Category != "" {
-		updates["category"] = api.Category
-	}
-	if api.Slug != "" {
-		updates["slug"] = api.Slug
-	}
-	if api.Status != 0 {
-		updates["status"] = api.Status
-	}
-	if api.HttpMethod != "" {
-		updates["http_method"] = api.HttpMethod
-	}
-	if api.HttpPath != "" {
-		updates["http_path"] = api.HttpPath
-	}
-	if api.Sort != 0 {
-		updates["sort"] = api.Sort
-	}
-
-	return r.db.Model(api).Updates(updates).Error
+func (r *apiRepository) Update(id int, updates map[string]interface{}) error {
+	return r.db.Model(&entity.Permission{}).
+		Where("id = ?", id).
+		Updates(updates).Error
 }
 
 func (r *apiRepository) Delete(id int) error {
@@ -119,30 +94,10 @@ func (r *apiRepository) BatchDelete(ids []int) error {
 	return nil
 }
 
-// ExistsByName 判断API名称是否存在
-func (r *apiRepository) ExistsByName(name string) (bool, error) {
-	var count int64
-	err := r.db.Model(&entity.Permission{}).Where("name = ?", name).Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
 // ExistsBySlug 判断API标识是否存在
 func (r *apiRepository) ExistsBySlug(slug string) (bool, error) {
 	var count int64
 	err := r.db.Model(&entity.Permission{}).Where("slug = ?", slug).Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
-}
-
-// ExistsByHTTPPath 判断HTTP路径是否存在
-func (r *apiRepository) ExistsByHTTPPath(httpPath string) (bool, error) {
-	var count int64
-	err := r.db.Model(&entity.Permission{}).Where("http_path = ?", httpPath).Count(&count).Error
 	if err != nil {
 		return false, err
 	}

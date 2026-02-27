@@ -16,13 +16,13 @@ func NewMenuRepository(db *gorm.DB) MenuRepository {
 
 func (r *menuRepository) PageList(offset, limit int, title string, status *int) (
 	[]*entity.Menu, []*entity.Menu, int64, error) {
+
 	var parents []*entity.Menu
 	var children []*entity.Menu
 	var total int64
-
 	// 只查父菜单
 	query := r.db.Model(&entity.Menu{}).
-		Where("parent_id IS NULL")
+		Where("parent_id = ?", 0)
 
 	if title != "" {
 		query = query.Where("title LIKE ?", "%"+title+"%")
@@ -30,7 +30,6 @@ func (r *menuRepository) PageList(offset, limit int, title string, status *int) 
 	if status != nil {
 		query = query.Where("status = ?", *status)
 	}
-
 	// 统计父级总数
 	if err := query.Count(&total).Error; err != nil {
 		return nil, nil, 0, err
@@ -43,14 +42,13 @@ func (r *menuRepository) PageList(offset, limit int, title string, status *int) 
 		Find(&parents).Error; err != nil {
 		return nil, nil, 0, err
 	}
-
 	// 查子菜单
-	if len(parents) > 0 {
-		var parentIDs []int
-		for _, p := range parents {
-			parentIDs = append(parentIDs, p.ID)
-		}
+	var parentIDs []int
+	for _, p := range parents {
+		parentIDs = append(parentIDs, p.ID)
+	}
 
+	if len(parentIDs) > 0 {
 		if err := r.db.Where("parent_id IN ?", parentIDs).
 			Order("sort ASC").
 			Find(&children).Error; err != nil {
@@ -65,32 +63,10 @@ func (r *menuRepository) Create(menu *entity.Menu) error {
 	return r.db.Create(menu).Error
 }
 
-func (r *menuRepository) Update(menu *entity.Menu) error {
-	updates := make(map[string]interface{})
-
-	if menu.Title != "" {
-		updates["title"] = menu.Title
-	}
-	if menu.Type != "" {
-		updates["type"] = menu.Type
-	}
-	if menu.Status != 0 {
-		updates["status"] = menu.Status
-	}
-	if menu.Icon != "" {
-		updates["icon"] = menu.Icon
-	}
-	if menu.URI != "" {
-		updates["uri"] = menu.URI
-	}
-	if menu.Sort != 0 {
-		updates["sort"] = menu.Sort
-	}
-	if menu.ParentID != 0 {
-		updates["parent_id"] = menu.ParentID
-	}
-
-	return r.db.Model(menu).Updates(updates).Error
+func (r *menuRepository) Update(id int, updates map[string]interface{}) error {
+	return r.db.Model(&entity.Menu{}).
+		Where("id = ?", id).
+		Updates(updates).Error
 }
 
 func (r *menuRepository) Delete(id int) error {
