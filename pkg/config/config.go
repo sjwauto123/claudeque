@@ -85,11 +85,13 @@ type CORSConfig struct {
 
 // ServerConfig 训练服务器配置
 type ServerConfig struct {
-	Host           string        `mapstructure:"host"`            // 服务器地址，如 "192.168.1.100:22"
-	RootUsername   string        `mapstructure:"root_username"`   // 管理员SSH用户名（默认root）
-	RootPassword   string        `mapstructure:"root_password"`   // 管理员SSH密码
-	BasePath       string        `mapstructure:"base_path"`       // 服务器上的基础文件路径
-	Timeout        time.Duration `mapstructure:"timeout"`         // 连接超时
-	SessionTimeout time.Duration `mapstructure:"session_timeout"` // 会话超时时间，0表示永不超时
-	Enabled        bool          `mapstructure:"enabled"`         // 是否启用训练服务器
+	Host                 string        `mapstructure:"host"`                   // 服务器地址，如 "192.168.1.100:22"
+	RootUsername         string        `mapstructure:"root_username"`          // 管理员SSH用户名（默认root）
+	RootPassword         string        `mapstructure:"root_password"`          // 管理员SSH密码
+	PrivateKeyPath       string        `mapstructure:"private_key_path"`       // 私钥文件路径
+	PrivateKeyPassphrase string        `mapstructure:"private_key_passphrase"` // 私钥密码
+	BasePath             string        `mapstructure:"base_path"`              // 服务器上的基础文件路径
+	Timeout              time.Duration `mapstructure:"timeout"`                // 连接超时
+	SessionTimeout       time.Duration `mapstructure:"session_timeout"`        // 会话超时时间，0表示永不超时
+	Enabled              bool          `mapstructure:"enabled"`                // 是否启用训练服务器
 }

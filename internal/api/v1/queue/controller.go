@@ -35,12 +35,12 @@ func (ctrl *Controller) GetQueue(ctx *gin.Context) {
 		response.BadRequest(ctx, err.Error())
 		return
 	}
-	startTime, err := utils.ParseTime(req.StartTime)
+	startTime, err := utils.ParseStartDate(req.StartTime)
 	if err != nil {
 		response.BadRequest(ctx, "开始时间格式错误")
 		return
 	}
-	endTime, err := utils.ParseTime(req.EndTime)
+	endTime, err := utils.ParseEndDate(req.EndTime)
 	if err != nil {
 		response.BadRequest(ctx, "截至时间格式错误")
 		return

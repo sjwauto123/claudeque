@@ -76,7 +76,7 @@ func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 
 		// 获取当前请求信息
 		method := c.Request.Method
-		path := c.FullPath()
+		path := c.FullPath() 
 
 		// 数据库判断
 		hasPermission, err := authService.CheckUserPermission(userID, method, path)

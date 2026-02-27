@@ -64,21 +64,12 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return
 	}
 
-	// 判断身份：根据 URL 参数决定是 root 终端还是普通用户终端
-	mode := c.Param("mode")
-	isRoot := (mode == "root")
-
-	// 如果是 root 模式，需要检查用户是否拥有系统级权限
-	if isRoot {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权访问 root 终端")
-			return
-		}
+	// 判断身份：根据用户权限决定是 root 终端还是普通用户终端
+	// 如果用户拥有系统级权限，则使用 root 终端，否则使用普通用户终端
+	isRoot, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
 
 	// 确保对应身份的 SSH 会话存在 (支持会话恢复)

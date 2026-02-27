@@ -5,6 +5,7 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
+	"fmt"
 	"io"
 	"mime/multipart"
 	"net/url"
@@ -38,23 +39,24 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 	}
 
 	var req request.FileListRequest
+	// 优先尝试从 Query 参数获取 (标准 GET 请求)
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
+		// 如果 Query 绑定失败或为空，尝试从 JSON Body 获取 (支持前端非标准调用)
+		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+	// 二次检查：如果 Query 绑定成功但关键参数为空，尝试 JSON
+	// 注意：FileListRequest 的字段可能都不是必填的，所以这里只是尝试性补充
+	if req.Path == "" && req.Page == 0 && req.PageSize == 0 {
+		_ = c.ShouldBindJSON(&req)
 	}
 
-	isRootMode := (req.Mode == request.System)
-
-	if isRootMode {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权访问系统文件")
-			return
-		}
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
 
 	data, err := ctrl.fileService.GetFileList(userID, &req, isRootMode)
@@ -94,18 +96,10 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
-
-	if isRootMode {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权获取系统磁盘使用情况")
-			return
-		}
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
 
 	data, err := ctrl.fileService.GetDiskUsage(userID, req.Path, isRootMode)
@@ -126,12 +120,26 @@ func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 	}
 
 	var req request.FileListRequest
+	// 优先尝试从 Query 参数获取 (标准 GET 请求)
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		// 如果 Query 绑定失败，尝试从 JSON Body 获取
+		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+	// 如果 Query 参数没传，尝试 JSON
+	if req.Path == "" && req.Page == 0 && req.PageSize == 0 {
+		_ = c.ShouldBindJSON(&req)
+	}
+
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
 		return
 	}
 
-	data, err := ctrl.fileService.GetHomeDirectoriesList(userID, &req)
+	data, err := ctrl.fileService.GetHomeDirectoriesList(userID, &req, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -144,23 +152,23 @@ func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 func (ctrl *Controller) CalculateSize(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.DiskUsageRequest
+	// 优先尝试从 Query 参数获取
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
+		// 如果 Query 绑定失败，尝试从 JSON Body 获取
+		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+	// 二次检查：如果 Query 绑定成功但 Path 为空，尝试 JSON
+	if req.Path == "" {
+		_ = c.ShouldBindJSON(&req)
 	}
 
-	isRootMode := (req.Mode == request.System)
-
-	if isRootMode {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权计算系统文件大小")
-			return
-		}
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
 
 	size, sizeStr, usage, err := ctrl.fileService.CalculateSize(userID, req.Path, isRootMode)
@@ -185,21 +193,13 @@ func (ctrl *Controller) DeleteFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
-
-	if isRootMode {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权删除系统文件")
-			return
-		}
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
 
-	err := ctrl.fileService.DeleteFile(userID, req.Path, isRootMode)
+	err = ctrl.fileService.DeleteFile(userID, req.Path, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -230,18 +230,10 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 	}(file)
 
 	// 判断是系统模式还是用户模式
-	isRootMode := (req.Mode == request.System)
-
-	if isRootMode {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权上传系统文件")
-			return
-		}
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
 
 	data, err := ctrl.fileService.UploadFile(userID, file, req.File, req.TargetPath, isRootMode)
@@ -257,26 +249,31 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 func (ctrl *Controller) DownloadFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.DownloadRequest
+	// 优先尝试从 Query 参数获取 (支持浏览器直接下载)
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		// 如果 Query 参数绑定失败(通常是校验失败)，或者没有传参
+		// 尝试从 JSON Body 获取 (支持前端 POST/GET JSON 调用)
+		// 注意：GET 请求带 Body 不符合标准，但在某些内部调用中可能存在
+		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			// 如果两者都失败，返回 Query 的错误(或者根据情况返回)
+			response.BadRequest(c, "Invalid parameters: "+err.Error())
+			return
+		}
+	}
+	// 二次校验：如果 Query 绑定成功但 Path 为空(虽然有 required 校验，但为了稳妥)，再次尝试 JSON
+	if req.Path == "" {
+		if err := c.ShouldBindJSON(&req); err != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
 		return
 	}
-
-	isRootMode := (req.Mode == request.System)
-
-	if isRootMode {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权下载系统文件")
-			return
-		}
-	}
-
-	reader, filename, err := ctrl.fileService.DownloadFile(userID, req.Path, isRootMode)
+	reader, filename, fileSize, err := ctrl.fileService.DownloadFile(userID, req.Path, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
@@ -289,7 +286,7 @@ func (ctrl *Controller) DownloadFile(c *gin.Context) {
 	}(reader)
 
 	c.Header("Content-Disposition", "attachment; filename="+url.QueryEscape(filename))
-	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Length", fmt.Sprintf("%d", fileSize))
 	_, err = io.Copy(c.Writer, reader)
 	if err != nil {
 		return
@@ -305,21 +302,13 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 		return
 	}
 
-	isRootMode := (req.Mode == request.System)
-
-	if isRootMode {
-		hasAccess, err := ctrl.authService.HasSystemAccess(userID)
-		if err != nil {
-			response.BizError(c, err)
-			return
-		}
-		if !hasAccess {
-			response.Forbidden(c, "无权解压系统文件")
-			return
-		}
+	isRootMode, err := ctrl.authService.HasSystemAccess(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
 	}
 
-	err := ctrl.fileService.UnzipFile(userID, &req, isRootMode)
+	err = ctrl.fileService.UnzipFile(userID, &req, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
