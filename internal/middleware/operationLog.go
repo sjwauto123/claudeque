@@ -168,14 +168,75 @@ func getDataFormPath(c *gin.Context, requestData string) string {
 }
 
 func getDataFormBody(c *gin.Context, requestData string) string {
-	if requestData == "" && c.Request.Method != http.MethodGet {
+	if c.Request.Method == http.MethodGet {
+		return requestData
+	}
+
+	// 检查是否是文件上传请求
+	contentType := c.Request.Header.Get("Content-Type")
+	isFileUpload := strings.Contains(contentType, "multipart/form-data")
+
+	if isFileUpload {
+		// 处理文件上传，只获取文件名
+		if err := c.Request.ParseMultipartForm(10 << 20); err == nil { // 10MB 限制
+			// 获取普通表单字段（包括目标路径等参数）
+			formData := make(map[string]string)
+			for key, values := range c.Request.PostForm {
+				if len(values) > 0 {
+					formData[key] = values[0]
+				}
+			}
+
+			// 获取文件字段
+			fileInfo := make(map[string]string)
+			for fieldName, files := range c.Request.MultipartForm.File {
+				if len(files) > 0 {
+					// 只记录文件名，不记录文件内容
+					fileInfo[fieldName] = files[0].Filename
+				}
+			}
+
+			// 构建请求数据
+			var dataParts []string
+
+			// 添加普通表单字段
+			for key, value := range formData {
+				dataParts = append(dataParts, key+"="+value)
+			}
+
+			// 添加文件信息
+			if len(fileInfo) > 0 {
+				fileInfoJSON, err := json.Marshal(fileInfo)
+				if err == nil {
+					dataParts = append(dataParts, "files="+string(fileInfoJSON))
+				}
+			}
+
+			// 合并所有数据
+			if len(dataParts) > 0 {
+				formDataStr := strings.Join(dataParts, "&")
+				// 如果已有请求数据，追加表单数据
+				if requestData != "" {
+					requestData += "&" + formDataStr
+				} else {
+					requestData = formDataStr
+				}
+			}
+		}
+	} else {
+		// 非文件上传请求，处理请求体
 		if c.Request.Body != nil && c.Request.ContentLength > 0 {
 			requestBody, err := io.ReadAll(c.Request.Body)
 			if err == nil {
-				requestData = string(requestBody)
+				// 如果已有请求数据，追加请求体
+				if requestData != "" {
+					requestData += "&body=" + string(requestBody)
+				} else {
+					requestData = string(requestBody)
+				}
+				// 重置请求体，供后续处理使用
+				c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 			}
-			// 重置请求体
-			c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 		}
 
 		// 如果请求体为空，尝试从表单获取
