@@ -141,7 +141,8 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 				zap.String("username", sshUser),
 				zap.Error(err),
 			)
-			return nil, bizerrors.ErrInvalidCredentials
+			// 返回明确的 SSH 登录失败错误
+			return nil, bizerrors.NewWithErr(bizerrors.CodeSSHLoginFailed, "SSH登录失败：请检查用户名或密码", err)
 		}
 	}
 
@@ -164,7 +165,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	} else {
 		// 未进行SSH验证（例如未配置SSH Host），必须验证DB密码
 		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
-			return nil, bizerrors.ErrInvalidCredentials
+			return nil, bizerrors.New(bizerrors.CodeInvalidCredentials, "登录失败：数据库密码错误")
 		}
 	}
 
@@ -187,7 +188,6 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}
 
 	//////////////////////////建立SSH会话/////////////////////
-
 	// 创建SSH会话（如果会话管理器已启用）
 	if s.sessionManager != nil {
 		go func() {
