@@ -21,11 +21,6 @@ type LoginRequest struct {
 	Captcha   string `json:"captcha" binding:"required,len=4"`
 }
 
-// UpdateUserRequest 更新用户信息中的用户名
-type UpdateUserRequest struct {
-	Username string `json:"username" binding:"omitempty,max=50"`
-}
-
 // ChangePasswordRequest 修改密码请求
 type ChangePasswordRequest struct {
 	OldPassword     string `json:"old_password" binding:"required"`
@@ -53,9 +48,7 @@ type CreateRequest struct {
 
 // AdminUpdateUserRequest 管理员更新用户信息请求
 type AdminUpdateUserRequest struct {
-	Username string `json:"username" binding:"omitempty,min=3,max=50"`
-	Email    string `json:"email" binding:"omitempty,email"`
-
+	Email         string    `json:"email" binding:"omitempty,email"`
 	Status        *int      `json:"status" binding:"omitempty,oneof=0 1"` // 0:禁用 1:正常
 	Password      string    `json:"password" binding:"omitempty,min=6,max=50"`
 	Priority      *int      `json:"priority" binding:"omitempty,oneof=1 2"`

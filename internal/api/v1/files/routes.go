@@ -27,8 +27,8 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	userDirGroup := router.Group("/directories")
 	{
 		// 计算目录磁盘占比和大小
-		userDirGroup.GET("/calculate-usage", middleware.WithOperation("计算目录磁盘占比和大小"), ctrl.GetDiskUsage)
+		userDirGroup.GET("/calculate-usage", middleware.WithOperation("计算目录磁盘大小"), ctrl.GetDiskUsage)
 		// 列出 /home 目录下的所有用户目录
-		userDirGroup.GET("/list-home", middleware.WithOperation("列出 /home 目录下的所有用户目录"), ctrl.ListHomeDirectories)
+		userDirGroup.GET("/list-home", middleware.WithOperation("列出所有用户目录"), ctrl.ListHomeDirectories)
 	}
 }

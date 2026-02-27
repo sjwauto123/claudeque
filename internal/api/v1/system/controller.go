@@ -68,13 +68,17 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 		return
 	}
 
-	userID := value.(int)
+	//类型断言
+	userID, ok := value.(int)
+	if !ok {
+		response.BadRequest(c, "用户信息类型错误")
+		return
+	}
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		logger.Info("Failed to upgrade to WebSocket:")
-		// Gin 已接管 writer，不能写 JSON，直接 return
 		return
 	}
 	// 处理WebSocket连接

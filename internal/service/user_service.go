@@ -177,18 +177,6 @@ func (s *userService) GetUserByUsername(username string) (*entity.User, error) {
 	return user, nil
 }
 
-// UpdateUser 更新用户信息
-func (s *userService) UpdateUser(id int, req *request.UpdateUserRequest) error {
-	user, err := s.GetUserByID(id)
-	if err != nil {
-		return err
-	}
-
-	user.Username = req.Username
-
-	return s.userRepo.Update(user)
-}
-
 func (s *userService) UpdateAvatar(id int, avatarPath string) error {
 	user, err := s.GetUserByID(id)
 	if err != nil {
