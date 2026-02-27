@@ -205,10 +205,10 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionResp
 
 	menuTree := s.buildMenuTree(menus, roleMenuMap)
 
-	// 👇 新增：提取 category 顺序
+	//  提取 category 顺序
 	categoryOrder := s.extractCategoryOrder(menuTree)
 
-	// 👇 修改：传入 categoryOrder
+	//  传入 categoryOrder
 	apiGroups := s.buildApiPermissions(permissions, rolePermMap, categoryOrder)
 
 	return &dto.RolePermissionResponse{
