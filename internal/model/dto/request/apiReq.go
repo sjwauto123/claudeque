@@ -15,11 +15,11 @@ type CreateAPIRequest struct {
 	entity.BaseEntity
 	Name       string `json:"name" binding:"required,min=1,max=255"`
 	Category   string `json:"category" binding:"required"`
-	Type       string `json:"type" binding:"omitempty"`
+	Type       string `json:"type" binding:"required"`
 	Slug       string `json:"slug" binding:"required,min=1,max=50"`
-	Status     *int   `json:"status" binding:"oneof=0 1"` // 0=停用, 1=启用
-	HTTPMethod string `json:"http_method" binding:"omitempty,oneof=GET POST PUT DELETE"`
-	HTTPPath   string `json:"http_path" binding:"omitempty,max=65535"`
+	Status     *int   `json:"status" binding:"required,oneof=0 1"` // 0=停用, 1=启用
+	HTTPMethod string `json:"http_method" binding:"required,oneof=GET POST PUT DELETE"`
+	HTTPPath   string `json:"http_path" binding:"required,max=65535"`
 	Sort       int    `json:"sort" binding:"required"`
 }
 

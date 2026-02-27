@@ -15,8 +15,8 @@ type CreateMenuRequest struct {
 	entity.BaseEntity
 	ParentID *int   `json:"parent_id" binding:"omitempty"`
 	Title    string `json:"title" binding:"required,min=1,max=50"`
-	Type     string `json:"type" binding:"required,oneof=catalogue menu button"` // 修改为 button
-	Status   *int   `json:"status" binding:"required,oneof=0 1"`                 // 0=停用, 1=启用
+	Type     string `json:"type" binding:"required,oneof=catalogue menu"`
+	Status   *int   `json:"status" binding:"required,oneof=0 1"`
 	Icon     string `json:"icon" binding:"omitempty,max=50"`
 	URI      string `json:"uri" binding:"required,min=1,max=50"`
 	Sort     int    `json:"sort" binding:"required"`
