@@ -16,13 +16,12 @@ func NewAdminOperationLogRepository(db *gorm.DB) AdminOperationLogRepository {
 }
 
 func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWord string) (*[]dto.AdminLogResponse, int64, error) {
-	// 使用 JOIN 方式限制查询范围为最新的5000条记录，性能优于 IN 子查询
-	query := a.db.Table("admin_operation_log AS l").
-		Select("l.username, l.action_type, l.object, l.status, l.created_at").
-		Joins("INNER JOIN (SELECT id FROM admin_operation_log ORDER BY created_at DESC LIMIT 5000) AS latest ON l.id = latest.id")
+	// 使用 EXISTS 子查询限制查询范围为最新的5000条记录
+	query := a.db.Model(&entity.AdminOperationLog{}).
+		Where("EXISTS (SELECT 1 FROM (SELECT id FROM admin_operation_log ORDER BY created_at DESC LIMIT 5000) AS latest WHERE latest.id = admin_operation_log.id)")
 
 	if keyWord != "" {
-		query = query.Where("l.username LIKE ? OR l.action_type LIKE ? OR l.object LIKE  ?", "%"+keyWord+"%", "%"+keyWord+"%", "%"+keyWord+"%")
+		query = query.Where("username LIKE ? OR action_type LIKE ? OR object LIKE  ?", "%"+keyWord+"%", "%"+keyWord+"%", "%"+keyWord+"%")
 	}
 
 	var total int64
@@ -31,7 +30,7 @@ func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWor
 	}
 
 	var logs []dto.AdminLogResponse
-	if err := query.Offset(offset).Limit(size).Order("l.created_at DESC").Find(&logs).Error; err != nil {
+	if err := query.Offset(offset).Limit(size).Order("created_at DESC").Find(&logs).Error; err != nil {
 		return nil, 0, err
 	}
 

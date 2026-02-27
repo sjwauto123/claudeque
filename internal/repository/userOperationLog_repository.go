@@ -18,28 +18,27 @@ func NewUserOperationLogRepository(db *gorm.DB) UserOperationLogRepository {
 
 // FindUserLogs 查询非关机或重启类型的日志
 func (u *userOperationLogRepository) FindUserLogs(offset int, size int, username string, actionType string, start time.Time, end time.Time) (*[]dto.UserLogsResponse, int64, error) {
-	// 使用 JOIN 方式限制查询范围为最新的5000条记录，性能优于 IN 子查询
-	query := u.db.Table("operation_logs AS l").
-		Select("l.id, l.username, l.method, l.request_data, l.action_type, l.path, l.status, l.created_at, l.updated_at").
-		Joins("INNER JOIN (SELECT id FROM operation_logs ORDER BY created_at DESC LIMIT 5000) AS latest ON l.id = latest.id")
+	// 使用 EXISTS 子查询限制查询范围为最新的5000条记录
+	query := u.db.Model(&entity.UserOperationLog{}).
+		Where("EXISTS (SELECT 1 FROM (SELECT id FROM operation_logs ORDER BY created_at DESC LIMIT 5000) AS latest WHERE latest.id = operation_logs.id)")
 
 	// 操作类型
 	if actionType != "" {
-		query = query.Where("l.action_type LIKE ?", "%"+actionType+"%")
+		query = query.Where("action_type LIKE ?", "%"+actionType+"%")
 	}
 
 	// 用户名（模糊）
 	if username != "" {
-		query = query.Where("l.username LIKE ?", "%"+username+"%")
+		query = query.Where("username LIKE ?", "%"+username+"%")
 	}
 
 	// 时间范围（灵活支持单边）
 	if !start.Equal(time.Time{}) {
-		query = query.Where("l.created_at >= ?", start)
+		query = query.Where("created_at >= ?", start)
 	}
 
 	if !end.Equal(time.Time{}) {
-		query = query.Where("l.created_at <= ?", end)
+		query = query.Where("created_at <= ?", end)
 	}
 
 	// 总数
@@ -50,7 +49,7 @@ func (u *userOperationLogRepository) FindUserLogs(offset int, size int, username
 
 	// 分页数据
 	var logs []dto.UserLogsResponse
-	if err := query.Offset(offset).Limit(size).Order("l.created_at DESC").Find(&logs).Error; err != nil {
+	if err := query.Offset(offset).Limit(size).Order("created_at DESC").Find(&logs).Error; err != nil {
 		return nil, 0, err
 	}
 
