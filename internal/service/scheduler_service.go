@@ -166,7 +166,7 @@ func (s *scheduler) terminateSingleJob(jobID int, jp *JobProcess) {
 func (s *scheduler) run() {
 	defer s.wg.Done()
 
-	ticker := time.NewTicker(600 * time.Second)
+	ticker := time.NewTicker(3600 * time.Second)
 	defer ticker.Stop()
 
 	for {
