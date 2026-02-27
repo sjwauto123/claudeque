@@ -76,7 +76,7 @@ func (r *roleRepository) Create(role *entity.Role) error {
 
 func (r *roleRepository) Update(id int, updates map[string]interface{}) error {
 	return r.db.Model(&entity.Role{}).
-		Where("id = ? AND deleted_at IS NULL", id).
+		Where("id = ?", id).
 		Updates(updates).Error
 }
 

@@ -7,6 +7,7 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
 	"strings"
+	"time"
 )
 
 type menuService struct {
@@ -104,6 +105,7 @@ func (s *menuService) Create(req *request.CreateMenuRequest) error {
 }
 
 func (s *menuService) Update(req *request.UpdateMenuRequest) error {
+	// 根据id校验菜单是否存在
 	existingMenu, err := s.menuRepo.GetMenuByID(req.ID)
 	if err != nil {
 		return errors.NewWithErr(errors.CodeInternalError, "查询菜单信息失败", err)
@@ -112,40 +114,58 @@ func (s *menuService) Update(req *request.UpdateMenuRequest) error {
 		return errors.New(errors.CodeResourceNotFound, "菜单不存在")
 	}
 
-	menu := &entity.Menu{
-		BaseEntity: entity.BaseEntity{
-			ID: req.ID,
-		},
-	}
+	updates := make(map[string]interface{})
 
 	if req.Title != "" {
-		menu.Title = req.Title
-	}
-	if req.Type != "" {
-		menu.Type = req.Type
-	}
-	if req.Status != nil {
-		menu.Status = *req.Status
-	}
-	if req.Icon != "" {
-		menu.Icon = req.Icon
-	}
-	if req.URI != "" {
-		menu.URI = req.URI
-	}
-	if req.Sort != nil {
-		menu.Sort = *req.Sort
-	}
-	if req.ParentID != 0 {
-		menu.ParentID = req.ParentID
+		exists, err := s.menuRepo.ExistsByTitle(req.Title)
+		if err != nil {
+			return errors.NewWithErr(errors.CodeInternalError, "校验菜单标题失败", err)
+		}
+		if exists {
+			return errors.New(errors.CodeResourceAlreadyExists, "菜单标题已存在")
+		}
+		updates["title"] = req.Title
 	}
 
-	if err := s.menuRepo.Update(menu); err != nil {
-		if strings.Contains(err.Error(), "Duplicate entry") ||
-			strings.Contains(err.Error(), "UNIQUE constraint failed") {
-			return errors.NewDefault(errors.CodeResourceAlreadyExists)
+	if req.URI != "" {
+		exists, err := s.menuRepo.ExistsByURI(req.URI)
+		if err != nil {
+			return errors.NewWithErr(errors.CodeInternalError, "校验菜单 URI 失败", err)
 		}
-		return errors.NewWithErr(errors.CodeInternalError, "更新菜单失败!", err)
+		if exists {
+			return errors.New(errors.CodeResourceAlreadyExists, "菜单 URI 已存在")
+		}
+		updates["uri"] = req.URI
+	}
+
+	if req.Type != "" {
+		updates["type"] = req.Type
+	}
+
+	if req.Status != nil {
+		updates["status"] = *req.Status
+	}
+
+	if req.Icon != "" {
+		updates["icon"] = req.Icon
+	}
+
+	if req.Sort != nil {
+		updates["sort"] = *req.Sort
+	}
+	if req.ParentID != 0 {
+		updates["parent_id"] = req.ParentID
+	}
+	if len(updates) == 0 {
+		return nil
+	}
+
+	// 设置更新时间
+	updates["updated_at"] = time.Now()
+
+	// 3. 执行更新
+	if err := s.menuRepo.Update(req.ID, updates); err != nil {
+		return errors.NewWithErr(errors.CodeInternalError, "更新菜单失败", err)
 	}
 
 	return nil
