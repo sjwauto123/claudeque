@@ -61,7 +61,7 @@ func (s *roleService) Create(req *request.CreateRoleRequest) error {
 	}
 	err = s.roleRepo.Create(role)
 	if err != nil {
-		// 是否唯一约束冲突(兜底方案)
+		// 是否唯一约束冲突
 		if strings.Contains(err.Error(), "Duplicate entry") ||
 			strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return errors.NewDefault(errors.CodeResourceAlreadyExists)
@@ -219,8 +219,8 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionResp
 
 // 构建菜单树
 func (s *roleService) buildMenuTree(menus []entity.Menu, roleMenuMap map[int]bool) []*dto.MenuNodeResponse {
-	nodeMap := make(map[int]*dto.MenuNodeResponse)
 
+	nodeMap := make(map[int]*dto.MenuNodeResponse)
 	for _, m := range menus {
 		nodeMap[m.ID] = &dto.MenuNodeResponse{
 			ID:      m.ID,
@@ -273,7 +273,7 @@ func (s *roleService) buildApiPermissions(
 				Category: cat,
 				List:     list,
 			})
-			delete(groupMap, cat) // 避免重复
+			delete(groupMap, cat)
 		}
 	}
 
@@ -286,10 +286,6 @@ func (s *roleService) buildApiPermissions(
 	}
 
 	return res
-}
-
-func (s *roleService) UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error {
-	return s.roleRepo.UpdateRolePermission(roleID, req.MenuIDs, req.PermissionIDs)
 }
 
 // extractCategoryOrder 从菜单树中提取所有叶子节点的 Title（即 category 顺序）
@@ -307,4 +303,8 @@ func (s *roleService) extractCategoryOrder(menuTree []*dto.MenuNodeResponse) []s
 		}
 	}
 	return order
+}
+
+func (s *roleService) UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error {
+	return s.roleRepo.UpdateRolePermission(roleID, req.MenuIDs, req.PermissionIDs)
 }

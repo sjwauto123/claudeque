@@ -53,7 +53,7 @@ func (r *apiRepository) PageList(offset, limit int, httpPath string, status *int
 	}
 
 	// 获取分页数据，按序号排序
-	err = query.Order("sort").Offset(offset).Limit(limit).Find(&apis).Error
+	err = query.Order("category").Order("sort").Offset(offset).Limit(limit).Find(&apis).Error
 	if err != nil {
 		return nil, 0, err
 	}
