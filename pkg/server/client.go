@@ -65,30 +65,32 @@ func NewClient(config *Config) (*Client, error) {
 	// 1. 尝试加载私钥认证
 	if config.PrivateKeyPath != "" {
 		key, err := os.ReadFile(config.PrivateKeyPath)
-		if err == nil {
-			// 去除可能的空白字符
-			key = bytes.TrimSpace(key)
-			var signer ssh.Signer
+		if err != nil {
+			return nil, fmt.Errorf("读取私钥文件失败: %w", err)
+		}
 
-			// 优先尝试带密码解析（如果配置了密码）
-			if config.PrivateKeyPassphrase != "" {
-				s, err := ssh.ParsePrivateKeyWithPassphrase(key, []byte(config.PrivateKeyPassphrase))
-				if err == nil {
-					signer = s
-				}
-			}
+		// 去除可能的空白字符
+		key = bytes.TrimSpace(key)
+		var signer ssh.Signer
 
-			// 如果signer仍为空（没配置密码，或带密码解析失败），尝试无密码解析
-			if signer == nil {
-				s, err := ssh.ParsePrivateKey(key)
-				if err == nil {
-					signer = s
-				}
+		// 优先尝试带密码解析（如果配置了密码）
+		if config.PrivateKeyPassphrase != "" {
+			s, err := ssh.ParsePrivateKeyWithPassphrase(key, []byte(config.PrivateKeyPassphrase))
+			if err != nil {
+				return nil, fmt.Errorf("解析带密码的私钥失败: %w", err)
 			}
+			signer = s
+		} else {
+			// 尝试无密码解析
+			s, err := ssh.ParsePrivateKey(key)
+			if err != nil {
+				return nil, fmt.Errorf("解析私钥失败: %w", err)
+			}
+			signer = s
+		}
 
-			if signer != nil {
-				authMethods = append(authMethods, ssh.PublicKeys(signer))
-			}
+		if signer != nil {
+			authMethods = append(authMethods, ssh.PublicKeys(signer))
 		}
 	}
 

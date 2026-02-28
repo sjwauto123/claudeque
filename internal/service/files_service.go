@@ -418,7 +418,10 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 	}
 
 	// Ensure target directory exists
-	_ = client.MkdirAll(resolvedPath)
+	if err := client.MkdirAll(resolvedPath); err != nil {
+		logger.Errorf("创建目录失败: userID=%d, resolvedPath=%s, err=%v", userID, resolvedPath, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("创建目录失败: %s", resolvedPath), err)
+	}
 
 	remotePath := path.Join(resolvedPath, header.Filename)
 	dst, err := client.Create(remotePath)
@@ -483,15 +486,36 @@ func (s *fileService) DeleteFile(userID int, p string, isRootMode bool) error {
 		return err
 	}
 
-	// 使用 rm -rf 强制删除，支持文件和目录
+	// 1. 检查文件是否存在
+	sftpClient, err := s.getSftpClient(userID, isRootMode)
+	if err != nil {
+		return err
+	}
+	_, err = sftpClient.Stat(resolvedPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return errors.New(errors.CodeInvalidParam, "文件或目录不存在")
+		}
+		return errors.NewWithErr(errors.CodeInternalError, "获取文件状态失败", err)
+	}
+
+	// 2. 使用 rm -rf 强制删除，支持文件和目录
 	safePath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
 	cmd := fmt.Sprintf("rm -rf %s", safePath)
 
 	_, err = s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		logger.Errorf("执行删除命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-		return err
+		return errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "执行删除命令失败", err)
 	}
+
+	// 3. 再次检查文件是否存在，确认删除成功
+	if _, err := sftpClient.Stat(resolvedPath); err == nil {
+		return errors.New(errors.CodeInternalError, "删除失败，可能权限不足")
+	} else if !os.IsNotExist(err) {
+		return errors.NewWithErr(errors.CodeInternalError, "验证删除结果失败", err)
+	}
+
 	return nil
 }
 
@@ -515,7 +539,7 @@ func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMod
 	_, err = s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		logger.Errorf("执行解压命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-		return err
+		return errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "执行解压命令失败", err)
 	}
 	return nil
 }
@@ -534,7 +558,7 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		logger.Errorf("执行du命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-		return nil, err
+		return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "执行du命令失败", err)
 	}
 
 	sizeStr := strings.TrimSpace(output)

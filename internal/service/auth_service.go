@@ -135,7 +135,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
-	log.Printf(pwd)
+	log.Println(pwd)
 
 	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
 	// 判断用户是否拥有SSH root权限
@@ -170,7 +170,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 					zap.String("username", req.Username),
 					zap.Error(err),
 				)
-				return nil, bizerrors.ErrInvalidCredentials
+				return nil, bizerrors.NewWithErr(bizerrors.CodeInvalidCredentials, "SSH验证失败", err)
 			}
 		}
 
