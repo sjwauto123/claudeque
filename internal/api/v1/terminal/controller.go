@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"cloudque/pkg/logger"
+	"cloudque/pkg/server"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -117,7 +118,12 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		response.BizError(c, err)
 		return
 	}
-	defer ts.Close()
+	defer func(ts *server.TerminalSession) {
+		err := ts.Close()
+		if err != nil {
+			return
+		}
+	}(ts)
 
 	wg.Add(1)
 	go func() {

@@ -112,7 +112,6 @@ func NewClient(config *Config) (*Client, error) {
 		// 增加对旧版加密算法的支持，以防服务器较旧或算法不匹配
 		HostKeyAlgorithms: []string{
 			ssh.KeyAlgoRSA,
-			ssh.KeyAlgoDSA,
 			ssh.KeyAlgoECDSA256,
 			ssh.KeyAlgoECDSA384,
 			ssh.KeyAlgoECDSA521,
@@ -132,7 +131,10 @@ func dialAndCreateClient(config *Config, sshConfig *ssh.ClientConfig) (*Client, 
 
 	sftpClient, err := sftp.NewClient(sshClient)
 	if err != nil {
-		sshClient.Close()
+		err := sshClient.Close()
+		if err != nil {
+			return nil, fmt.Errorf("SSH连接关闭失败: %w", err)
+		}
 		return nil, fmt.Errorf("SFTP连接失败: %w", err)
 	}
 
@@ -173,7 +175,12 @@ func (c *Client) UploadFile(localPath, remotePath string) error {
 	if err != nil {
 		return fmt.Errorf("打开本地文件失败: %w", err)
 	}
-	defer src.Close()
+	defer func(src *os.File) {
+		err := src.Close()
+		if err != nil {
+			return
+		}
+	}(src)
 
 	remoteDir := filepath.Dir(remotePath)
 	if err := c.MkdirAll(remoteDir); err != nil {
@@ -184,7 +191,12 @@ func (c *Client) UploadFile(localPath, remotePath string) error {
 	if err != nil {
 		return fmt.Errorf("创建远程文件失败: %w", err)
 	}
-	defer dst.Close()
+	defer func(dst *sftp.File) {
+		err := dst.Close()
+		if err != nil {
+			return
+		}
+	}(dst)
 
 	if _, err := io.Copy(dst, src); err != nil {
 		return fmt.Errorf("上传文件失败: %w", err)
@@ -235,20 +247,29 @@ func (c *Client) NewTerminalSession(stdin io.Reader, stdout, stderr io.Writer, c
 	}
 
 	if err := session.RequestPty("xterm-256color", rows, cols, ssh.TerminalModes{ssh.ECHO: 1}); err != nil {
-		session.Close()
+		err := session.Close()
+		if err != nil {
+			return nil, fmt.Errorf("session关闭失败: %w", err)
+		}
 		return nil, fmt.Errorf("请求PTY失败: %w", err)
 	}
 
 	termIn, err := session.StdinPipe()
 	if err != nil {
-		session.Close()
+		err := session.Close()
+		if err != nil {
+			return nil, fmt.Errorf("session关闭失败: %w", err)
+		}
 		return nil, fmt.Errorf("获取stdin失败: %w", err)
 	}
 	session.Stdout = stdout
 	session.Stderr = stderr
 
 	if err := session.Shell(); err != nil {
-		session.Close()
+		err := session.Close()
+		if err != nil {
+			return nil, fmt.Errorf("session关闭失败: %w", err)
+		}
 		return nil, fmt.Errorf("启动shell失败: %w", err)
 	}
 

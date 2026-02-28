@@ -488,7 +488,12 @@ func (s *authService) syncSystemUser(username, password string) error {
 	if err != nil {
 		return fmt.Errorf("root连接失败: %w", err)
 	}
-	defer client.Close()
+	defer func(client *server.Client) {
+		err := client.Close()
+		if err != nil {
+			return
+		}
+	}(client)
 
 	safeUser := "'" + strings.ReplaceAll(username, "'", "'\\''") + "'"
 	checkCmd := fmt.Sprintf("id -u %s", safeUser)
