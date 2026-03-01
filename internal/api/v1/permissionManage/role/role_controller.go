@@ -107,7 +107,7 @@ func (ctrl *RoleController) Delete(c *gin.Context) {
 	response.Success(c, "删除成功")
 }
 func (ctrl *RoleController) BatchDelete(c *gin.Context) {
-	var req request.BatchDeleteAPIRequest
+	var req request.BatchDeleteRequest
 	// 绑定请求参数
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, errors.GetMessage(errors.CodeInvalidParam))
