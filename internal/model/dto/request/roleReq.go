@@ -1,5 +1,7 @@
 package request
 
+import "cloudque/internal/model/entity"
+
 type RolePageQueryRequest struct {
 	Page     int    `form:"page" binding:"required,min=1"`
 	PageSize int    `form:"pageSize" binding:"required,min=1,max=100"`
@@ -7,7 +9,7 @@ type RolePageQueryRequest struct {
 	Status   *int   `form:"status" binding:"omitempty,oneof=0 1"`
 }
 type CreateRoleRequest struct {
-	ID     int    `json:"id" binding:"omitempty"`
+	entity.BaseEntity
 	Name   string `json:"name" binding:"required,min=2,max=50"`
 	Status *int   `json:"status" binding:"required,oneof=0 1"` // 0=禁用, 1=启用
 	Slug   string `json:"slug" binding:"required"`

@@ -1,5 +1,7 @@
 package request
 
+import "cloudque/internal/model/entity"
+
 // MenuPageQueryRequest 菜单分页查询请求
 type MenuPageQueryRequest struct {
 	Page     int    `form:"page" binding:"required,min=1"`
@@ -10,7 +12,7 @@ type MenuPageQueryRequest struct {
 
 // CreateMenuRequest 创建菜单请求
 type CreateMenuRequest struct {
-	ID       int    `json:"id" binding:"omitempty"`
+	entity.BaseEntity
 	ParentID *int   `json:"parent_id" binding:"omitempty"`
 	Title    string `json:"title" binding:"required,min=1,max=50"`
 	Type     string `json:"type" binding:"required,oneof=catalogue menu"`

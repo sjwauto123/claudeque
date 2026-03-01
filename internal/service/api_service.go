@@ -103,8 +103,8 @@ func (s *apiService) Update(req *request.UpdateAPIRequest) error {
 
 	updates := make(map[string]interface{})
 
-	if req.Slug != "" {
-		exists, err := s.apiRepo.ExistsBySlug(req.Slug)
+	if req.Slug != "" && req.Slug != existingAPI.Slug {
+		exists, err := s.apiRepo.ExistsBySlugExcludingID(req.Slug, req.ID)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验API标识失败", err)
 		}
