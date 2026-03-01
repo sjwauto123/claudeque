@@ -39,4 +39,6 @@ type AuthService interface {
 	SetSSHTimeout(timeout time.Duration)
 	// HasSystemAccess 检查用户是否拥有系统级权限 (根据访问类型)
 	HasSystemAccess(userID int, accessType SystemAccessType) (bool, error)
+	// GetUserMenuPermission 获取用户菜单和权限
+	GetUserMenuPermission(userID int) (*dto.UserMenuPermissionResponse, error)
 }

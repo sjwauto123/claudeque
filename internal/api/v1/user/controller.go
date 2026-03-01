@@ -168,3 +168,28 @@ func (ctrl *Controller) UploadAvatar(c *gin.Context) {
 	imgFullPath := "http://192.168.10.7:8080/" + filepath.ToSlash(dst)
 	response.Success(c, gin.H{"path": imgFullPath})
 }
+
+// GetUserMenuPermission 获取用户菜单和权限
+// @Summary 获取用户菜单和权限
+// @Description 获取当前登录用户的菜单树和权限列表
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Success 200 {object} response.Response{data=response.UserMenuPermissionResponse}
+// @Router /api/v1/auth/user/menu-permission [get]
+func (ctrl *Controller) GetUserMenuPermission(c *gin.Context) {
+	userIDInterface, exists := c.Get("user_id") // Use string literal or middleware constant if imported
+	if !exists {
+		response.Unauthorized(c, "未登录")
+		return
+	}
+	userID := userIDInterface.(int)
+
+	resp, err := ctrl.authService.GetUserMenuPermission(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, resp)
+}

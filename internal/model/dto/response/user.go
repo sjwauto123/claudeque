@@ -32,3 +32,9 @@ type UserInfoResponse struct {
 	UserID   int    `json:"user_id"`
 	Username string `json:"username"`
 }
+
+// UserMenuPermissionResponse 用户菜单和权限响应
+type UserMenuPermissionResponse struct {
+	Permissions []PermissionResponse `json:"permissions"`
+	MenusTree   []MenuTreeNode       `json:"menus_tree"`
+}

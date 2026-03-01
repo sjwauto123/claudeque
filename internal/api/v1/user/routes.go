@@ -18,5 +18,6 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		userGroup.GET("/list", middleware.WithOperation("获取用户列表"), ctrl.ListUsers)
 		userGroup.GET("/by-username", middleware.WithOperation("根据用户名查询"), ctrl.GetByUsername)
 		userGroup.POST("/avatar", middleware.WithOperation("上传头像"), ctrl.UploadAvatar)
+		userGroup.GET("/menu-permission", middleware.WithOperation("获取权限和菜单树"), ctrl.GetUserMenuPermission)
 	}
 }

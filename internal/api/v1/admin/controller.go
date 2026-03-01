@@ -36,7 +36,7 @@ func NewController(adminService service.AdminService, userService service.UserSe
 func (ctrl *Controller) CreateUser(c *gin.Context) {
 	var req request.CreateRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, "数据格式有误")
 		return
 	}
 

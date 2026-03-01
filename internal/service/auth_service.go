@@ -170,6 +170,28 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}, nil
 }
 
+// GetUserMenuPermission 获取用户菜单和权限
+func (s *authService) GetUserMenuPermission(userID int) (*dto.UserMenuPermissionResponse, error) {
+	// 查找用户并校验存在性
+	user, err := s.userRepo.FindByID(userID)
+	if err != nil {
+		return nil, err
+	}
+	if user == nil {
+		return nil, bizerrors.ErrUserNotFound
+	}
+
+	// 聚合权限和菜单
+	permsDTO, menus := s.aggregate(user)
+	// 构建菜单树
+	menuNodes := buildMenuTree(menus)
+
+	return &dto.UserMenuPermissionResponse{
+		Permissions: permsDTO,
+		MenusTree:   menuNodes,
+	}, nil
+}
+
 // 聚合角色
 func (s *authService) buildRoles(user *entity.User) []string {
 	roles := make([]string, 0, len(user.Roles))
