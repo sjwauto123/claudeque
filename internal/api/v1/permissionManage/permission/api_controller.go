@@ -121,7 +121,7 @@ func (ctrl *APIController) Delete(c *gin.Context) {
 }
 
 func (ctrl *APIController) BatchDelete(c *gin.Context) {
-	var req request.BatchDeleteAPIRequest
+	var req request.BatchDeleteRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		response.BadRequest(c, errors.GetMessage(errors.CodeInvalidParam))
 		return
