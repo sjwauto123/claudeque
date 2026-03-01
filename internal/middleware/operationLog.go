@@ -7,8 +7,6 @@ import (
 	"cloudque/pkg/logger"
 	"encoding/json"
 	"io"
-	"net/http"
-	"net/url"
 	"strings"
 	"time"
 
@@ -26,6 +24,14 @@ func WithOperation(actionType string) gin.HandlerFunc {
 // UserOperationLogs 操作日志中间件
 func UserOperationLogs(userLogService service.UserOperationLogService) gin.HandlerFunc {
 	return func(c *gin.Context) {
+		// 检查中间件是否已经执行过，避免重复执行
+		if _, exists := c.Get("userOperationLogExecuted"); exists {
+			c.Next()
+			return
+		}
+		// 设置执行标志
+		c.Set("userOperationLogExecuted", true)
+
 		// 1. 捕获请求数据（按优先级获取）
 		// 优先级1: 获取 URL 查询参数（如 /api/users?id=1&name=test）
 		requestData := getDataFormUrl(c)
@@ -159,7 +165,7 @@ func getDataFormPath(c *gin.Context, requestData string) string {
 		}
 		// 将路径参数转换为查询字符串格式（进行URL编码）
 		for key, value := range params {
-			requestData += url.QueryEscape(key) + "=" + url.QueryEscape(value) + "&"
+			requestData += key + "=" + value + "&"
 		}
 		// 去除最后的 &
 		requestData = strings.TrimSuffix(requestData, "&")
@@ -169,9 +175,6 @@ func getDataFormPath(c *gin.Context, requestData string) string {
 }
 
 func getDataFormBody(c *gin.Context, requestData string) string {
-	if c.Request.Method == http.MethodGet {
-		return requestData
-	}
 
 	// 检查是否是文件上传请求
 	contentType := c.Request.Header.Get("Content-Type")
@@ -200,16 +203,16 @@ func getDataFormBody(c *gin.Context, requestData string) string {
 			// 构建请求数据
 			var dataParts []string
 
-			// 添加普通表单字段（进行URL编码）
+			// 添加普通表单字段
 			for key, value := range formData {
-				dataParts = append(dataParts, url.QueryEscape(key)+"="+url.QueryEscape(value))
+				dataParts = append(dataParts, key+"="+value)
 			}
 
 			// 添加文件信息
 			if len(fileInfo) > 0 {
 				fileInfoJSON, err := json.Marshal(fileInfo)
 				if err == nil {
-					dataParts = append(dataParts, "files="+url.QueryEscape(string(fileInfoJSON)))
+					dataParts = append(dataParts, "files="+string(fileInfoJSON))
 				}
 			}
 
@@ -231,10 +234,9 @@ func getDataFormBody(c *gin.Context, requestData string) string {
 			if err == nil {
 				// 如果已有请求数据，追加请求体
 				if requestData != "" {
-					requestData += "&body=" + url.QueryEscape(string(requestBody))
-				} else {
-					requestData = string(requestBody)
+					requestData += "&body="
 				}
+				requestData += string(requestBody)
 				// 重置请求体，供后续处理使用
 				c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
 			}
