@@ -24,14 +24,6 @@ func WithOperation(actionType string) gin.HandlerFunc {
 // UserOperationLogs 操作日志中间件
 func UserOperationLogs(userLogService service.UserOperationLogService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 检查中间件是否已经执行过，避免重复执行
-		if _, exists := c.Get("userOperationLogExecuted"); exists {
-			c.Next()
-			return
-		}
-		// 设置执行标志
-		c.Set("userOperationLogExecuted", true)
-
 		// 1. 捕获请求数据（按优先级获取）
 		// 优先级1: 获取 URL 查询参数（如 /api/users?id=1&name=test）
 		requestData := getDataFormUrl(c)
