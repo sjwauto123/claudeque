@@ -16,7 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"math/rand"
 	"sort"
 	"strings"
@@ -277,7 +276,11 @@ func buildMenuTree(menus []entity.Menu) []dto.MenuTreeNode {
 func (s *authService) EnsureSSHSession(userID int) error {
 	// 获取用户信息（需要角色）
 	user, err := s.userRepo.FindByID(userID)
-	isRoot, err := s.HasSystemAccess(userID, AccessTypeTerminal) // 默认假设是终端访问
+	isRoot, err := s.HasSystemAccess(userID, AccessTypeTerminal) // 验证终端访问
+	if err != nil {
+		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取用户信息失败", err)
+	}
+	isRoot, err = s.HasSystemAccess(userID, AccessTypeFile) // 验证文件访问
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取用户信息失败", err)
 	}
@@ -562,10 +565,10 @@ func (s *authService) HasSystemAccess(userID int, accessType SystemAccessType) (
 
 	switch accessType {
 	case AccessTypeTerminal:
-		// 检查是否有 Root 终端权限前缀 OR 旧的 Root 权限
+		// 检查是否有 Root 终端权限前缀
 		return s.userHasPermissionPrefix(user, PrefixRootTerminal), nil
 	case AccessTypeFile:
-		// 检查是否有 Root 文件权限前缀 OR 为了兼容性，如果有 PermissionRootSSH 也认为是 Root 文件权限
+		// 检查是否有 Root 文件权限前缀限
 		return s.userHasPermissionPrefix(user, PrefixRootFile), nil
 	default:
 		return false, nil

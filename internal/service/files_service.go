@@ -22,18 +22,6 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// FileService 文件服务接口
-type FileService interface {
-	GetFileList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
-	UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error)
-	DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, int64, error)
-	DeleteFile(userID int, path string, isRootMode bool) error
-	UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error
-	GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error)
-	CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error)
-	GetHomeDirectoriesList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
-}
-
 // fileService 文件服务实现
 type fileService struct {
 	sessionManager *ssh.SessionManager
@@ -58,7 +46,7 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 	// 1. 尝试获取现有会话
 	session, err := s.sessionManager.GetSession(userID, isRoot)
 
-	// 2. 检查会话及客户端是否有效
+	// 2.1 检查会话及客户端是否有效
 	isValid := false
 	if err == nil && session != nil && session.Client != nil {
 		// 尝试轻量级 ping
@@ -74,7 +62,7 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 		return session, nil
 	}
 
-	// 3. 会话无效或已断开，尝试通过 AuthService 恢复
+	// 2.2 会话无效或已断开，尝试通过 AuthService 恢复
 	logger.Infof("SSH会话不存在或已断开，尝试恢复: userID=%d, isRoot=%t", userID, isRoot)
 
 	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {

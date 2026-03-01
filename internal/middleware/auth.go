@@ -43,6 +43,13 @@ func Auth() gin.HandlerFunc {
 			token = c.Query("token")
 		}
 
+		// 3. 尝试从 Cookie 获取 (适配 WebSocket 或其他基于 Cookie 的场景)
+		if token == "" {
+			if cookieToken, err := c.Cookie("ACCESS_TOKEN"); err == nil {
+				token = cookieToken
+			}
+		}
+
 		if token == "" {
 			// 如果是 WebSocket 连接，尝试打印一些调试信息
 			if c.Request.Header.Get("Upgrade") == "websocket" {
