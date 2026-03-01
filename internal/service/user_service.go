@@ -104,7 +104,10 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
 		if err := s.createVMUser(req.Username, pwd); err != nil {
 			logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
-
+			// 回滚数据库：删除已创建的用户
+			if delErr := s.userRepo.Delete(user.ID); delErr != nil {
+				logger.Error("回滚用户失败", zap.Int("id", user.ID), zap.Error(delErr))
+			}
 			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建虚拟机用户失败", err)
 		}
 		logger.Info("VM用户创建成功", zap.String("username", req.Username))
@@ -175,18 +178,6 @@ func (s *userService) GetUserByUsername(username string) (*entity.User, error) {
 		return nil, bizerrors.ErrUserNotFound
 	}
 	return user, nil
-}
-
-// UpdateUser 更新用户信息
-func (s *userService) UpdateUser(id int, req *request.UpdateUserRequest) error {
-	user, err := s.GetUserByID(id)
-	if err != nil {
-		return err
-	}
-
-	user.Username = req.Username
-
-	return s.userRepo.Update(user)
 }
 
 func (s *userService) UpdateAvatar(id int, avatarPath string) error {
@@ -268,6 +259,40 @@ func (s *userService) updateVMPassword(username, password string) error {
 	passCmd := fmt.Sprintf("echo '%s:%s' | chpasswd", username, safePassword)
 	if out, err := client.ExecuteCommand(passCmd); err != nil {
 		return fmt.Errorf("chpasswd failed: %s, error: %w", out, err)
+	}
+
+	return nil
+}
+
+// deleteVMUser 删除虚拟机中的用户
+func (s *userService) deleteVMUser(username string) error {
+	config := &server.Config{
+		Host:                 s.sshConfig.ServerHost,
+		Username:             s.sshConfig.RootUsername,
+		Password:             s.sshConfig.RootPassword,
+		PrivateKeyPath:       s.sshConfig.PrivateKeyPath,
+		PrivateKeyPassphrase: s.sshConfig.PrivateKeyPassphrase,
+		Timeout:              s.sshConfig.Timeout,
+	}
+
+	client, err := server.NewClient(config)
+	if err != nil {
+		return fmt.Errorf("connect to vm failed: %w", err)
+	}
+	defer client.Close()
+
+	// Check if user exists
+	checkCmd := fmt.Sprintf("id -u %s", username)
+	if _, err := client.ExecuteCommand(checkCmd); err != nil {
+		// User not found, consider as success
+		return nil
+	}
+
+	// Delete user
+	// -r: remove home directory and mail spool
+	deleteCmd := fmt.Sprintf("userdel -r %s", username)
+	if out, err := client.ExecuteCommand(deleteCmd); err != nil {
+		return fmt.Errorf("userdel failed: %s, error: %w", out, err)
 	}
 
 	return nil

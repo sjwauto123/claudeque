@@ -11,7 +11,7 @@ type RolePageQueryRequest struct {
 type CreateRoleRequest struct {
 	entity.BaseEntity
 	Name   string `json:"name" binding:"required,min=2,max=50"`
-	Status *int   `json:"status" binding:"oneof=0 1"` // 0=禁用, 1=启用
+	Status *int   `json:"status" binding:"required,oneof=0 1"` // 0=禁用, 1=启用
 	Slug   string `json:"slug" binding:"required"`
 }
 
@@ -24,7 +24,4 @@ type UpdateRoleRequest struct {
 type UpdateRolePermissionRequest struct {
 	MenuIDs       []int `json:"menu_ids" binding:"required"`
 	PermissionIDs []int `json:"permission_ids" binding:"required"`
-}
-type BatchDeleteRole struct {
-	IDs []int `json:"ids" binding:"required,min=1"` // 接收角色 ID 列表
 }

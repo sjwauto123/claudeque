@@ -61,7 +61,7 @@ func (s *roleService) Create(req *request.CreateRoleRequest) error {
 	}
 	err = s.roleRepo.Create(role)
 	if err != nil {
-		// 是否唯一约束冲突(兜底方案)
+		// 是否唯一约束冲突
 		if strings.Contains(err.Error(), "Duplicate entry") ||
 			strings.Contains(err.Error(), "UNIQUE constraint failed") {
 			return errors.NewDefault(errors.CodeResourceAlreadyExists)
@@ -82,8 +82,8 @@ func (s *roleService) Update(req *request.UpdateRoleRequest) error {
 	}
 
 	updates := make(map[string]interface{})
-	if req.Name != "" {
-		exists, err := s.roleRepo.ExistsByName(req.Name)
+	if req.Name != "" && req.Name != existing.Name {
+		exists, err := s.roleRepo.ExistsByNameExcludingID(req.Name, req.ID)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验角色名失败", err)
 		}
@@ -93,8 +93,8 @@ func (s *roleService) Update(req *request.UpdateRoleRequest) error {
 		updates["name"] = req.Name
 	}
 
-	if req.Slug != "" {
-		exists, err := s.roleRepo.ExistsBySlug(req.Slug)
+	if req.Slug != "" && req.Slug != existing.Slug {
+		exists, err := s.roleRepo.ExistsBySlugExcludingID(req.Slug, req.ID)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验角色标识失败", err)
 		}
@@ -121,9 +121,29 @@ func (s *roleService) Update(req *request.UpdateRoleRequest) error {
 }
 
 func (s *roleService) Delete(id int) error {
+	existingRole, err := s.roleRepo.GetRoleByID(id)
+	if err != nil {
+		return errors.NewWithErr(errors.CodeInternalError, "查询角色信息失败", err)
+	}
+	if existingRole == nil {
+		return errors.New(errors.CodeResourceNotFound, "角色不存在")
+	}
 	return s.roleRepo.Delete(id)
 }
 func (s *roleService) BatchDelete(ids []int) error {
+	if len(ids) == 0 {
+		return errors.NewDefault(errors.CodeMissingParam)
+	}
+
+	for _, id := range ids {
+		existingMenu, err := s.roleRepo.GetRoleByID(id)
+		if err != nil {
+			return errors.NewWithErr(errors.CodeInternalError, "查询角色信息失败", err)
+		}
+		if existingMenu == nil {
+			return errors.New(errors.CodeResourceNotFound, "角色不存在")
+		}
+	}
 	return s.roleRepo.BatchDelete(ids)
 }
 
@@ -205,10 +225,10 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionResp
 
 	menuTree := s.buildMenuTree(menus, roleMenuMap)
 
-	// 👇 新增：提取 category 顺序
+	//  提取 category 顺序
 	categoryOrder := s.extractCategoryOrder(menuTree)
 
-	// 👇 修改：传入 categoryOrder
+	//  传入 categoryOrder
 	apiGroups := s.buildApiPermissions(permissions, rolePermMap, categoryOrder)
 
 	return &dto.RolePermissionResponse{
@@ -219,8 +239,8 @@ func (s *roleService) GetRolePermissionByID(roleID int) (*dto.RolePermissionResp
 
 // 构建菜单树
 func (s *roleService) buildMenuTree(menus []entity.Menu, roleMenuMap map[int]bool) []*dto.MenuNodeResponse {
-	nodeMap := make(map[int]*dto.MenuNodeResponse)
 
+	nodeMap := make(map[int]*dto.MenuNodeResponse)
 	for _, m := range menus {
 		nodeMap[m.ID] = &dto.MenuNodeResponse{
 			ID:      m.ID,
@@ -273,7 +293,7 @@ func (s *roleService) buildApiPermissions(
 				Category: cat,
 				List:     list,
 			})
-			delete(groupMap, cat) // 避免重复
+			delete(groupMap, cat)
 		}
 	}
 
@@ -286,10 +306,6 @@ func (s *roleService) buildApiPermissions(
 	}
 
 	return res
-}
-
-func (s *roleService) UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error {
-	return s.roleRepo.UpdateRolePermission(roleID, req.MenuIDs, req.PermissionIDs)
 }
 
 // extractCategoryOrder 从菜单树中提取所有叶子节点的 Title（即 category 顺序）
@@ -307,4 +323,8 @@ func (s *roleService) extractCategoryOrder(menuTree []*dto.MenuNodeResponse) []s
 		}
 	}
 	return order
+}
+
+func (s *roleService) UpdateRolePermission(roleID int, req *request.UpdateRolePermissionRequest) error {
+	return s.roleRepo.UpdateRolePermission(roleID, req.MenuIDs, req.PermissionIDs)
 }

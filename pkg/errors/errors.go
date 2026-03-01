@@ -57,6 +57,7 @@ var (
 	ErrTokenExpired           = NewDefault(CodeTokenExpired)
 	ErrInvalidCaptcha         = NewDefault(CodeInvalidCaptcha)
 	ErrSSHCredentialsNotFound = NewDefault(CodeSSHCredentialsNotFound)
+	ErrSSHLoginFailed         = NewDefault(CodeSSHLoginFailed)
 	ErrInvalidParam           = NewDefault(CodeInvalidParam)
 	ErrMissingParam           = NewDefault(CodeMissingParam)
 )

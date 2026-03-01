@@ -58,7 +58,7 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 	s.Pool.Add(userID, conn, metadata)
 
 	// 资源收集器会定期收集并分发给所有管理员客户端
-	logger.Infof("新的管理员websocket连接已建立，用户ID: %d", userID)
+	logger.Infof("新的管理员websocket连接已建立，进行接收系统消息，用户ID: %d", userID)
 }
 
 // NewResourceCollector 创建资源收集器
@@ -137,13 +137,9 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 	return &info
 }
 
-// 获取磁盘信息（以根分区为例）
+// 获取磁盘信息
 func getDiskInfo() (*response.CpuInfoResponse, error) {
 	mountPoint := "/"
-	//if runtime.GOOS == "windows" {
-	//	mountPoint = "C:\\"
-	//}
-
 	usage, err := disk.Usage(mountPoint)
 	if err != nil {
 		return nil, err
@@ -245,7 +241,7 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 		// 通过本地命令获取进程的详细信息
 		info, err := getProcessDetails(p)
 		if err != nil {
-			logger.Infof("获取进程详细信息失败:%v", err)
+			logger.Infof("获取进程id为%v详细信息失败:%v", p, err)
 		}
 		processInfos = append(processInfos, info)
 	}

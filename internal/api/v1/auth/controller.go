@@ -41,7 +41,7 @@ func (ctrl *Controller) Register(c *gin.Context) {
 		return
 	}
 
-	qqEmailRegex := regexp.MustCompile(`^[a-zA-Z0-9_\.]+@qq\.com$`)
+	qqEmailRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9_.]{2,14})[a-zA-Z0-9]@qq\.com$`)
 	if qqEmailRegex.MatchString(req.Email) == false {
 		response.BadRequest(c, "目前仅支持qq邮箱")
 		return

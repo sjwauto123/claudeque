@@ -135,19 +135,13 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
-	log.Println(pwd)
 
-	// 强制验证数据库密码
+	// 验证数据库密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
-		return nil, bizerrors.ErrInvalidCredentials
+		return nil, bizerrors.New(bizerrors.CodeInvalidCredentials, "登录失败：数据库密码错误")
 	}
 
-	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
-	// 判断用户是否拥有SSH root权限
-	isRoot, _ := s.HasSystemAccess(user.ID, AccessTypeFile)
-	logger.Info("用户登录权限检查", zap.Int("user_id", user.ID), zap.String("username", user.Username), zap.Bool("is_root", isRoot))
-
-	// 将用户凭证存入Redis（供后续SSH连接使用）
+	// 将用户凭证存入Redis（供终端模块重连使用）
 	if err := s.saveUserCredentialsToRedis(user.ID, req.Username, pwd); err != nil {
 		logger.Warn("存储用户凭证到Redis失败", zap.Error(err))
 	}

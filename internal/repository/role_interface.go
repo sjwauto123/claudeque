@@ -37,6 +37,10 @@ type RoleRepository interface {
 	ExistsByName(name string) (bool, error)
 	// ExistsBySlug 判断角色标识是否存在
 	ExistsBySlug(slug string) (bool, error)
+	// ExistsByNameExcludingID 排除检查自身数据
+	ExistsByNameExcludingID(name string, excludeID int) (bool, error)
+	// ExistsBySlugExcludingID 排除检查自身数据
+	ExistsBySlugExcludingID(slug string, excludeID int) (bool, error)
 	// CheckUserPermission 检查用户对应权角色权限
 	CheckUserPermission(id int, method string, path string) (bool, error)
 }

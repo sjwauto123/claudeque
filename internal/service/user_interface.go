@@ -17,8 +17,6 @@ type UserService interface {
 	GetUserByID(id int) (*entity.User, error)
 	// GetUserByUsername 根据用户名获取用户
 	GetUserByUsername(username string) (*entity.User, error)
-	// UpdateUser 更新用户用户名
-	UpdateUser(id int, req *request.UpdateUserRequest) error
 	// ChangePassword 修改密码
 	ChangePassword(id int, req *request.ChangePasswordRequest) error
 	// ResetPassword 重置密码

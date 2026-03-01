@@ -47,6 +47,17 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	if err := s.userRepo.AssignRoleByName(user.ID, "user"); err != nil {
 		return err
 	}
+
+	// 在VM中创建用户
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
+		if err := s.createVMUser(req.Username, pwd); err != nil {
+			logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
+			// 如果VM创建失败，返回错误
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建虚拟机用户失败", err)
+		}
+		logger.Info("VM用户创建成功", zap.String("username", req.Username))
+	}
+
 	return nil
 }
 
@@ -71,17 +82,6 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 	}
 	if user == nil {
 		return bizerrors.ErrUserNotFound
-	}
-
-	if req.Username != "" {
-		existing, err := s.userRepo.FindByUsername(req.Username)
-		if err != nil {
-			return err
-		}
-		if existing != nil && existing.ID != id {
-			return bizerrors.ErrUserAlreadyExists
-		}
-		user.Username = req.Username
 	}
 
 	if req.Email != "" {
