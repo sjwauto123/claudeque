@@ -7,6 +7,7 @@ import (
 	"cloudque/pkg/logger"
 	"encoding/json"
 	"io"
+	"net/url"
 	"strings"
 	"time"
 
@@ -149,7 +150,12 @@ func getDataFormPath(c *gin.Context, requestData string) string {
 	if len(c.Params) > 0 {
 		params := make(map[string]string)
 		for _, param := range c.Params {
-			params[param.Key] = param.Value
+			// 对路径参数值进行 URL 解码
+			decodedValue, err := url.QueryUnescape(param.Value)
+			if err != nil {
+				decodedValue = param.Value
+			}
+			params[param.Key] = decodedValue
 		}
 		// 如果已有查询参数，追加路径参数
 		if requestData != "" {
