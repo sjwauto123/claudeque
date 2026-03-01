@@ -11,6 +11,7 @@ type Config struct {
 	CORS     CORSConfig     `mapstructure:"cors"`
 	Email    EmailConfig    `mapstructure:"email"`
 	Server   ServerConfig   `mapstructure:"server"`
+	GPU      GPUConfig      `mapstructure:"gpu"`
 }
 
 // AppConfig 应用配置
@@ -94,4 +95,9 @@ type ServerConfig struct {
 	Timeout              time.Duration `mapstructure:"timeout"`                // 连接超时
 	SessionTimeout       time.Duration `mapstructure:"session_timeout"`        // 会话超时时间，0表示永不超时
 	Enabled              bool          `mapstructure:"enabled"`                // 是否启用训练服务器
+}
+
+// GPUConfig GPU 配置
+type GPUConfig struct {
+	AutoAllocate bool `mapstructure:"auto_allocate"` // 是否允许自动分配显卡
 }

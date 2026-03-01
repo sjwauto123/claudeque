@@ -73,3 +73,7 @@ email:
   port: 465
   username: "2144515062@qq.com"
   password: "wmbabqrkltzadehg"
+
+# GPU 配置
+gpu:
+  auto_allocate: false # 是否允许自动分配显卡，设为 false 则要求用户提交任务时必须指定显卡
