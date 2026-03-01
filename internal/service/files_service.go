@@ -551,10 +551,32 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 		if strings.Contains(errMsg, "Permission denied") {
 			return nil, errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
 		}
-		return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
+		// 尝试使用 du -sk 作为回退方案
+		cmdFallback := fmt.Sprintf("du -sk %s | awk '{print $1}'", safePath)
+		outputFallback, errFallback := s.executeSSHCommand(userID, cmdFallback, isRootMode)
+		if errFallback == nil && strings.TrimSpace(outputFallback) != "" {
+			output = outputFallback
+			// 标记需要转换为字节（du -sk 输出的是 KB）
+			kbStr := strings.TrimSpace(output)
+			fields := strings.Fields(kbStr)
+			if len(fields) > 0 {
+				kbStr = fields[0]
+			}
+			kb, parseErr := strconv.ParseInt(kbStr, 10, 64)
+			if parseErr == nil {
+				output = fmt.Sprintf("%d", kb*1024)
+			}
+		} else {
+			return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
+		}
 	}
 
 	sizeStr := strings.TrimSpace(output)
+	if sizeStr == "" {
+		logger.Warnf("du命令返回为空: userID=%d, cmd=%s", userID, cmd)
+		sizeStr = "0"
+	}
+
 	// 修复：如果 du -sb 输出包含文件名，只取第一列
 	fields := strings.Fields(sizeStr)
 	if len(fields) > 0 {
