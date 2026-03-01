@@ -254,7 +254,6 @@ func (r *roleRepository) UpdateRolePermission(
 	})
 }
 
-// ExistsByName 判断角色名是否存在
 func (r *roleRepository) ExistsByName(name string) (bool, error) {
 	var count int64
 	err := r.db.Model(&entity.Role{}).
@@ -263,11 +262,28 @@ func (r *roleRepository) ExistsByName(name string) (bool, error) {
 	return count > 0, err
 }
 
-// ExistsBySlug 判断角色标识是否存在
 func (r *roleRepository) ExistsBySlug(slug string) (bool, error) {
 	var count int64
 	err := r.db.Model(&entity.Role{}).
+		Where("name = ?", slug).
+		Count(&count).Error
+	return count > 0, err
+}
+func (r *roleRepository) ExistsByNameExcludingID(slug string, excludeID int) (bool, error) {
+	var count int64
+	err := r.db.Model(&entity.Role{}).
+		Where("name = ?", slug).
+		Where("id != ?", excludeID). // 排除自身数据
+
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *roleRepository) ExistsBySlugExcludingID(slug string, excludeID int) (bool, error) {
+	var count int64
+	err := r.db.Model(&entity.Role{}).
 		Where("slug = ?", slug).
+		Where("id != ?", excludeID). // 排除自身数据
 		Count(&count).Error
 	return count > 0, err
 }

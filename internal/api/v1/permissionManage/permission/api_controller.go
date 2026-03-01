@@ -2,7 +2,6 @@ package permission
 
 import (
 	"cloudque/internal/model/dto/request"
-	response2 "cloudque/internal/model/dto/response"
 	"cloudque/internal/service"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
@@ -63,21 +62,7 @@ func (ctrl *APIController) PageList(c *gin.Context) {
 		return
 	}
 
-	// 转换为响应格式
-	var apiResponses []response2.APIResponse
-	for _, api := range apis {
-		apiResponses = append(apiResponses, response2.APIResponse{
-			ID:         api.ID,
-			Name:       api.Name,
-			Category:   api.Category,
-			Slug:       api.Slug,
-			Status:     api.Status,
-			HTTPMethod: api.HttpMethod,
-			HTTPPath:   api.HttpPath,
-		})
-	}
-
-	pageResp := response.NewPageResponse(apiResponses, total, req.Page, req.PageSize)
+	pageResp := response.NewPageResponse(apis, total, req.Page, req.PageSize)
 	response.Success(c, pageResp)
 }
 
