@@ -28,6 +28,7 @@ const (
 	CodeTokenExpired           = 1006
 	CodeInvalidCaptcha         = 1007
 	CodeSSHCredentialsNotFound = 1008
+	CodeSSHLoginFailed         = 1009
 
 	// 参数错误 2xxx
 	CodeInvalidParam     = 2001
@@ -71,6 +72,7 @@ var codeMessages = map[int]string{
 	CodeTokenExpired:              "令牌已过期",
 	CodeInvalidCaptcha:            "验证码无效",
 	CodeSSHCredentialsNotFound:    "SSH凭证未找到或已过期",
+	CodeSSHLoginFailed:            "SSH登录失败（密码错误或服务不可用）",
 	CodeInvalidParam:              "参数错误",
 	CodeMissingParam:              "缺少必要参数",
 	CodeParamFormatError:          "参数格式错误",
