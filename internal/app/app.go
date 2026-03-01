@@ -240,8 +240,8 @@ func (a *App) initDependencies() {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
 		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
 	}
-	fileSvc := service.NewFileService(sessionManager)
-	terminalSvc := service.NewTerminalService(sessionManager)
+	fileSvc := service.NewFileService(sessionManager, authSvc)
+	terminalSvc := service.NewTerminalService(sessionManager, authSvc)
 
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)

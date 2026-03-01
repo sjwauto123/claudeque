@@ -75,7 +75,7 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 // @Accept json
 // @Produce json
 // @Security Bearer
-// @Param request body request.DiskUsageRequest true "请求参数"
+// @Param path query string true "目录路径"
 // @Success 200 {object} response.Response{data=dto.DiskUsageData}
 // @Router /api/user/directories/calculate-usage [get]
 func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
@@ -86,9 +86,17 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 	}
 
 	var req request.DiskUsageRequest
-	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
-		return
+	// 优先尝试从 Query 参数获取 (标准 GET 请求)
+	if err := c.ShouldBindQuery(&req); err != nil {
+		// 如果 Query 绑定失败，尝试从 JSON Body 获取
+		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			response.BadRequest(c, err.Error())
+			return
+		}
+	}
+	// 二次检查：如果 Query 绑定成功但 Path 为空，尝试 JSON
+	if req.Path == "" {
+		_ = c.ShouldBindJSON(&req)
 	}
 
 	if req.Path == "" {

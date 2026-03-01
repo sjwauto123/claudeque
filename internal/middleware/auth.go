@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"strings"
 
 	"cloudque/internal/service"
@@ -22,24 +23,38 @@ const (
 // Auth JWT 认证中间件
 func Auth() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 从 Header 获取 Authorization
+		var token string
+
+		// 1. 尝试从 Header 获取 Authorization
 		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
+		if authHeader != "" {
+			// 简单处理：如果是 Bearer 开头，取后面部分；否则直接当作 Token
+			parts := strings.SplitN(authHeader, " ", 2)
+			if len(parts) == 2 && parts[0] == "Bearer" {
+				token = parts[1]
+			} else if len(parts) == 1 {
+				// 有些客户端可能只发 Token 不发 Bearer 前缀
+				token = authHeader
+			}
+		}
+
+		// 2. 尝试从 Query 参数获取 (适配 WebSocket)
+		if token == "" {
+			token = c.Query("token")
+		}
+
+		if token == "" {
+			// 如果是 WebSocket 连接，尝试打印一些调试信息
+			if c.Request.Header.Get("Upgrade") == "websocket" {
+				fmt.Printf("WS Auth Failed. Headers: %v\n", c.Request.Header)
+			}
 			response.Unauthorized(c, "请提供认证令牌")
 			c.Abort()
 			return
 		}
 
-		// 解析 Bearer Token
-		parts := strings.SplitN(authHeader, " ", 2)
-		if len(parts) != 2 || parts[0] != "Bearer" {
-			response.Unauthorized(c, "令牌格式错误")
-			c.Abort()
-			return
-		}
-
 		// 解析 Token
-		claims, err := jwt.ParseToken(parts[1])
+		claims, err := jwt.ParseToken(token)
 		if err != nil {
 			response.Unauthorized(c, err.Error())
 			c.Abort()
@@ -76,7 +91,7 @@ func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 
 		// 获取当前请求信息
 		method := c.Request.Method
-		path := c.FullPath() 
+		path := c.FullPath()
 
 		// 数据库判断
 		hasPermission, err := authService.CheckUserPermission(userID, method, path)

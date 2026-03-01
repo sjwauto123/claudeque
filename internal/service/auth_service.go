@@ -137,76 +137,17 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	pwd := utils.DecryptIfCryptoJS(req.Password)
 	log.Println(pwd)
 
+	// 强制验证数据库密码
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
+		return nil, bizerrors.ErrInvalidCredentials
+	}
+
 	///////////////////////////////////////验证对应的SSH是否可以连接成功//////////////////////////////////////////////////
 	// 判断用户是否拥有SSH root权限
 	isRoot, _ := s.HasSystemAccess(user.ID, AccessTypeFile)
 	logger.Info("用户登录权限检查", zap.Int("user_id", user.ID), zap.String("username", user.Username), zap.Bool("is_root", isRoot))
 
-	// SSH 拨号验证 - 确保Web账号与系统账号同步
-	var sshSuccess bool
-	if s.sessionManager != nil {
-		var err error
-		var session *ssh.UserSession
-
-		// 尝试建立主会话（如果是Root权限则建立Root会话，否则建立普通会话）
-		// GetOrCreateSession 内部处理 Root 用户名/密码逻辑
-		session, err = s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, isRoot)
-
-		if err != nil {
-			// 尝试自动修复：如果不是root用户且验证失败，可能是系统用户不存在或密码不一致
-			if !isRoot {
-				logger.Info("SSH验证失败，尝试同步系统用户", zap.String("username", req.Username))
-				if syncErr := s.syncSystemUser(req.Username, pwd); syncErr != nil {
-					logger.Warn("同步系统用户失败", zap.Error(syncErr))
-				} else {
-					// 同步成功后重试
-					session, err = s.sessionManager.GetOrCreateSession(user.ID, req.Username, pwd, isRoot)
-				}
-			}
-
-			if err != nil {
-				// 如果配置了SSH服务器但验证失败，拒绝登录
-				logger.Info("SSH验证失败，拒绝登录",
-					zap.String("username", req.Username),
-					zap.Error(err),
-				)
-				return nil, bizerrors.NewWithErr(bizerrors.CodeInvalidCredentials, "SSH验证失败", err)
-			}
-		}
-
-		sshSuccess = true
-
-		// 保存会话信息
-		if s.sessionRepo != nil && session != nil {
-			_ = s.sessionRepo.SaveSession(user.ID, session.GetUsername(), isRoot, session.CreatedAt)
-		}
-
-	}
-
-	// 验证数据库密码 (如果SSH验证通过，则跳过DB密码验证并同步密码；否则必须验证DB密码)
-	if sshSuccess {
-		// SSH验证通过，同步密码到数据库（如果不同）
-		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
-		if err == nil {
-			// 我们直接更新密码，或者先检查是否匹配
-			if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
-				// 密码不匹配，更新为新密码
-				user.Password = string(hashedPassword)
-				if err := s.userRepo.Update(user); err != nil {
-					logger.Warn("同步用户密码失败", zap.Error(err))
-				} else {
-					logger.Info("用户密码已同步为SSH密码", zap.String("username", req.Username))
-				}
-			}
-		}
-	} else {
-		// 未进行SSH验证（例如未配置SSH Host），必须验证DB密码
-		if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
-			return nil, bizerrors.ErrInvalidCredentials
-		}
-	}
-
-	// 将用户凭证存入Redis（供终端模块重连使用）
+	// 将用户凭证存入Redis（供后续SSH连接使用）
 	if err := s.saveUserCredentialsToRedis(user.ID, req.Username, pwd); err != nil {
 		logger.Warn("存储用户凭证到Redis失败", zap.Error(err))
 	}

@@ -9,12 +9,13 @@ import (
 	"sync"
 	"time"
 
+	"cloudque/internal/middleware"
 	"cloudque/internal/service"
-	"cloudque/pkg/jwt"
 	"cloudque/pkg/response"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
+	"go.uber.org/zap"
 )
 
 // Controller 终端控制器
@@ -42,26 +43,9 @@ var wsUpgrader = websocket.Upgrader{
 // WebSocketTerminal WebSocket 终端透传：将浏览器与 SSH 终端双向透传
 // 认证：Query 参数 token=JWT 或 Header Authorization: Bearer <token>
 func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
-	token := c.Query("token")
-	if token == "" {
-		authHeader := c.GetHeader("Authorization")
-		if len(authHeader) >= 8 && authHeader[:7] == "Bearer " {
-			token = authHeader[7:]
-		}
-	}
-	if token == "" {
-		response.Unauthorized(c, "请提供 token（Query token= 或 Authorization）")
-		return
-	}
-
-	claims, err := jwt.ParseToken(token)
-	if err != nil {
-		response.Unauthorized(c, err.Error())
-		return
-	}
-	userID := claims.GetUserID()
+	userID := middleware.GetUserID(c)
 	if userID == 0 {
-		response.Unauthorized(c, "无效用户")
+		response.Unauthorized(c, "用户未登录")
 		return
 	}
 
@@ -73,8 +57,10 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return
 	}
 
-	// 确保对应身份的 SSH 会话存在 (支持会话恢复)
+	// 确保对应身份的 SSH 会话存在
+	// 注意：如果 Redis 中没有凭证（例如用户很久没登录），这里会失败，提示用户重新登录
 	if err := ctrl.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
+		logger.Error("无法建立SSH会话", zap.Error(err))
 		response.BizError(c, err)
 		return
 	}

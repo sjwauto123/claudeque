@@ -37,12 +37,14 @@ type FileService interface {
 // fileService 文件服务实现
 type fileService struct {
 	sessionManager *ssh.SessionManager
+	authService    AuthService
 }
 
 // NewFileService 创建文件服务
-func NewFileService(sessionManager *ssh.SessionManager) FileService {
+func NewFileService(sessionManager *ssh.SessionManager, authService AuthService) FileService {
 	return &fileService{
 		sessionManager: sessionManager,
+		authService:    authService,
 	}
 }
 
@@ -53,16 +55,12 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
 	}
 
-	// 1. 获取现有会话
+	// 1. 尝试获取现有会话
 	session, err := s.sessionManager.GetSession(userID, isRoot)
-	if err != nil {
-		logger.Errorf("获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
-		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已过期，请重新登录")
-	}
 
 	// 2. 检查会话及客户端是否有效
 	isValid := false
-	if session != nil && session.Client != nil {
+	if err == nil && session != nil && session.Client != nil {
 		// 尝试轻量级 ping
 		if _, pingErr := session.Client.ExecuteCommand("echo 1"); pingErr == nil {
 			// 确保 SFTP 客户端也存在
@@ -76,29 +74,28 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 		return session, nil
 	}
 
-	// 3. 会话无效或已断开，尝试重连
-	logger.Infof("SSH会话已断开，尝试自动重连: userID=%d, isRoot=%t", userID, isRoot)
+	// 3. 会话无效或已断开，尝试通过 AuthService 恢复
+	logger.Infof("SSH会话不存在或已断开，尝试恢复: userID=%d, isRoot=%t", userID, isRoot)
 
-	// 使用 session 中保存的凭据重新创建会话
-	// 注意：GetSession 已经返回了 session 对象（即使连接断开），其中包含了 Username/Password
-	// 如果 session 为 nil（极少见，除非 GetSession 返回 err），则无法重连
-	if session == nil {
-		return nil, errors.New(errors.CodeUnauthorized, "无法恢复SSH会话，请重新登录")
+	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
+		logger.Errorf("恢复SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
+		return nil, err
 	}
 
-	newSession, recErr := s.sessionManager.GetOrCreateSession(userID, session.GetUsername(), session.Password, isRoot)
-	if recErr != nil {
-		logger.Errorf("SSH会话重连失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, recErr)
-		return nil, errors.New(errors.CodeUnauthorized, "SSH会话已断开且重连失败，请重新登录")
+	// 4. 重新获取会话
+	session, err = s.sessionManager.GetSession(userID, isRoot)
+	if err != nil {
+		logger.Errorf("恢复后获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
+		return nil, errors.New(errors.CodeUnauthorized, "SSH会话恢复失败")
 	}
 
-	// 4. 验证新会话
-	if newSession == nil || newSession.Client == nil || newSession.Client.GetSFTPClient() == nil {
-		logger.Errorf("SSH会话重连后客户端不可用: userID=%d, isRoot=%t", userID, isRoot)
+	// 5. 验证新会话
+	if session == nil || session.Client == nil || session.Client.GetSFTPClient() == nil {
+		logger.Errorf("SSH会话恢复后客户端不可用: userID=%d, isRoot=%t", userID, isRoot)
 		return nil, errors.New(errors.CodeInternalError, "SSH客户端未连接")
 	}
 
-	return newSession, nil
+	return session, nil
 }
 
 // getSftpClient 获取用户的SFTP客户端
@@ -159,6 +156,9 @@ func (s *fileService) resolvePath(userID int, p string, isRootMode bool) (string
 		basePath = "/home"
 	}
 	homeDir := path.Join(basePath, session.Username)
+
+	logger.Infof("resolvePath debug: userID=%d, username=%s, basePath=%s, homeDir=%s, inputPath=%s",
+		userID, session.Username, basePath, homeDir, p)
 
 	// 检查并创建用户主目录，如果不存在
 	sftpClient := session.Client.GetSFTPClient()
@@ -558,28 +558,42 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		logger.Errorf("执行du命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-		return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "执行du命令失败", err)
+		// 解析错误信息，如果是 Permission denied，则返回更友好的提示
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "Permission denied") {
+			return nil, errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
+		}
+		return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
 	}
 
 	sizeStr := strings.TrimSpace(output)
+	// 修复：如果 du -sb 输出包含文件名，只取第一列
+	fields := strings.Fields(sizeStr)
+	if len(fields) > 0 {
+		sizeStr = fields[0]
+	}
 	size, parseErr := strconv.ParseInt(sizeStr, 10, 64)
 	if parseErr != nil {
 		logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, parseErr)
-		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小失败: %s", sizeStr), parseErr)
+		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小数据失败: %s", sizeStr), parseErr)
 	}
 
-	// Get filesystem usage percentage
-	cmdUsage := fmt.Sprintf("df --output=pcent %s | tail -1 | tr -dc '0-9'", safePath)
-	outputUsage, err := s.executeSSHCommand(userID, cmdUsage, isRootMode)
-	if err != nil {
-		logger.Errorf("执行df命令失败: userID=%d, cmd=%s, err=%v", userID, cmdUsage, err)
-		// Non-critical error, proceed with 0 usage
-		outputUsage = "0"
-	}
-	usage, parseErr := strconv.ParseFloat(strings.TrimSpace(outputUsage), 64)
-	if parseErr != nil {
-		logger.Errorf("解析磁盘使用百分比失败: userID=%d, outputUsage=%s, err=%v", userID, outputUsage, parseErr)
-		usage = 0
+	// 2. 使用 df 获取磁盘总大小，计算占比
+	// 使用 df -B1 获取以字节为单位的总大小
+	cmdTotal := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $2}'", safePath)
+	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
+
+	var usage float64
+	if err == nil {
+		totalStr := strings.TrimSpace(outTotal)
+		totalBytes, parseErr := strconv.ParseInt(totalStr, 10, 64)
+		if parseErr == nil && totalBytes > 0 {
+			usage = float64(size) / float64(totalBytes) * 100
+		} else {
+			logger.Errorf("解析磁盘总大小失败或总大小为0: userID=%d, totalStr=%s, err=%v", userID, totalStr, parseErr)
+		}
+	} else {
+		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
 	}
 
 	return &dto.DiskUsageData{
@@ -606,19 +620,25 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 
 	if err != nil {
 		logger.Errorf("执行du -sb命令失败，尝试du -sk: userID=%d, cmd=%s, err=%v", userID, cmd, err)
+
+		// 检查是否是权限问题
+		if strings.Contains(err.Error(), "Permission denied") {
+			return 0, "", 0, errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该文件或目录", err)
+		}
+
 		// 如果 du -sb 失败，尝试 du -sk (千字节)
 		cmd = fmt.Sprintf("du -sk %s | awk '{print $1}'", quotedPath)
 		out, err = s.executeSSHCommand(userID, cmd, isRootMode)
 		if err != nil {
 			logger.Errorf("执行du -sk命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-			return 0, "", 0, err
+			return 0, "", 0, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("计算大小失败: %v", err), err)
 		}
 		// 转换为字节
 		kbStr := strings.TrimSpace(out)
 		kb, parseErr := strconv.ParseInt(kbStr, 10, 64)
 		if parseErr != nil {
 			logger.Errorf("解析千字节大小失败: userID=%d, kbStr=%s, err=%v", userID, kbStr, parseErr)
-			return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小失败: %s", kbStr), parseErr)
+			return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小数据失败: %s", kbStr), parseErr)
 		}
 		bytess = kb * 1024
 	} else {
@@ -631,7 +651,7 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 		bytess, err = strconv.ParseInt(sizeStr, 10, 64)
 		if err != nil {
 			logger.Errorf("解析字节大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, err)
-			return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小失败: %s", sizeStr), err)
+			return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小数据失败: %s", sizeStr), err)
 		}
 	}
 
