@@ -14,6 +14,18 @@ func NewMenuRepository(db *gorm.DB) MenuRepository {
 	return &menuRepository{db: db}
 }
 
+func (r *menuRepository) GetMenuByID(id int) (*entity.Menu, error) {
+	var menu entity.Menu
+	err := r.db.First(&menu, id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	return &menu, nil
+}
+
 func (r *menuRepository) PageList(offset, limit int, title string, status *int) (
 	[]*entity.Menu, []*entity.Menu, int64, error) {
 
@@ -91,32 +103,36 @@ func (r *menuRepository) BatchDelete(ids []int) error {
 	return nil
 }
 
-func (r *menuRepository) GetMenuByID(id int) (*entity.Menu, error) {
-	var menu entity.Menu
-	err := r.db.First(&menu, id).Error
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
-		}
-		return nil, err
-	}
-	return &menu, nil
-}
-
 func (r *menuRepository) ExistsByTitle(title string) (bool, error) {
 	var count int64
-	err := r.db.Model(&entity.Menu{}).Where("title = ?", title).Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
+	err := r.db.Model(&entity.Menu{}).
+		Where("title = ?", title).
+		Count(&count).Error
+	return count > 0, err
 }
 
 func (r *menuRepository) ExistsByURI(uri string) (bool, error) {
 	var count int64
-	err := r.db.Model(&entity.Menu{}).Where("uri = ?", uri).Count(&count).Error
-	if err != nil {
-		return false, err
-	}
-	return count > 0, nil
+	err := r.db.Model(&entity.Menu{}).
+		Where("uri = ?", uri).
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *menuRepository) ExistsByTitleExcludingID(title string, excludeID int) (bool, error) {
+	var count int64
+	err := r.db.Model(&entity.Menu{}).
+		Where("title = ?", title).
+		Where("id != ?", excludeID). // 排除自身数据
+		Count(&count).Error
+	return count > 0, err
+}
+
+func (r *menuRepository) ExistsByURIExcludingID(uri string, excludeID int) (bool, error) {
+	var count int64
+	err := r.db.Model(&entity.Menu{}).
+		Where("uri = ?", uri).
+		Where("id != ?", excludeID). // 排除自身数据
+		Count(&count).Error
+	return count > 0, err
 }

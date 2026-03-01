@@ -16,6 +16,10 @@ type apiService struct {
 func NewAPIService(apiRepo repository.APIRepository) APIService {
 	return &apiService{apiRepo: apiRepo}
 }
+
+func (s *apiService) GetAPIByID(id int) (*entity.Permission, error) {
+	return s.apiRepo.GetAPIByID(id)
+}
 func (s *apiService) PageList(req *request.APIPageQueryRequest) ([]*entity.Permission, int64, error) {
 	// 参数校验和默认值设置
 	if req.Page <= 0 {
@@ -54,6 +58,14 @@ func (s *apiService) Create(req *request.CreateAPIRequest) error {
 		return errors.New(errors.CodeResourceAlreadyExists, "API标识已存在")
 	}
 
+	// 检查 (method, path) 是否重复
+	//exists, err = s.apiRepo.ExistsByMethodAndPath(req.HTTPMethod, req.HTTPPath)
+	//if err != nil {
+	//	return errors.NewWithErr(errors.CodeInternalError, "检查API路径是否重复失败", err)
+	//} else if exists {
+	//	return errors.New(errors.CodeResourceAlreadyExists, "该HTTP方法与路径的组合已存在")
+	//}
+
 	// 构造实体对象并保存到数据库
 	api := &entity.Permission{
 		Name:       req.Name,
@@ -91,14 +103,6 @@ func (s *apiService) Update(req *request.UpdateAPIRequest) error {
 
 	updates := make(map[string]interface{})
 
-	if req.Name != "" {
-		updates["name"] = req.Name
-	}
-
-	if req.Category != "" {
-		updates["category"] = req.Category
-	}
-
 	if req.Slug != "" {
 		exists, err := s.apiRepo.ExistsBySlug(req.Slug)
 		if err != nil {
@@ -108,6 +112,14 @@ func (s *apiService) Update(req *request.UpdateAPIRequest) error {
 			return errors.New(errors.CodeResourceAlreadyExists, "API标识已存在")
 		}
 		updates["slug"] = req.Slug
+	}
+
+	if req.Name != "" {
+		updates["name"] = req.Name
+	}
+
+	if req.Category != "" {
+		updates["category"] = req.Category
 	}
 
 	if req.Status != nil {
@@ -147,8 +159,6 @@ func (s *apiService) Delete(id int) error {
 	if existingAPI == nil {
 		return errors.New(errors.CodeResourceNotFound, "API不存在")
 	}
-
-	// 调用Repository层删除数据
 	return s.apiRepo.Delete(id)
 }
 
@@ -168,11 +178,5 @@ func (s *apiService) BatchDelete(ids []int) error {
 			return errors.New(errors.CodeResourceNotFound, "API不存在")
 		}
 	}
-
-	// 调用Repository层批量删除数据
 	return s.apiRepo.BatchDelete(ids)
-}
-
-func (s *apiService) GetAPIByID(id int) (*entity.Permission, error) {
-	return s.apiRepo.GetAPIByID(id)
 }

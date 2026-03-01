@@ -82,8 +82,8 @@ func (s *roleService) Update(req *request.UpdateRoleRequest) error {
 	}
 
 	updates := make(map[string]interface{})
-	if req.Name != "" {
-		exists, err := s.roleRepo.ExistsByName(req.Name)
+	if req.Name != "" && req.Name != existing.Name {
+		exists, err := s.roleRepo.ExistsByNameExcludingID(req.Name, req.ID)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验角色名失败", err)
 		}
@@ -93,8 +93,8 @@ func (s *roleService) Update(req *request.UpdateRoleRequest) error {
 		updates["name"] = req.Name
 	}
 
-	if req.Slug != "" {
-		exists, err := s.roleRepo.ExistsBySlug(req.Slug)
+	if req.Slug != "" && req.Slug != existing.Slug {
+		exists, err := s.roleRepo.ExistsBySlugExcludingID(req.Slug, req.ID)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验角色标识失败", err)
 		}
@@ -121,9 +121,29 @@ func (s *roleService) Update(req *request.UpdateRoleRequest) error {
 }
 
 func (s *roleService) Delete(id int) error {
+	existingRole, err := s.roleRepo.GetRoleByID(id)
+	if err != nil {
+		return errors.NewWithErr(errors.CodeInternalError, "查询角色信息失败", err)
+	}
+	if existingRole == nil {
+		return errors.New(errors.CodeResourceNotFound, "角色不存在")
+	}
 	return s.roleRepo.Delete(id)
 }
 func (s *roleService) BatchDelete(ids []int) error {
+	if len(ids) == 0 {
+		return errors.NewDefault(errors.CodeMissingParam)
+	}
+
+	for _, id := range ids {
+		existingMenu, err := s.roleRepo.GetRoleByID(id)
+		if err != nil {
+			return errors.NewWithErr(errors.CodeInternalError, "查询角色信息失败", err)
+		}
+		if existingMenu == nil {
+			return errors.New(errors.CodeResourceNotFound, "角色不存在")
+		}
+	}
 	return s.roleRepo.BatchDelete(ids)
 }
 

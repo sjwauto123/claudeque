@@ -59,13 +59,13 @@ func (s *menuService) PageList(req *request.MenuPageQueryRequest) ([]*dto.MenuTr
 
 func (s *menuService) Create(req *request.CreateMenuRequest) error {
 	if req.Title == "" {
-		return errors.NewDefault(errors.CodeMissingParam)
+		return errors.New(errors.CodeMissingParam, "菜单名称不能为空")
 	}
 	if req.URI == "" {
-		return errors.NewDefault(errors.CodeMissingParam)
+		return errors.New(errors.CodeMissingParam, "菜单URI不能为空")
 	}
 	if req.Type == "" {
-		return errors.NewDefault(errors.CodeMissingParam)
+		return errors.New(errors.CodeMissingParam, "菜单类型不能为空")
 	}
 
 	exists, err := s.menuRepo.ExistsByTitle(req.Title)
@@ -80,6 +80,10 @@ func (s *menuService) Create(req *request.CreateMenuRequest) error {
 		return errors.NewWithErr(errors.CodeInternalError, "检查菜单路由是否重复失败", err)
 	} else if exists {
 		return errors.New(errors.CodeResourceAlreadyExists, "菜单路由已存在")
+	}
+
+	if *req.ParentID != 0 {
+		req.Type = "menu"
 	}
 
 	menu := &entity.Menu{
@@ -116,8 +120,8 @@ func (s *menuService) Update(req *request.UpdateMenuRequest) error {
 
 	updates := make(map[string]interface{})
 
-	if req.Title != "" {
-		exists, err := s.menuRepo.ExistsByTitle(req.Title)
+	if req.Title != "" && req.Title != existingMenu.Title {
+		exists, err := s.menuRepo.ExistsByTitleExcludingID(req.Title, req.ID)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验菜单标题失败", err)
 		}
@@ -127,8 +131,8 @@ func (s *menuService) Update(req *request.UpdateMenuRequest) error {
 		updates["title"] = req.Title
 	}
 
-	if req.URI != "" {
-		exists, err := s.menuRepo.ExistsByURI(req.URI)
+	if req.URI != "" && req.URI != existingMenu.URI {
+		exists, err := s.menuRepo.ExistsByURIExcludingID(req.URI, req.ID)
 		if err != nil {
 			return errors.NewWithErr(errors.CodeInternalError, "校验菜单 URI 失败", err)
 		}

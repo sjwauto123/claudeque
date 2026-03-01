@@ -25,4 +25,10 @@ type APIRepository interface {
 
 	// ExistsBySlug 判断API标识是否存在
 	ExistsBySlug(slug string) (bool, error)
+
+	// ExistsByMethodAndPath 检查 (http_method, http_path) 是否已存在
+	ExistsByMethodAndPath(method, path string) (bool, error)
+
+	// ExistsBySlugExcludingID 排除检查自身数据
+	ExistsBySlugExcludingID(slug string, excludeID int) (bool, error)
 }

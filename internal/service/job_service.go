@@ -123,9 +123,6 @@ func (s *jobService) CancelJob(ctx context.Context, jobID int, userID int) error
 	if err != nil {
 		return fmt.Errorf("获取任务失败: %w", err)
 	}
-	if job == nil {
-		return errors.New(errors.CodeJobNotFound, "任务不存在")
-	}
 
 	// 验证权限
 	if job.UserId != userID {

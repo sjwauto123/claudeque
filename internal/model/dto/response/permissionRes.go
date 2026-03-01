@@ -9,6 +9,7 @@ type PermissionResponse struct {
 	Status     int    `json:"status"`
 	HttpMethod string `json:"http_method"`
 	HttpPath   string `json:"http_path"`
+	Sort       int    `json:"sort"`
 }
 
 type ApiPermissionRes struct {
