@@ -1,7 +1,5 @@
 package request
 
-import "cloudque/internal/model/entity"
-
 // APIPageQueryRequest API分页查询请求
 type APIPageQueryRequest struct {
 	Page     int    `form:"page" binding:"required,min=1"`
@@ -12,10 +10,9 @@ type APIPageQueryRequest struct {
 
 // CreateAPIRequest 创建API请求
 type CreateAPIRequest struct {
-	entity.BaseEntity
+	ID         int    `json:"id" binding:"required"`
 	Name       string `json:"name" binding:"required,min=1,max=255"`
 	Category   string `json:"category" binding:"required"`
-	Type       string `json:"type" binding:"required"`
 	Slug       string `json:"slug" binding:"required,min=1,max=50"`
 	Status     *int   `json:"status" binding:"required,oneof=0 1"` // 0=停用, 1=启用
 	HTTPMethod string `json:"http_method" binding:"required,oneof=GET POST PUT DELETE"`
