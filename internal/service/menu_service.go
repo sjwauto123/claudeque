@@ -82,11 +82,19 @@ func (s *menuService) Create(req *request.CreateMenuRequest) error {
 		return errors.New(errors.CodeResourceAlreadyExists, "菜单路由已存在")
 	}
 
-	if req.Type == "catalogue" {
-		*req.ParentID = 0
+	// 如果未提供 parent_id，默认设为 0
+	var parentID int
+	if req.ParentID != nil {
+		parentID = *req.ParentID
+	} else {
+		parentID = 0
 	}
 
-	if *req.ParentID != 0 {
+	if req.Type == "catalogue" {
+		parentID = 0
+	}
+
+	if parentID != 0 {
 		req.Type = "menu"
 	}
 
