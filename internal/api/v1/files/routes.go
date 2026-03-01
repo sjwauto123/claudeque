@@ -8,6 +8,7 @@ import (
 
 // RegisterRoutes 注册文件路由
 func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
+
 	// 文件管理接口
 	r := router.Group("/files")
 	r.Use(middleware.Auth())
@@ -25,7 +26,10 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	}
 
 	// 用户目录接口
-	userDirGroup := r.Group("/directories")
+	userDirGroup := router.Group("/directories")
+	userDirGroup.Use(middleware.Auth())
+	userDirGroup.Use(middleware.RequirePermission(ctrl.authService))
+	userDirGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
 	{
 		// 计算目录磁盘占比和大小
 		userDirGroup.GET("/calculate-usage", middleware.WithOperation("计算目录磁盘大小"), ctrl.GetDiskUsage)

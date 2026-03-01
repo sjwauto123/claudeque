@@ -22,18 +22,6 @@ import (
 	"github.com/pkg/sftp"
 )
 
-// FileService 文件服务接口
-type FileService interface {
-	GetFileList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
-	UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error)
-	DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, int64, error)
-	DeleteFile(userID int, path string, isRootMode bool) error
-	UnzipFile(userID int, req *request.UnzipRequest, isRootMode bool) error
-	GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error)
-	CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error)
-	GetHomeDirectoriesList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
-}
-
 // fileService 文件服务实现
 type fileService struct {
 	sessionManager *ssh.SessionManager
@@ -58,7 +46,7 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 	// 1. 尝试获取现有会话
 	session, err := s.sessionManager.GetSession(userID, isRoot)
 
-	// 2. 检查会话及客户端是否有效
+	// 2.1 检查会话及客户端是否有效
 	isValid := false
 	if err == nil && session != nil && session.Client != nil {
 		// 尝试轻量级 ping
@@ -74,7 +62,7 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 		return session, nil
 	}
 
-	// 3. 会话无效或已断开，尝试通过 AuthService 恢复
+	// 2.2 会话无效或已断开，尝试通过 AuthService 恢复
 	logger.Infof("SSH会话不存在或已断开，尝试恢复: userID=%d, isRoot=%t", userID, isRoot)
 
 	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
@@ -563,10 +551,32 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 		if strings.Contains(errMsg, "Permission denied") {
 			return nil, errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
 		}
-		return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
+		// 尝试使用 du -sk 作为回退方案
+		cmdFallback := fmt.Sprintf("du -sk %s | awk '{print $1}'", safePath)
+		outputFallback, errFallback := s.executeSSHCommand(userID, cmdFallback, isRootMode)
+		if errFallback == nil && strings.TrimSpace(outputFallback) != "" {
+			output = outputFallback
+			// 标记需要转换为字节（du -sk 输出的是 KB）
+			kbStr := strings.TrimSpace(output)
+			fields := strings.Fields(kbStr)
+			if len(fields) > 0 {
+				kbStr = fields[0]
+			}
+			kb, parseErr := strconv.ParseInt(kbStr, 10, 64)
+			if parseErr == nil {
+				output = fmt.Sprintf("%d", kb*1024)
+			}
+		} else {
+			return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
+		}
 	}
 
 	sizeStr := strings.TrimSpace(output)
+	if sizeStr == "" {
+		logger.Warnf("du命令返回为空: userID=%d, cmd=%s", userID, cmd)
+		sizeStr = "0"
+	}
+
 	// 修复：如果 du -sb 输出包含文件名，只取第一列
 	fields := strings.Fields(sizeStr)
 	if len(fields) > 0 {
