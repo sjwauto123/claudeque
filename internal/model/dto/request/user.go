@@ -31,6 +31,9 @@ type ChangePasswordRequest struct {
 // UserListRequest 用户列表请求
 type UserListRequest struct {
 	response.PageRequest
+	Username string `form:"username" json:"username"`
+	Email    string `form:"email" json:"email"`
+	Status   *int   `form:"status" json:"status" binding:"omitempty,oneof=0 1"`
 }
 
 type GetByUsernameRequest struct {

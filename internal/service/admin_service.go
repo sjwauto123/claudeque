@@ -6,6 +6,7 @@ import (
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/utils"
+	"strings"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -29,6 +30,9 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
+	if strings.Contains(pwd, " ") {
+		return bizerrors.New(bizerrors.CodeInvalidParam, "密码不能包含空格")
+	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -52,7 +56,6 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
 		if err := s.createVMUser(req.Username, pwd); err != nil {
 			logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
-			// 如果VM创建失败，返回错误
 			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建虚拟机用户失败", err)
 		}
 		logger.Info("VM用户创建成功", zap.String("username", req.Username))
@@ -101,6 +104,9 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 
 	if req.Password != "" {
 		pwd := utils.DecryptIfCryptoJS(req.Password)
+		if strings.Contains(pwd, " ") {
+			return bizerrors.New(bizerrors.CodeInvalidParam, "密码不能包含空格")
+		}
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err != nil {
 			return err

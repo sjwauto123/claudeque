@@ -396,7 +396,7 @@ func (s *userService) ListUsers(req *request.UserListRequest) (*response.PageRes
 	offset := (page - 1) * size
 
 	// 查询数据
-	users, total, err := s.userRepo.List(offset, size)
+	users, total, err := s.userRepo.List(offset, size, req.Username, req.Email, req.Status)
 	if err != nil {
 		return nil, err
 	}
