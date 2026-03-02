@@ -220,8 +220,6 @@ func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request
 		return nil, 0, err
 	}
 
-	offset := (req.Page - 1) * req.PageSize
-
 	ids := make([]string, len(orderedJobIDs))
 	for i, id := range orderedJobIDs {
 		ids[i] = strconv.Itoa(id)
@@ -231,8 +229,6 @@ func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request
 	var rows []response.QueueJobDBRow
 	err := baseDB.
 		Order(orderSQL).
-		Limit(req.PageSize).
-		Offset(offset).
 		Scan(&rows).Error
 
 	if err != nil {
@@ -280,13 +276,9 @@ func (r *jobRepository) GetRunningJobs(req request.QueueListRequest, startTime, 
 		return nil, 0, err
 	}
 
-	offset := (req.Page - 1) * req.PageSize
-
 	var rows []response.QueueJobDBRow
 	err := baseDB.
 		Order("j.created_at DESC"). // 正在执行中的任务按创建时间倒序排列
-		Limit(req.PageSize).
-		Offset(offset).
 		Scan(&rows).Error
 
 	if err != nil {
