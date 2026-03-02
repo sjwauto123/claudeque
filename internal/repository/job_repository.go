@@ -85,12 +85,8 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 			j.description,
 			j.status,
 			j.created_at,
-			COALESCE(g.card, '') AS card,
+			j.gpu_ids AS card,
 			0 AS count
-		`).
-		Joins(`
-			LEFT JOIN (SELECT current_job_id,GROUP_CONCAT(name ORDER BY id SEPARATOR ',') AS card FROM gpu_cards GROUP BY current_job_id
-			) g ON g.current_job_id = j.id
 		`).
 		Order("j.created_at DESC").
 		Limit(req.PageSize).
@@ -99,6 +95,42 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 
 	if err != nil {
 		return []response.JobResponse{}, 0, req.Page, req.PageSize, err
+	}
+
+	// 批量查询显卡信息
+	gpuIDMap := make(map[string]string)
+	var allGpuIDs []string
+
+	// 收集所有需要查询的显卡ID
+	for _, job := range list {
+		if job.Card != "" {
+			ids := strings.Split(job.Card, ",")
+			allGpuIDs = append(allGpuIDs, ids...)
+		}
+	}
+
+	// 如果有显卡ID，进行查询
+	if len(allGpuIDs) > 0 {
+		var gpuCards []entity.GpuCard
+		if err := r.db.Table("gpu_cards").Where("id IN ?", allGpuIDs).Find(&gpuCards).Error; err == nil {
+			for _, card := range gpuCards {
+				gpuIDMap[strconv.Itoa(card.ID)] = card.Name
+			}
+		}
+	}
+
+	// 替换ID为名称
+	for i := range list {
+		if list[i].Card != "" {
+			ids := strings.Split(list[i].Card, ",")
+			var names []string
+			for _, id := range ids {
+				if name, ok := gpuIDMap[id]; ok {
+					names = append(names, name)
+				}
+			}
+			list[i].Card = strings.Join(names, ",")
+		}
 	}
 
 	return list, total, req.Page, req.PageSize, nil
