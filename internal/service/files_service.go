@@ -60,9 +60,10 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 	isValid := false
 	if err == nil && session != nil && session.Client != nil {
 		// 优化：增加会话检查缓存，避免频繁执行 echo 1
+		// 设置缓存时间为 3s，平衡性能与安全性
 		needCheck := true
 		if lastCheck, ok := s.sessionCheckCache.Load(userID); ok {
-			if time.Since(lastCheck.(time.Time)) < 5*time.Second {
+			if time.Since(lastCheck.(time.Time)) < 3*time.Second {
 				needCheck = false
 				isValid = true
 			}
@@ -71,8 +72,8 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 		if needCheck {
 			// 尝试轻量级 ping
 			if _, pingErr := session.Client.ExecuteCommand("echo 1"); pingErr == nil {
-				// 确保 SFTP 客户端也存在
-				if session.Client.GetSFTPClient() != nil {
+				// 确保 SFTP 客户端也存在且未关闭
+				if sftpClient := session.Client.GetSFTPClient(); sftpClient != nil {
 					isValid = true
 					s.sessionCheckCache.Store(userID, time.Now())
 				}
@@ -267,8 +268,8 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 		return nil, err
 	}
 
-	var dirs []*dto.DirectoryItem
-	var files []*dto.FileItem
+	var dirs []*dto.DirectoryItem = []*dto.DirectoryItem{}
+	var files []*dto.FileItem = []*dto.FileItem{}
 	var realPath string
 	var cacheHit bool
 
@@ -391,7 +392,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 					Name:      entry.Name(),
 					UpdatedAt: entry.ModTime(),
 					Path:      path.Join(realPath, entry.Name()),
-					Owner:     owner,
+					Username:  owner,
 				})
 			} else {
 				files = append(files, &dto.FileItem{
@@ -399,7 +400,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 					FileSize:  entry.Size(),
 					UpdatedAt: entry.ModTime(),
 					Path:      path.Join(realPath, entry.Name()),
-					Owner:     owner,
+					Username:  owner,
 				})
 			}
 		}
@@ -456,8 +457,8 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 
 	start := (req.Page - 1) * req.PageSize
 
-	var resultDirs []*dto.DirectoryItem
-	var resultFiles []*dto.FileItem
+	var resultDirs []*dto.DirectoryItem = []*dto.DirectoryItem{}
+	var resultFiles []*dto.FileItem = []*dto.FileItem{}
 
 	if start < total {
 		currentIdx := 0
@@ -480,9 +481,6 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 			}
 			currentIdx++
 		}
-	} else {
-		resultDirs = []*dto.DirectoryItem{}
-		resultFiles = []*dto.FileItem{}
 	}
 
 	// Build Breadcrumb
@@ -601,7 +599,8 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 
 	// 进度上报
 	var total int64 = header.Size
-	progressKey := fmt.Sprintf("upload:progress:%d:%s", userID, safeFilename)
+	// 使用 filename + targetPath 作为唯一标识，防止不同目录下同名文件进度冲突
+	progressKey := fmt.Sprintf("upload:progress:%d:%s:%s", userID, safeFilename, resolvedPath)
 	startTime := time.Now()
 
 	report := func(sent int64, status string, errMsg string) {
@@ -631,6 +630,10 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 				remSec := remBytes / bytesPerSec
 				remaining = formatUploadDuration(time.Duration(remSec) * time.Second)
 			}
+		} else if status == "uploading" {
+			// 初始化状态，速度和时间为 0，防止只有名字和大小
+			speed = "0 B/s"
+			remaining = "计算中..."
 		}
 
 		data := &dto.UploadProgressData{
@@ -648,11 +651,15 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 			_ = s.redisRepo.Set(ctx, progressKey, string(b), 30*time.Minute)
 		}
 	}
+	// 初始状态上报
 	report(0, "uploading", "")
 
-	buf := make([]byte, 4*1024*1024)
+	// 优化 buffer 大小：128KB 较适合 SFTP 的包对齐
+	buf := make([]byte, 128*1024)
 	var sent int64
-	last := time.Now()
+	lastReportTime := time.Now()
+	lastReportSent := int64(0)
+
 	for {
 		nr, rerr := file.Read(buf)
 		if nr > 0 {
@@ -667,9 +674,12 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 				return nil, errors.New(errors.CodeInternalError, "写入不完整")
 			}
 			sent += int64(nw)
-			if time.Since(last) > 500*time.Millisecond {
+
+			// 频率控制：每 500ms 或上传了 2MB 才上报一次
+			if time.Since(lastReportTime) > 500*time.Millisecond || (sent-lastReportSent) > 2*1024*1024 {
 				report(sent, "uploading", "")
-				last = time.Now()
+				lastReportTime = time.Now()
+				lastReportSent = sent
 			}
 		}
 		if rerr == io.EOF {
@@ -843,15 +853,13 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	//wg.Add(2)
 
 	// 1. 串行执行 du (不再并行，避免 SSH 通道竞争)
-	//go func() {
-	//	defer wg.Done()
 	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
 	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		// 尝试回退方案
-		if strings.Contains(err.Error(), "Permission denied") {
+		outStr := strings.TrimSpace(output)
+		if strings.Contains(err.Error(), "Permission denied") || strings.Contains(outStr, "Permission denied") {
 			errDu = errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
-			//return
 		} else {
 			// 尝试使用 du -sk 作为回退方案
 			cmdFallback := fmt.Sprintf("du -sk %s | awk '{print $1}'", safePath)
@@ -866,100 +874,138 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 				}
 				if kb, parseErr := strconv.ParseInt(kbStr, 10, 64); parseErr == nil {
 					size = kb * 1024
-					//return
 				}
 			} else {
-				errDu = errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
-				//return
+				errDu = errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v, output: %s", err, output), err)
 			}
 		}
 	} else {
 		sizeStr := strings.TrimSpace(output)
 		if sizeStr == "" {
-			size = 0
-			//return
-		} else {
+			// 如果 output 为空但 err 为 nil，可能是管道问题，尝试直接 du -sb
+			cmdDirect := fmt.Sprintf("du -sb %s", safePath)
+			outDirect, errDirect := s.executeSSHCommand(userID, cmdDirect, isRootMode)
+			if errDirect == nil && strings.TrimSpace(outDirect) != "" {
+				sizeStr = strings.TrimSpace(outDirect)
+			} else {
+				size = 0
+				logger.Warnf("du 命令返回空输出: userID=%d, path=%s", userID, safePath)
+			}
+		}
+
+		if sizeStr != "" {
 			fields := strings.Fields(sizeStr)
 			if len(fields) > 0 {
 				sizeStr = fields[0]
 			}
-			if s, parseErr := strconv.ParseInt(sizeStr, 10, 64); parseErr == nil {
-				size = s
+			if sVal, parseErr := strconv.ParseInt(sizeStr, 10, 64); parseErr == nil {
+				size = sVal
 			} else {
-				logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, parseErr)
+				logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, output=%q, err=%v", userID, sizeStr, output, parseErr)
 				errDu = errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小数据失败: %s", sizeStr), parseErr)
 			}
 		}
 	}
-	//}()
 
 	// 如果 du 失败，直接返回错误，不再执行 df
 	if errDu != nil {
+		logger.Errorf("获取目录大小最终失败: userID=%d, path=%s, err=%v", userID, resolvedPath, errDu)
 		return nil, errDu
 	}
 
-	// 2. 串行执行 df
-	//go func() {
-	//	defer wg.Done()
-	// 直接执行 df -kP，不使用管道，在 Go 中解析
-	cmdTotal := fmt.Sprintf("df -kP %s", safePath)
-	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
-	if err == nil {
-		// 优化解析逻辑
-		lines := strings.Split(strings.TrimSpace(outTotal), "\n")
-		var targetLine string
-		// 倒序查找第一个非表头、非空的行
-		for i := len(lines) - 1; i >= 0; i-- {
-			line := strings.TrimSpace(lines[i])
-			if line == "" {
-				continue
-			}
-			// 跳过表头
-			if strings.Contains(line, "Filesystem") || strings.Contains(line, "1024-blocks") {
-				continue
-			}
-			targetLine = line
-			break
+	// 2. 优先使用 SFTP StatVFS 获取磁盘总量 (更可靠，不依赖 shell 解析)
+	sftpClient, errSftp := s.getSftpClient(userID, isRootMode)
+	if errSftp == nil {
+		if statvfs, errStatVfs := sftpClient.StatVFS(resolvedPath); errStatVfs == nil {
+			totalBytes = int64(statvfs.Blocks) * int64(statvfs.Bsize)
+			logger.Debugf("通过 SFTP StatVFS 获取磁盘总量成功: userID=%d, path=%s, totalBytes=%d", userID, resolvedPath, totalBytes)
+		} else {
+			logger.Warnf("SFTP StatVFS 获取失败，回退到 df: userID=%d, path=%s, err=%v", userID, resolvedPath, errStatVfs)
 		}
+	}
 
-		if targetLine != "" {
-			fields := strings.Fields(targetLine)
-			// 策略：寻找带有 % 的 Capacity 列，Total 通常在它前面第3列
-			// Filesystem Total Used Avail Cap% Mounted
-			capIndex := -1
-			for i := len(fields) - 1; i >= 0; i-- {
-				if strings.HasSuffix(fields[i], "%") {
-					capIndex = i
-					break
+	// 3. 如果 StatVFS 失败，回退到原来的 df 方案
+	if totalBytes == 0 {
+		cmdTotal := fmt.Sprintf("df -kP %s", safePath)
+		outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
+		if err == nil {
+			// 优化解析逻辑
+			lines := strings.Split(strings.TrimSpace(outTotal), "\n")
+			var targetLine string
+			// 倒序查找第一个非表头、非空的行
+			for i := len(lines) - 1; i >= 0; i-- {
+				line := strings.TrimSpace(lines[i])
+				if line == "" {
+					continue
 				}
+				// 跳过表头
+				if strings.Contains(line, "Filesystem") || strings.Contains(line, "1024-blocks") {
+					continue
+				}
+				targetLine = line
+				break
 			}
 
-			var parsed bool
-			// 尝试 1：基于 Capacity 位置推断
-			if capIndex >= 3 {
-				if t, err := strconv.ParseInt(fields[capIndex-3], 10, 64); err == nil {
-					totalBytes = t * 1024
-					parsed = true
+			if targetLine != "" {
+				fields := strings.Fields(targetLine)
+				// 策略：寻找带有 % 的 Capacity 列，Total 通常在它前面第3列
+				// Filesystem Total Used Avail Cap% Mounted
+				capIndex := -1
+				for i := len(fields) - 1; i >= 0; i-- {
+					if strings.HasSuffix(fields[i], "%") {
+						capIndex = i
+						break
+					}
 				}
-			}
 
-			// 尝试 2：如果找不到 %，或者解析失败，尝试倒数第5列 (标准 POSIX)
-			if !parsed && len(fields) >= 5 {
-				// 倒数第5列通常是 Total
-				if t, err := strconv.ParseInt(fields[len(fields)-5], 10, 64); err == nil {
-					totalBytes = t * 1024
-					parsed = true
+				var parsed bool
+				// 尝试 1：基于 Capacity 位置推断
+				if capIndex >= 3 {
+					if t, err := strconv.ParseInt(fields[capIndex-3], 10, 64); err == nil {
+						totalBytes = t * 1024
+						parsed = true
+					}
 				}
-			}
 
-			if !parsed {
-				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s, outTotal=%q", userID, targetLine, outTotal)
+				// 尝试 2：如果找不到 %，或者解析失败，尝试倒数第5列 (标准 POSIX)
+				if !parsed && len(fields) >= 5 {
+					// 倒数第5列通常是 Total
+					if t, err := strconv.ParseInt(fields[len(fields)-5], 10, 64); err == nil {
+						totalBytes = t * 1024
+						parsed = true
+					}
+				}
+
+				if !parsed {
+					logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s, outTotal=%q", userID, targetLine, outTotal)
+				}
+			} else {
+				logger.Errorf("df输出未找到有效数据行: userID=%d, output=%q", userID, outTotal)
 			}
 		} else {
-			logger.Errorf("df输出未找到有效数据行: userID=%d, output=%q", userID, outTotal)
+			logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
 		}
-	} else {
-		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
+	}
+
+	// 4. 回退方案：如果 df 也未能解析到 totalBytes，尝试使用 stat -f 计算总字节数
+	if totalBytes == 0 {
+		// 增加通用 stat -f 尝试，不依赖特定 -c 格式，如果上面失败
+		cmdStat := fmt.Sprintf(`stat -f -c "%%b %%S" %s || stat -f "%%b %%S" %s`, safePath, safePath)
+		outStat, errStat := s.executeSSHCommand(userID, cmdStat, isRootMode)
+		if errStat == nil && strings.TrimSpace(outStat) != "" {
+			lines := strings.Split(strings.TrimSpace(outStat), "\n")
+			// 取最后一行，防止多行输出
+			parts := strings.Fields(lines[len(lines)-1])
+			if len(parts) >= 2 {
+				if b, errB := strconv.ParseInt(parts[0], 10, 64); errB == nil {
+					if ssz, errS := strconv.ParseInt(parts[1], 10, 64); errS == nil {
+						totalBytes = b * ssz
+					}
+				}
+			}
+		} else {
+			logger.Errorf("stat -f 计算总字节数失败: userID=%d, cmd=%s, err=%v, out=%q", userID, cmdStat, errStat, outStat)
+		}
 	}
 
 	if errDu != nil {
@@ -994,10 +1040,11 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 	var bytess int64
 
 	if err != nil {
-		logger.Errorf("执行du -sb命令失败，尝试du -sk: userID=%d, cmd=%s, err=%v", userID, cmd, err)
+		outStr := strings.TrimSpace(out)
+		logger.Errorf("执行du -sb命令失败，尝试du -sk: userID=%d, cmd=%s, err=%v, output=%q", userID, cmd, err, outStr)
 
 		// 检查是否是权限问题
-		if strings.Contains(err.Error(), "Permission denied") {
+		if strings.Contains(err.Error(), "Permission denied") || strings.Contains(outStr, "Permission denied") {
 			return 0, "", 0, errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该文件或目录", err)
 		}
 
@@ -1005,7 +1052,7 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 		cmd = fmt.Sprintf("du -sk %s | awk '{print $1}'", quotedPath)
 		out, err = s.executeSSHCommand(userID, cmd, isRootMode)
 		if err != nil {
-			logger.Errorf("执行du -sk命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
+			logger.Errorf("执行du -sk命令失败: userID=%d, cmd=%s, err=%v, output=%q", userID, cmd, err, out)
 			return 0, "", 0, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("计算大小失败: %v", err), err)
 		}
 		// 转换为字节
@@ -1018,84 +1065,135 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 		bytess = kb * 1024
 	} else {
 		sizeStr := strings.TrimSpace(out)
-		// 修复：如果 du -sb 输出包含文件名，只取第一列
-		fields := strings.Fields(sizeStr)
-		if len(fields) > 0 {
-			sizeStr = fields[0]
+		if sizeStr == "" {
+			// 尝试直接 du -sb
+			cmdDirect := fmt.Sprintf("du -sb %s", quotedPath)
+			outDirect, errDirect := s.executeSSHCommand(userID, cmdDirect, isRootMode)
+			if errDirect == nil && strings.TrimSpace(outDirect) != "" {
+				sizeStr = strings.TrimSpace(outDirect)
+			}
 		}
-		bytess, err = strconv.ParseInt(sizeStr, 10, 64)
-		if err != nil {
-			logger.Errorf("解析字节大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, err)
-			return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小数据失败: %s", sizeStr), err)
+
+		if sizeStr != "" {
+			// 修复：如果 du -sb 输出包含文件名，只取第一列
+			fields := strings.Fields(sizeStr)
+			if len(fields) > 0 {
+				sizeStr = fields[0]
+			}
+			var parseErr error
+			bytess, parseErr = strconv.ParseInt(sizeStr, 10, 64)
+			if parseErr != nil {
+				logger.Errorf("解析字节大小失败: userID=%d, sizeStr=%s, output=%q, err=%v", userID, sizeStr, out, parseErr)
+				return 0, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析大小数据失败: %s", sizeStr), parseErr)
+			}
+		} else {
+			bytess = 0
+			logger.Warnf("du 命令在 CalculateSize 返回空输出: userID=%d, path=%s", userID, quotedPath)
 		}
 	}
 
-	// 2. 使用 df 获取磁盘总大小和可用空间，计算占比
-	cmdTotal := fmt.Sprintf("df -kP %s", quotedPath)
-	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
-
+	// 2. 优先使用 SFTP StatVFS 获取磁盘总量
+	sftpClient, errSftp := s.getSftpClient(userID, isRootMode)
+	var totalBytes int64
 	var usagePercent float64
-	if err == nil {
-		// 优化解析逻辑
-		lines := strings.Split(strings.TrimSpace(outTotal), "\n")
-		var targetLine string
-		// 倒序查找第一个非表头、非空的行
-		for i := len(lines) - 1; i >= 0; i-- {
-			line := strings.TrimSpace(lines[i])
-			if line == "" {
-				continue
+	if errSftp == nil {
+		if statvfs, errStatVfs := sftpClient.StatVFS(resolvedPath); errStatVfs == nil {
+			totalBytes = int64(statvfs.Blocks) * int64(statvfs.Bsize)
+			if totalBytes > 0 {
+				usagePercent = float64(bytess) / float64(totalBytes) * 100
 			}
-			// 跳过表头
-			if strings.Contains(line, "Filesystem") || strings.Contains(line, "1024-blocks") {
-				continue
-			}
-			targetLine = line
-			break
 		}
+	}
 
-		if targetLine != "" {
-			fields := strings.Fields(targetLine)
-			// 策略：寻找带有 % 的 Capacity 列，Total 通常在它前面第3列
-			// Filesystem Total Used Avail Cap% Mounted
-			capIndex := -1
-			for i := len(fields) - 1; i >= 0; i-- {
-				if strings.HasSuffix(fields[i], "%") {
-					capIndex = i
-					break
+	// 3. 如果 StatVFS 失败，使用 df 获取磁盘总大小和可用空间，计算占比
+	if totalBytes == 0 {
+		cmdTotal := fmt.Sprintf("df -kP %s", quotedPath)
+		outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
+
+		if err == nil {
+			// 优化解析逻辑
+			lines := strings.Split(strings.TrimSpace(outTotal), "\n")
+			var targetLine string
+			// 倒序查找第一个非表头、非空的行
+			for i := len(lines) - 1; i >= 0; i-- {
+				line := strings.TrimSpace(lines[i])
+				if line == "" {
+					continue
 				}
+				// 跳过表头
+				if strings.Contains(line, "Filesystem") || strings.Contains(line, "1024-blocks") {
+					continue
+				}
+				targetLine = line
+				break
 			}
 
-			var totalBytes int64
-			var parsed bool
-
-			// 尝试 1：基于 Capacity 位置推断
-			if capIndex >= 3 {
-				if t, err := strconv.ParseInt(fields[capIndex-3], 10, 64); err == nil {
-					totalBytes = t * 1024
-					parsed = true
+			if targetLine != "" {
+				fields := strings.Fields(targetLine)
+				// 策略：寻找带有 % 的 Capacity 列，Total 通常在它前面第3列
+				// Filesystem Total Used Avail Cap% Mounted
+				capIndex := -1
+				for i := len(fields) - 1; i >= 0; i-- {
+					if strings.HasSuffix(fields[i], "%") {
+						capIndex = i
+						break
+					}
 				}
-			}
 
-			// 尝试 2：如果找不到 %，或者解析失败，尝试倒数第5列 (标准 POSIX)
-			if !parsed && len(fields) >= 5 {
-				if t, err := strconv.ParseInt(fields[len(fields)-5], 10, 64); err == nil {
-					totalBytes = t * 1024
-					parsed = true
+				var parsed bool
+
+				// 尝试 1：基于 Capacity 位置推断
+				if capIndex >= 3 {
+					if t, err := strconv.ParseInt(fields[capIndex-3], 10, 64); err == nil {
+						totalBytes = t * 1024
+						parsed = true
+					}
 				}
-			}
 
-			if parsed {
-				if totalBytes > 0 {
-					usagePercent = float64(bytess) / float64(totalBytes) * 100
+				// 尝试 2：如果找不到 %，或者解析失败，尝试倒数第5列 (标准 POSIX)
+				if !parsed && len(fields) >= 5 {
+					if t, err := strconv.ParseInt(fields[len(fields)-5], 10, 64); err == nil {
+						totalBytes = t * 1024
+						parsed = true
+					}
+				}
+
+				if parsed {
+					if totalBytes > 0 {
+						usagePercent = float64(bytess) / float64(totalBytes) * 100
+					}
+				} else {
+					logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s, outTotal=%q", userID, targetLine, outTotal)
 				}
 			} else {
-				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s, outTotal=%q", userID, targetLine, outTotal)
+				logger.Errorf("df输出未找到有效数据行: userID=%d, output=%q", userID, outTotal)
 			}
 		} else {
-			logger.Errorf("df输出未找到有效数据行: userID=%d, output=%q", userID, outTotal)
+			logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
 		}
-	} else {
-		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
+	}
+
+	// 4. 回退方案：df 失败或未解析到 totalBytes 时，使用 stat -f 计算总字节数
+	if usagePercent == 0 && totalBytes == 0 {
+		cmdStat := fmt.Sprintf(`stat -f -c "%%b %%S" %s || stat -f "%%b %%S" %s`, quotedPath, quotedPath)
+		outStat, errStat := s.executeSSHCommand(userID, cmdStat, isRootMode)
+		if errStat == nil && strings.TrimSpace(outStat) != "" {
+			lines := strings.Split(strings.TrimSpace(outStat), "\n")
+			// 取最后一行
+			parts := strings.Fields(lines[len(lines)-1])
+			if len(parts) >= 2 {
+				if b, errB := strconv.ParseInt(parts[0], 10, 64); errB == nil {
+					if ssz, errS := strconv.ParseInt(parts[1], 10, 64); errS == nil {
+						total := b * ssz
+						if total > 0 {
+							usagePercent = float64(bytess) / float64(total) * 100
+						}
+					}
+				}
+			}
+		} else {
+			logger.Errorf("stat -f 计算总字节数失败: userID=%d, cmd=%s, err=%v, out=%q", userID, cmdStat, errStat, outStat)
+		}
 	}
 
 	return bytess, formatFileSize(bytess), usagePercent, nil
@@ -1146,7 +1244,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("读取目录失败: %s", realPath), err)
 	}
 
-	var dirs []*dto.DirectoryItem
+	var dirs []*dto.DirectoryItem = []*dto.DirectoryItem{}
 
 	// 构建 UID -> Username 映射
 	uidToName := make(map[uint32]string)
@@ -1192,7 +1290,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 				Name:      entry.Name(),
 				UpdatedAt: entry.ModTime(),
 				Path:      path.Join(realPath, entry.Name()),
-				Owner:     owner,
+				Username:  owner,
 			})
 		}
 	}
@@ -1213,7 +1311,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 		end = total
 	}
 
-	var slicedDirs []*dto.DirectoryItem
+	var slicedDirs []*dto.DirectoryItem = []*dto.DirectoryItem{}
 	if start < total {
 		slicedDirs = dirs[start:end]
 	}
@@ -1234,11 +1332,24 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 }
 
 // GetUploadProgress 获取上传进度
-func (s *fileService) GetUploadProgress(userID int, filename string) (*dto.UploadProgressData, error) {
+func (s *fileService) GetUploadProgress(userID int, filename string, targetPath string) (*dto.UploadProgressData, error) {
 	if s.redisRepo == nil {
 		return nil, errors.New(errors.CodeInternalError, "未配置进度存储")
 	}
-	key := fmt.Sprintf("upload:progress:%d:%s", userID, filename)
+
+	// 1. 获取用户信息，判断是否是 root 模式（与上传逻辑保持一致）
+	isRootMode, err := s.authService.HasSystemAccess(userID, AccessTypeFile)
+	if err != nil {
+		return nil, err
+	}
+
+	// 2. 解析路径以获取 resolvedPath，确保与上传时生成的 Key 一致
+	resolvedPath, err := s.resolvePath(userID, targetPath, isRootMode)
+	if err != nil {
+		return nil, err
+	}
+
+	key := fmt.Sprintf("upload:progress:%d:%s:%s", userID, filename, resolvedPath)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	val, err := s.redisRepo.Get(ctx, key)

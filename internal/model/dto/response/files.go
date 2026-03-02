@@ -9,9 +9,9 @@ type FilesListData struct {
 	FileList      []*FileItem       `json:"file_list"`      // 文件列表
 	DirectoryList []*DirectoryItem  `json:"directory_list"` // 目录列表
 	Total         int               `json:"total"`          // 总数
-	Page          int               `json:"page"`           // 当前页
-	Pages         int               `json:"pages"`          //总页数
-	PageSize      int               `json:"page_size"`      // 每页数量
+	Page          int               `json:"page"`           // 当前页码
+	Pages         int               `json:"pages"`          // 总页数
+	PageSize      int               `json:"pageSize"`       // 每页数量
 }
 
 // FileItem 文件信息
@@ -20,7 +20,8 @@ type FileItem struct {
 	FileSize  int64     `json:"file_size"`
 	UpdatedAt time.Time `json:"updated_at"` // 或者 string，视 needs 而定，这里用 time.Time 方便格式化
 	Path      string    `json:"path"`
-	Owner     string    `json:"owner"`
+	Username  string    `json:"username"`
+	IsDir     bool      `json:"is_dir"`
 }
 
 // DirectoryItem 目录信息
@@ -28,7 +29,7 @@ type DirectoryItem struct {
 	Name      string    `json:"name"`
 	UpdatedAt time.Time `json:"updated_at"`
 	Path      string    `json:"path"`
-	Owner     string    `json:"owner"`
+	Username  string    `json:"username"`
 }
 
 // DiskUsageData 目录磁盘占比和大小

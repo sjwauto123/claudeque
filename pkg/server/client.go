@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -122,19 +123,38 @@ func NewClient(config *Config) (*Client, error) {
 	return dialAndCreateClient(config, sshConfig)
 }
 
-// dialAndCreateClient 建立连接并创建SFTP客户端
+// dialAndCreateClient 建立连接并创建SFTP客户端，增加重试逻辑以提高稳定性
 func dialAndCreateClient(config *Config, sshConfig *ssh.ClientConfig) (*Client, error) {
-	sshClient, err := ssh.Dial("tcp", config.Host, sshConfig)
-	if err != nil {
+	var sshClient *ssh.Client
+	var err error
+
+	maxRetries := 3
+	for i := 0; i < maxRetries; i++ {
+		sshClient, err = ssh.Dial("tcp", config.Host, sshConfig)
+		if err == nil {
+			break
+		}
+
+		// 如果不是最后一次重试，且错误可能是暂时性的网络问题
+		if i < maxRetries-1 {
+			errMsg := err.Error()
+			if strings.Contains(errMsg, "handshake failed") ||
+				strings.Contains(errMsg, "timeout") ||
+				strings.Contains(errMsg, "connection refused") ||
+				strings.Contains(errMsg, "reset by peer") ||
+				strings.Contains(errMsg, "wsarecv") {
+				// 指数退避等待后重试
+				waitTime := time.Duration(i+1) * 1 * time.Second
+				time.Sleep(waitTime)
+				continue
+			}
+		}
 		return nil, fmt.Errorf("SSH连接失败: %w", err)
 	}
 
-	sftpClient, err := sftp.NewClient(sshClient)
+	sftpClient, err := sftp.NewClient(sshClient, sftp.MaxPacket(32768), sftp.UseConcurrentWrites(true))
 	if err != nil {
-		err := sshClient.Close()
-		if err != nil {
-			return nil, fmt.Errorf("SSH连接关闭失败: %w", err)
-		}
+		_ = sshClient.Close()
 		return nil, fmt.Errorf("SFTP连接失败: %w", err)
 	}
 

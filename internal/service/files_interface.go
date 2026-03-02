@@ -18,5 +18,5 @@ type FileService interface {
 	GetDiskUsage(userID int, path string, isRootMode bool) (*dto.DiskUsageData, error)
 	CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error)
 	GetHomeDirectoriesList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
-	GetUploadProgress(userID int, filename string) (*dto.UploadProgressData, error)
+	GetUploadProgress(userID int, filename string, targetPath string) (*dto.UploadProgressData, error)
 }

@@ -41,5 +41,6 @@ type UnzipRequest struct {
 
 // UploadProgressRequest 上传进度查询请求
 type UploadProgressRequest struct {
-	Filename string `form:"filename" json:"filename" binding:"required"` // 文件名
+	Filename   string `form:"filename" json:"filename" binding:"required"`       // 文件名
+	TargetPath string `form:"target_path" json:"target_path" binding:"required"` // 目标目录路径
 }

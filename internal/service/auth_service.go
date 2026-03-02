@@ -318,27 +318,13 @@ func (s *authService) EnsureSSHSessionByType(userID int, isRoot bool) error {
 		return bizerrors.New(bizerrors.CodeInternalError, "SSH会话管理器未配置")
 	}
 
-	// 1. 检查会话是否已存在且有效
-	if s.sessionManager.HasSession(userID, isRoot) {
-		// 额外验证会话是否仍然有效（可选，如果GetOrCreateSession内部已验证可跳过）
-		session, err := s.sessionManager.GetSession(userID, isRoot)
-		if err == nil && session != nil {
-			// 简单验证：尝试获取SFTP客户端
-			if sftpClient := session.Client.GetSFTPClient(); sftpClient != nil {
-				return nil // 会话有效
-			}
-		}
-		// 会话无效，删除后重新创建
-		_ = s.sessionManager.DeleteSession(userID, isRoot)
-	}
-
-	// 2. 获取用户凭证
+	// 1. 获取用户凭证 (恢复会话必读)
 	creds, err := s.GetUserCredentialsFromRedis(userID)
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "无法恢复SSH会话，请重新登录", err)
 	}
 
-	// 3. 获取用户信息以确定用户名
+	// 2. 获取用户信息以确定用户名
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取用户信息失败", err)
@@ -347,8 +333,8 @@ func (s *authService) EnsureSSHSessionByType(userID int, isRoot bool) error {
 		return bizerrors.ErrUserNotFound
 	}
 
-	// 4. 使用 GetOrCreateSession 创建或恢复会话
-	// 注意：这里使用Redis中保存的原始用户名和密码
+	// 3. 使用 GetOrCreateSession 创建或恢复会话
+	// GetOrCreateSession 内部会自动验证会话有效性，无效则重建
 	session, err := s.sessionManager.GetOrCreateSession(userID, creds.Username, creds.Password, isRoot)
 	if err != nil {
 		return bizerrors.NewWithErr(bizerrors.CodeSSHCommandExecutionFailed, "创建SSH会话失败", err)
