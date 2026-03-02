@@ -2,9 +2,7 @@ package terminal
 
 import (
 	"cloudque/pkg/logger"
-	"cloudque/pkg/server"
 	"encoding/json"
-	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -90,46 +88,14 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return nil
 	})
 
-	stdinReader, stdinWriter := io.Pipe()
-	stdoutReader, stdoutWriter := io.Pipe()
-	stderrReader, stderrWriter := io.Pipe()
-
-	var sessionErr error
-	var wg sync.WaitGroup
-
-	// 创建终端会话
+	// 获取或创建持久化终端会话
 	// 默认大小 80x24，后续可通过 resize 消息调整
-	ts, err := ctrl.terminalService.NewTerminalSession(userID, stdinReader, stdoutWriter, stderrWriter, isRoot, 80, 24)
+	pt, err := ctrl.terminalService.GetOrCreateTerminal(userID, isRoot, 80, 24)
 	if err != nil {
 		response.BizError(c, err)
 		return
 	}
-	defer func(ts *server.TerminalSession) {
-		err := ts.Close()
-		if err != nil {
-			return
-		}
-	}(ts)
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		defer func(stdoutWriter *io.PipeWriter) {
-			err := stdoutWriter.Close()
-			if err != nil {
-				logger.Error("stdoutWriter关闭失败")
-			}
-		}(stdoutWriter)
-		defer func(stderrWriter *io.PipeWriter) {
-			err := stderrWriter.Close()
-			if err != nil {
-				logger.Error("stderrWriter关闭失败")
-			}
-		}(stderrWriter)
-
-		// 等待会话结束
-		sessionErr = ts.Session.Wait()
-	}()
+	// 注意：不要在 defer 中关闭 Session，因为它是持久化的
 
 	type inboundMsg struct {
 		Type string `json:"type"`
@@ -144,7 +110,10 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 	go func() {
 		defer writeWg.Done()
 		for msg := range writeCh {
-			_ = conn.WriteMessage(websocket.TextMessage, msg)
+			err := conn.WriteMessage(websocket.TextMessage, msg)
+			if err != nil {
+				return // 连接断开，退出
+			}
 		}
 	}()
 
@@ -153,32 +122,45 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		if err != nil {
 			return
 		}
+		// 使用带超时的写入，防止阻塞
 		select {
 		case writeCh <- b:
-		default:
+		case <-time.After(100 * time.Millisecond):
+			// 写入超时，丢弃
 		}
 	}
 
-	// 将 SSH 输出写入 WebSocket（串行写）
-	forwardOut := func(reader io.Reader) {
-		buf := make([]byte, 1024)
+	// 1. 发送历史记录
+	if len(pt.History) > 0 {
+		sendJSON(map[string]any{
+			"type": "output",
+			"data": string(pt.History),
+		})
+	}
+
+	// 2. 监听新的 SSH 输出
+	// 创建一个退出信号通道
+	done := make(chan struct{})
+
+	go func() {
+		defer close(writeCh) // 退出时关闭写入通道
 		for {
-			n, err := reader.Read(buf)
-			if n > 0 {
+			select {
+			case data, ok := <-pt.OutputChan:
+				if !ok {
+					return // 通道关闭
+				}
 				sendJSON(map[string]any{
 					"type": "output",
-					"data": string(buf[:n]),
+					"data": string(data),
 				})
-			}
-			if err != nil {
-				break
+			case <-done:
+				return // WebSocket 断开
 			}
 		}
-	}
-	go forwardOut(stdoutReader)
-	go forwardOut(stderrReader)
+	}()
 
-	// 从 WebSocket 读取并写入 SSH stdin
+	// 3. 从 WebSocket 读取并写入 SSH stdin
 	for {
 		_, data, err := conn.ReadMessage()
 		if err != nil {
@@ -187,41 +169,36 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		// 每次收到消息都刷新读取超时
 		err = conn.SetReadDeadline(time.Now().Add(pongWait))
 		if err != nil {
-			return
+			break
 		}
 
 		var in inboundMsg
 		if err := json.Unmarshal(data, &in); err != nil {
 			// 兼容：如果前端直接发原始输入（非JSON）
-			if _, err := stdinWriter.Write(data); err != nil {
+			if _, err := pt.Stdin.Write(data); err != nil {
 				break
 			}
 			continue
 		}
 
 		switch in.Type {
-		case "input":
-			if _, err := stdinWriter.Write([]byte(in.Data)); err != nil {
-				break
-			}
 		case "resize":
 			if in.Cols > 0 && in.Rows > 0 {
-				_ = ts.Resize(in.Cols, in.Rows)
+				_ = ctrl.terminalService.ResizeTerminal(userID, isRoot, in.Cols, in.Rows)
 			}
-		case "ping":
-			sendJSON(map[string]any{"type": "pong"})
-		case "close":
-			_ = stdinWriter.Close()
-			goto end
+		case "input":
+			if _, err := pt.Stdin.Write([]byte(in.Data)); err != nil {
+				goto EndLoop
+			}
 		default:
-			// unknown type: ignore
+			// 默认作为输入
+			if _, err := pt.Stdin.Write([]byte(in.Data)); err != nil {
+				goto EndLoop
+			}
 		}
 	}
 
-end:
-	_ = stdinWriter.Close()
-	wg.Wait()
-	close(writeCh)
-	writeWg.Wait()
-	_ = sessionErr
+EndLoop:
+	close(done)    // 通知输出协程退出
+	writeWg.Wait() // 等待写入协程结束
 }

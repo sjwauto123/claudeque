@@ -14,8 +14,6 @@ const (
 	PongWait = 60 * time.Second
 	// PingPeriod 发送 Ping 的周期 (必须小于 PongWait)
 	PingPeriod = (PongWait * 9) / 10
-	// MaxMessageSize 最大消息大小
-	MaxMessageSize = 512
 )
 
 // SessionMetadata 会话元数据
@@ -75,6 +73,8 @@ func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *Session
 
 	// 启动写协程
 	go client.WritePump()
+	// 启动读协程处理控制消息（Ping/Pong/Close）
+	go client.ReadPump()
 
 	return client
 }
@@ -101,6 +101,32 @@ func (c *Client) Close() {
 	})
 }
 
+// ReadPump 负责从WebSocket连接读取消息（主要用于处理Pong和Close消息）
+func (c *Client) ReadPump() {
+	defer func() {
+		c.Close()
+	}()
+
+	c.Conn.SetReadLimit(512) // 设置最大读取消息大小，防止恶意大包
+	if err := c.Conn.SetReadDeadline(time.Now().Add(PongWait)); err != nil {
+		return
+	}
+	c.Conn.SetPongHandler(func(string) error {
+		return c.Conn.SetReadDeadline(time.Now().Add(PongWait))
+	})
+
+	for {
+		_, _, err := c.Conn.ReadMessage()
+		if err != nil {
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				// log error if needed
+			}
+			break
+		}
+		// 丢弃读取到的消息，因为目前只需要单向推送
+	}
+}
+
 // WritePump 负责将消息从通道写入网络（每个连接一个协程）
 func (c *Client) WritePump() {
 	ticker := time.NewTicker(PingPeriod)
@@ -125,13 +151,22 @@ func (c *Client) WritePump() {
 			if err != nil {
 				return
 			}
-			w.Write(message)
+			_, err = w.Write(message)
+			if err != nil {
+				return
+			}
 
 			// 将队列中剩余的消息合并发送
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte("\n"))
-				w.Write(<-c.Send)
+				_, err2 := w.Write([]byte("\n"))
+				if err2 != nil {
+					return
+				}
+				_, err3 := w.Write(<-c.Send)
+				if err3 != nil {
+					return
+				}
 			}
 
 			if err := w.Close(); err != nil {
