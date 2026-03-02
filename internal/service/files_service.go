@@ -3,11 +3,14 @@ package service
 import (
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
+	"cloudque/internal/repository"
 	"cloudque/pkg/config"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
+	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -16,6 +19,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"go.uber.org/zap"
 
@@ -24,15 +29,19 @@ import (
 
 // fileService 文件服务实现
 type fileService struct {
-	sessionManager *ssh.SessionManager
-	authService    AuthService
+	sessionManager    *ssh.SessionManager
+	authService       AuthService
+	redisRepo         repository.RedisRepository
+	homeDirCache      sync.Map
+	sessionCheckCache sync.Map
 }
 
 // NewFileService 创建文件服务
-func NewFileService(sessionManager *ssh.SessionManager, authService AuthService) FileService {
+func NewFileService(sessionManager *ssh.SessionManager, authService AuthService, redisRepo repository.RedisRepository) FileService {
 	return &fileService{
 		sessionManager: sessionManager,
 		authService:    authService,
+		redisRepo:      redisRepo,
 	}
 }
 
@@ -49,11 +58,23 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 	// 2.1 检查会话及客户端是否有效
 	isValid := false
 	if err == nil && session != nil && session.Client != nil {
-		// 尝试轻量级 ping
-		if _, pingErr := session.Client.ExecuteCommand("echo 1"); pingErr == nil {
-			// 确保 SFTP 客户端也存在
-			if session.Client.GetSFTPClient() != nil {
+		// 优化：增加会话检查缓存，避免频繁执行 echo 1
+		needCheck := true
+		if lastCheck, ok := s.sessionCheckCache.Load(userID); ok {
+			if time.Since(lastCheck.(time.Time)) < 5*time.Second {
+				needCheck = false
 				isValid = true
+			}
+		}
+
+		if needCheck {
+			// 尝试轻量级 ping
+			if _, pingErr := session.Client.ExecuteCommand("echo 1"); pingErr == nil {
+				// 确保 SFTP 客户端也存在
+				if session.Client.GetSFTPClient() != nil {
+					isValid = true
+					s.sessionCheckCache.Store(userID, time.Now())
+				}
 			}
 		}
 	}
@@ -149,41 +170,56 @@ func (s *fileService) resolvePath(userID int, p string, isRootMode bool) (string
 		userID, session.Username, basePath, homeDir, p)
 
 	// 检查并创建用户主目录，如果不存在
-	sftpClient := session.Client.GetSFTPClient()
-	_, err = sftpClient.Stat(homeDir)
-	if err != nil && os.IsNotExist(err) {
-		logger.Infof("用户主目录不存在，尝试创建: userID=%d, homeDir=%s", userID, homeDir)
-		if err = session.Client.MkdirAll(homeDir); err != nil {
-			logger.Errorf("创建用户主目录失败: userID=%d, homeDir=%s, err=%v", userID, homeDir, err)
-			return "", errors.NewWithErr(errors.CodeInternalError, "创建用户主目录失败", err)
+	// 优化：使用缓存避免每次都检查
+	if _, checked := s.homeDirCache.Load(userID); !checked {
+		sftpClient := session.Client.GetSFTPClient()
+		_, err = sftpClient.Stat(homeDir)
+		if err != nil && os.IsNotExist(err) {
+			logger.Infof("用户主目录不存在，尝试创建: userID=%d, homeDir=%s", userID, homeDir)
+			// 使用 sftpClient 或 sshClient 创建目录
+			if err = session.Client.MkdirAll(homeDir); err != nil {
+				logger.Errorf("创建用户主目录失败: userID=%d, homeDir=%s, err=%v", userID, homeDir, err)
+				return "", errors.NewWithErr(errors.CodeInternalError, "创建用户主目录失败", err)
+			}
+			logger.Infof("用户主目录创建成功: userID=%d, homeDir=%s", userID, homeDir)
+		} else if err != nil {
+			logger.Errorf("检查用户主目录状态失败: userID=%d, homeDir=%s, err=%v", userID, homeDir, err)
+			return "", errors.NewWithErr(errors.CodeInternalError, "检查用户主目录状态失败", err)
 		}
-		logger.Infof("用户主目录创建成功: userID=%d, homeDir=%s", userID, homeDir)
-	} else if err != nil {
-		logger.Errorf("检查用户主目录状态失败: userID=%d, homeDir=%s, err=%v", userID, homeDir, err)
-		return "", errors.NewWithErr(errors.CodeInternalError, "检查用户主目录状态失败", err)
+		s.homeDirCache.Store(userID, true)
 	}
 
 	//防止所传path为空的情况
-	if p == "" || p == "." || p == "/" {
+	if p == "" || p == "." {
 		return homeDir, nil
 	}
 
-	// 如果路径已经是绝对路径且不在家目录下，或者包含 .. 试图越权，则纠正或拒绝
-	//先进行标准化处理，再判断是否满足条件
+	// 关键修复：正确处理传入路径
 	cleanPath := path.Clean(p)
+
+	// 如果传入的是绝对路径 (如 "/home")
 	if path.IsAbs(cleanPath) {
+		// 1. 如果路径已经是用户的家目录或其子目录，直接使用
 		if strings.HasPrefix(cleanPath, homeDir) {
 			return cleanPath, nil
 		}
-		// 如果是绝对路径但不以 homeDir 开头，则重新拼接到 homeDir 下
-		// 去掉前导斜杠
-		relPath := strings.TrimPrefix(cleanPath, "/")
-		return path.Join(homeDir, relPath), nil
+
+		// 2. 如果路径是根目录 "/"，映射到家目录
+		if cleanPath == "/" {
+			return homeDir, nil
+		}
+
+		// 3. 如果路径试图访问家目录之外
+		// 这里的逻辑应该是：
+		// 任何不以 homeDir 开头的绝对路径，都应该被拒绝
+		logger.Errorf("越权访问被拒绝: userID=%d, path=%s, homeDir=%s", userID, p, homeDir)
+		return "", errors.New(errors.CodeForbidden, "访问被拒绝：只能访问用户主目录下的文件")
 	}
 
-	// 拼接到家目录下
+	// 如果是相对路径，拼接到家目录下
 	finalPath := path.Join(homeDir, cleanPath)
-	//二次确认
+
+	// 二次确认，防止 ../ 逃逸
 	if !strings.HasPrefix(finalPath, homeDir) {
 		logger.Errorf("越权访问被拒绝: userID=%d, path=%s, finalPath=%s", userID, p, finalPath)
 		return "", errors.New(errors.CodeForbidden, "越权访问被拒绝")
@@ -201,11 +237,19 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 		zap.Bool("isRootMode", isRootMode),
 		zap.String("path", req.Path),
 	)
-	//启动对应的ftpclient
-	client, err := s.getSftpClient(opUserID, isRootMode)
-	if err != nil {
-		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", opUserID, isRootMode, err)
-		return nil, err
+
+	// 恢复上次访问的路径
+	if req.Path == "" {
+		ctx := context.Background()
+		lastPathKey := fmt.Sprintf("file:last_path:%d", userID)
+		if lastPath, err := s.redisRepo.Get(ctx, lastPathKey); err == nil && lastPath != "" {
+			req.Path = lastPath
+		}
+	} else {
+		// 保存当前访问的路径
+		ctx := context.Background()
+		lastPathKey := fmt.Sprintf("file:last_path:%d", userID)
+		_ = s.redisRepo.Set(ctx, lastPathKey, req.Path, 7*24*time.Hour)
 	}
 
 	if req.Page <= 0 {
@@ -215,93 +259,195 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 		req.PageSize = 100
 	}
 
-	//解析出权限正确的路径
+	// 解析出权限正确的路径
 	resolvedPath, err := s.resolvePath(opUserID, req.Path, isRootMode)
 	if err != nil {
 		logger.Errorf("解析路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", opUserID, req.Path, isRootMode, err)
 		return nil, err
 	}
 
-	//传化为真实可用的路径
-	realPath, err := client.RealPath(resolvedPath)
-	if err != nil {
-		logger.Errorf("无法解析真实路径: userID=%d, path=%s, err=%v", opUserID, resolvedPath, err)
-		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("无法解析路径: %s", resolvedPath), err)
-	}
-
-	//读取目标目录下的所有文件和目录
-	entries, err := client.ReadDir(realPath)
-	if err != nil {
-		logger.Errorf("读取目录失败: userID=%d, realPath=%s, err=%v", opUserID, realPath, err)
-		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("读取目录失败: %s", realPath), err)
-	}
-
 	var dirs []*dto.DirectoryItem
 	var files []*dto.FileItem
+	var realPath string
+	var cacheHit bool
 
-	// 构建 UID -> Username 映射
-	//获取对应系统中文件的真正用户名，而不是uid，用来返回文件所有者
-	uidToName := make(map[uint32]string)
+	// 性能优化：尝试从缓存获取全量文件列表
+	// 缓存Key只跟路径有关，跟搜索关键词无关（搜索在内存中进行）
+	// 使用 resolvedPath 作为缓存 Key，确保路径唯一性
+	listCacheKey := fmt.Sprintf("file:list:%d:%v:%s", opUserID, isRootMode, resolvedPath)
 
-	passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", isRootMode)
-	if err != nil {
-		logger.Errorf("执行SSH命令获取passwd失败: userID=%d, err=%v", opUserID, err)
-	} else {
-		lines := strings.Split(passwdOut, "\n")
-		for _, line := range lines {
-			parts := strings.Split(line, ":")
-			if len(parts) >= 3 {
-				username := parts[0]
-				uidStr := parts[2]
-				if uid, err := strconv.ParseUint(uidStr, 10, 32); err == nil {
-					uidToName[uint32(uid)] = username
-				}
+	if s.redisRepo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		cachedDataStr, err := s.redisRepo.Get(ctx, listCacheKey)
+		if err == nil && cachedDataStr != "" {
+			var cachedData struct {
+				RealPath string               `json:"realPath"`
+				Dirs     []*dto.DirectoryItem `json:"dirs"`
+				Files    []*dto.FileItem      `json:"files"`
+			}
+			if err := json.Unmarshal([]byte(cachedDataStr), &cachedData); err == nil {
+				realPath = cachedData.RealPath
+				dirs = cachedData.Dirs
+				files = cachedData.Files
+				cacheHit = true
+				logger.Debugf("文件列表缓存命中: key=%s", listCacheKey)
 			}
 		}
 	}
 
-	for _, entry := range entries {
-		if req.Keyword != "" && !strings.Contains(entry.Name(), req.Keyword) {
-			continue
+	if !cacheHit {
+		// 启动对应的ftpclient
+		client, err := s.getSftpClient(opUserID, isRootMode)
+		if err != nil {
+			logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", opUserID, isRootMode, err)
+			return nil, err
 		}
 
-		var owner string
-		if sys := entry.Sys(); sys != nil {
-			if stat, ok := sys.(*sftp.FileStat); ok {
-				name, found := uidToName[stat.UID]
-				if found {
-					owner = name
+		//传化为真实可用的路径
+		realPath, err = client.RealPath(resolvedPath)
+		if err != nil {
+			logger.Errorf("无法解析真实路径: userID=%d, path=%s, err=%v", opUserID, resolvedPath, err)
+			return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("无法解析路径: %s", resolvedPath), err)
+		}
+
+		//读取目标目录下的所有文件和目录
+		entries, err := client.ReadDir(realPath)
+		if err != nil {
+			logger.Errorf("读取目录失败: userID=%d, realPath=%s, err=%v", opUserID, realPath, err)
+			return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("读取目录失败: %s", realPath), err)
+		}
+
+		// 性能优化：使用 Redis 缓存 UID -> Username 映射
+		uidToName := make(map[uint32]string)
+		cacheKey := "file:uid_map"
+
+		// 1. 尝试从 Redis 获取缓存
+		if s.redisRepo != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			cachedMap, err := s.redisRepo.Get(ctx, cacheKey)
+			cancel()
+			if err == nil && cachedMap != "" {
+				pairs := strings.Split(cachedMap, ",")
+				for _, pair := range pairs {
+					kv := strings.Split(pair, ":")
+					if len(kv) == 2 {
+						if uid, err := strconv.ParseUint(kv[0], 10, 32); err == nil {
+							uidToName[uint32(uid)] = kv[1]
+						}
+					}
+				}
+			}
+		}
+
+		// 2. 如果缓存为空或命中率低，则执行命令加载
+		if len(uidToName) == 0 {
+			// 限制：只有当条目数少于 2000 时才尝试解析用户名，否则大目录还是会有性能问题
+			if len(entries) < 2000 {
+				passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", isRootMode)
+				if err != nil {
+					logger.Warnf("获取用户列表失败(非致命): userID=%d, err=%v", opUserID, err)
 				} else {
-					owner = fmt.Sprintf("%d", stat.UID)
+					var cachePairs []string
+					lines := strings.Split(passwdOut, "\n")
+					for _, line := range lines {
+						parts := strings.Split(line, ":")
+						if len(parts) >= 3 {
+							username := parts[0]
+							uidStr := parts[2]
+							if uid, err := strconv.ParseUint(uidStr, 10, 32); err == nil {
+								uidToName[uint32(uid)] = username
+								cachePairs = append(cachePairs, fmt.Sprintf("%d:%s", uid, username))
+							}
+						}
+					}
+
+					// 3. 更新 Redis 缓存 (有效期 1 小时)
+					if s.redisRepo != nil && len(cachePairs) > 0 {
+						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+						cacheVal := strings.Join(cachePairs, ",")
+						_ = s.redisRepo.Set(ctx, cacheKey, cacheVal, 1*time.Hour)
+						cancel()
+					}
+				}
+			}
+		}
+
+		for _, entry := range entries {
+			var owner string
+			if sys := entry.Sys(); sys != nil {
+				if stat, ok := sys.(*sftp.FileStat); ok {
+					name, found := uidToName[stat.UID]
+					if found {
+						owner = name
+					} else {
+						owner = fmt.Sprintf("%d", stat.UID)
+					}
+				} else {
+					owner = "unknown"
 				}
 			} else {
 				owner = "unknown"
 			}
-		} else {
-			owner = "unknown"
+
+			if entry.IsDir() {
+				dirs = append(dirs, &dto.DirectoryItem{
+					Name:      entry.Name(),
+					UpdatedAt: entry.ModTime(),
+					Path:      path.Join(realPath, entry.Name()),
+					Owner:     owner,
+				})
+			} else {
+				files = append(files, &dto.FileItem{
+					Filename:  entry.Name(),
+					FileSize:  entry.Size(),
+					UpdatedAt: entry.ModTime(),
+					Path:      path.Join(realPath, entry.Name()),
+					Owner:     owner,
+				})
+			}
 		}
 
-		if entry.IsDir() {
-			dirs = append(dirs, &dto.DirectoryItem{
-				Name:      entry.Name(),
-				UpdatedAt: entry.ModTime(),
-				Path:      path.Join(realPath, entry.Name()),
-				Owner:     owner,
-			})
-		} else {
-			files = append(files, &dto.FileItem{
-				Filename:  entry.Name(),
-				FileSize:  entry.Size(),
-				UpdatedAt: entry.ModTime(),
-				Path:      path.Join(realPath, entry.Name()),
-				Owner:     owner,
-			})
+		// 排序
+		sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
+		sort.Slice(files, func(i, j int) bool { return files[i].Filename < files[j].Filename })
+
+		// 存入缓存 (TTL 10秒)
+		if s.redisRepo != nil {
+			cacheData := struct {
+				RealPath string               `json:"realPath"`
+				Dirs     []*dto.DirectoryItem `json:"dirs"`
+				Files    []*dto.FileItem      `json:"files"`
+			}{
+				RealPath: realPath,
+				Dirs:     dirs,
+				Files:    files,
+			}
+			if data, err := json.Marshal(cacheData); err == nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = s.redisRepo.Set(ctx, listCacheKey, string(data), 60*time.Second)
+				cancel()
+			}
 		}
 	}
 
-	//
-	sort.Slice(dirs, func(i, j int) bool { return dirs[i].Name < dirs[j].Name })
-	sort.Slice(files, func(i, j int) bool { return files[i].Filename < files[j].Filename })
+	// 内存过滤 (Keyword)
+	if req.Keyword != "" {
+		var filteredDirs []*dto.DirectoryItem
+		var filteredFiles []*dto.FileItem
+		for _, d := range dirs {
+			if strings.Contains(d.Name, req.Keyword) {
+				filteredDirs = append(filteredDirs, d)
+			}
+		}
+		for _, f := range files {
+			if strings.Contains(f.Filename, req.Keyword) {
+				filteredFiles = append(filteredFiles, f)
+			}
+		}
+		dirs = filteredDirs
+		files = filteredFiles
+	}
 
 	// Pagination
 	totalDirs := len(dirs)
@@ -314,20 +460,17 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 
 	start := (req.Page - 1) * req.PageSize
 
-	if start >= total {
-		dirs = []*dto.DirectoryItem{}
-		files = []*dto.FileItem{}
-	} else {
-		var slicedDirs []*dto.DirectoryItem
-		var slicedFiles []*dto.FileItem
+	var resultDirs []*dto.DirectoryItem
+	var resultFiles []*dto.FileItem
 
+	if start < total {
 		currentIdx := 0
 		count := 0
 
 		// Add dirs
 		for _, d := range dirs {
 			if currentIdx >= start && count < req.PageSize {
-				slicedDirs = append(slicedDirs, d)
+				resultDirs = append(resultDirs, d)
 				count++
 			}
 			currentIdx++
@@ -336,14 +479,14 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 		// Add files
 		for _, f := range files {
 			if currentIdx >= start && count < req.PageSize {
-				slicedFiles = append(slicedFiles, f)
+				resultFiles = append(resultFiles, f)
 				count++
 			}
 			currentIdx++
 		}
-
-		dirs = slicedDirs
-		files = slicedFiles
+	} else {
+		resultDirs = []*dto.DirectoryItem{}
+		resultFiles = []*dto.FileItem{}
 	}
 
 	// Build Breadcrumb
@@ -352,8 +495,8 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 	return &dto.FilesListData{
 		Breadcrumb:    breadcrumb,
 		Path:          realPath,
-		FileList:      files,
-		DirectoryList: dirs,
+		FileList:      resultFiles,
+		DirectoryList: resultDirs,
 		Total:         total,
 		Pages:         pages,
 		Page:          req.Page,
@@ -391,6 +534,16 @@ func buildBreadcrumb(p string) []*dto.BreadcrumbItem {
 	return items
 }
 
+// invalidateFileListCache 清除文件列表缓存
+func (s *fileService) invalidateFileListCache(userID int, isRootMode bool, path string) {
+	if s.redisRepo != nil {
+		ctx := context.Background()
+		key := fmt.Sprintf("file:list:%d:%v:%s", userID, isRootMode, path)
+		_ = s.redisRepo.Del(ctx, key)
+		logger.Debugf("清除文件列表缓存: key=%s", key)
+	}
+}
+
 // UploadFile 上传文件
 func (s *fileService) UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error) {
 	client, err := s.getSftpClient(userID, isRootMode)
@@ -411,7 +564,9 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("创建目录失败: %s", resolvedPath), err)
 	}
 
-	remotePath := path.Join(resolvedPath, header.Filename)
+	// 简单的文件名清理，防止路径遍历
+	safeFilename := path.Base(header.Filename)
+	remotePath := path.Join(resolvedPath, safeFilename)
 	dst, err := client.Create(remotePath)
 	if err != nil {
 		logger.Errorf("创建远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
@@ -430,6 +585,9 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 		logger.Errorf("写入文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
 		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("写入文件失败: %s", remotePath), err)
 	}
+
+	// 成功上传后清除缓存
+	s.invalidateFileListCache(userID, isRootMode, resolvedPath)
 
 	return &dto.FileUploadData{
 		Filename: header.Filename,
@@ -504,6 +662,10 @@ func (s *fileService) DeleteFile(userID int, p string, isRootMode bool) error {
 		return errors.NewWithErr(errors.CodeInternalError, "验证删除结果失败", err)
 	}
 
+	// 成功删除后清除缓存
+	// 注意：删除的是 path.Dir(resolvedPath) 下的条目
+	s.invalidateFileListCache(userID, isRootMode, path.Dir(resolvedPath))
+
 	return nil
 }
 
@@ -520,15 +682,47 @@ func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMod
 		return err
 	}
 
-	safePath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
-	safeTarget := "'" + strings.ReplaceAll(resolvedTarget, "'", "'\\''") + "'"
+	// 1. 检查目标文件/目录是否已存在，防止覆盖
+	client, err := s.getSftpClient(userID, isRootMode)
+	if err != nil {
+		return err
+	}
 
-	cmd := fmt.Sprintf("unzip -o %s -d %s", safePath, safeTarget)
+	// 预测解压后的目录名（通常是压缩包文件名去掉扩展名）
+	baseName := path.Base(resolvedPath)
+	ext := path.Ext(baseName)
+	expectedDirName := strings.TrimSuffix(baseName, ext)
+
+	// 强制解压到以文件名命名的目录中
+	finalTargetDir := path.Join(resolvedTarget, expectedDirName)
+
+	// 检查 potentialPath 是否存在
+	if _, err := client.Stat(finalTargetDir); err == nil {
+		// 文件或目录已存在
+		return errors.New(errors.CodeFileExists, fmt.Sprintf("目标路径已存在文件或目录: %s", expectedDirName))
+	} else if !os.IsNotExist(err) {
+		// 其他错误
+		return errors.NewWithErr(errors.CodeInternalError, "检查文件状态失败", err)
+	}
+
+	// 2. 执行解压
+	safePath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
+	// 使用 finalTargetDir 作为解压目标
+	safeTarget := "'" + strings.ReplaceAll(finalTargetDir, "'", "'\\''") + "'"
+
+	// 确保目标目录存在（unzip -d 会自动创建目录，但我们显式创建更安全，或者依赖 unzip）
+	// 注意：unzip -d target 会把内容解压到 target 下。
+	cmd := fmt.Sprintf("unzip -n %s -d %s", safePath, safeTarget)
 	_, err = s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		logger.Errorf("执行解压命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
 		return errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "执行解压命令失败", err)
 	}
+
+	// 成功解压后清除缓存
+	// 解压到了 resolvedTarget 目录下（新增了一个子目录）
+	s.invalidateFileListCache(userID, isRootMode, resolvedTarget)
+
 	return nil
 }
 
@@ -541,69 +735,91 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	}
 
 	safePath := "'" + strings.ReplaceAll(resolvedPath, "'", "'\\''") + "'"
-	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
 
-	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
-	if err != nil {
-		logger.Errorf("执行du命令失败: userID=%d, cmd=%s, err=%v", userID, cmd, err)
-		// 解析错误信息，如果是 Permission denied，则返回更友好的提示
-		errMsg := err.Error()
-		if strings.Contains(errMsg, "Permission denied") {
-			return nil, errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
-		}
-		// 尝试使用 du -sk 作为回退方案
-		cmdFallback := fmt.Sprintf("du -sk %s | awk '{print $1}'", safePath)
-		outputFallback, errFallback := s.executeSSHCommand(userID, cmdFallback, isRootMode)
-		if errFallback == nil && strings.TrimSpace(outputFallback) != "" {
-			output = outputFallback
-			// 标记需要转换为字节（du -sk 输出的是 KB）
-			kbStr := strings.TrimSpace(output)
-			fields := strings.Fields(kbStr)
-			if len(fields) > 0 {
-				kbStr = fields[0]
+	var (
+		size       int64
+		totalBytes int64
+		wg         sync.WaitGroup
+		errDu      error
+	)
+
+	wg.Add(2)
+
+	// 1. 并行执行 du
+	go func() {
+		defer wg.Done()
+		cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
+		output, err := s.executeSSHCommand(userID, cmd, isRootMode)
+		if err != nil {
+			// 尝试回退方案
+			if strings.Contains(err.Error(), "Permission denied") {
+				errDu = errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
+				return
 			}
-			kb, parseErr := strconv.ParseInt(kbStr, 10, 64)
-			if parseErr == nil {
-				output = fmt.Sprintf("%d", kb*1024)
+			// 尝试使用 du -sk 作为回退方案
+			cmdFallback := fmt.Sprintf("du -sk %s | awk '{print $1}'", safePath)
+			outputFallback, errFallback := s.executeSSHCommand(userID, cmdFallback, isRootMode)
+			if errFallback == nil && strings.TrimSpace(outputFallback) != "" {
+				output = outputFallback
+				// 标记需要转换为字节（du -sk 输出的是 KB）
+				kbStr := strings.TrimSpace(output)
+				fields := strings.Fields(kbStr)
+				if len(fields) > 0 {
+					kbStr = fields[0]
+				}
+				if kb, parseErr := strconv.ParseInt(kbStr, 10, 64); parseErr == nil {
+					size = kb * 1024
+					return
+				}
+			}
+			errDu = errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
+			return
+		}
+
+		sizeStr := strings.TrimSpace(output)
+		if sizeStr == "" {
+			size = 0
+			return
+		}
+
+		fields := strings.Fields(sizeStr)
+		if len(fields) > 0 {
+			sizeStr = fields[0]
+		}
+		if s, parseErr := strconv.ParseInt(sizeStr, 10, 64); parseErr == nil {
+			size = s
+		} else {
+			logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, parseErr)
+			errDu = errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小数据失败: %s", sizeStr), parseErr)
+		}
+	}()
+
+	// 2. 并行执行 df
+	go func() {
+		defer wg.Done()
+		cmdTotal := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $2}'", safePath)
+		outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
+		if err == nil {
+			totalStr := strings.TrimSpace(outTotal)
+			if t, parseErr := strconv.ParseInt(totalStr, 10, 64); parseErr == nil {
+				totalBytes = t
+			} else {
+				logger.Errorf("解析磁盘总大小失败: userID=%d, totalStr=%s, err=%v", userID, totalStr, parseErr)
 			}
 		} else {
-			return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
+			logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
 		}
-	}
+	}()
 
-	sizeStr := strings.TrimSpace(output)
-	if sizeStr == "" {
-		logger.Warnf("du命令返回为空: userID=%d, cmd=%s", userID, cmd)
-		sizeStr = "0"
-	}
+	wg.Wait()
 
-	// 修复：如果 du -sb 输出包含文件名，只取第一列
-	fields := strings.Fields(sizeStr)
-	if len(fields) > 0 {
-		sizeStr = fields[0]
+	if errDu != nil {
+		return nil, errDu
 	}
-	size, parseErr := strconv.ParseInt(sizeStr, 10, 64)
-	if parseErr != nil {
-		logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, parseErr)
-		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小数据失败: %s", sizeStr), parseErr)
-	}
-
-	// 2. 使用 df 获取磁盘总大小，计算占比
-	// 使用 df -B1 获取以字节为单位的总大小
-	cmdTotal := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $2}'", safePath)
-	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
 
 	var usage float64
-	if err == nil {
-		totalStr := strings.TrimSpace(outTotal)
-		totalBytes, parseErr := strconv.ParseInt(totalStr, 10, 64)
-		if parseErr == nil && totalBytes > 0 {
-			usage = float64(size) / float64(totalBytes) * 100
-		} else {
-			logger.Errorf("解析磁盘总大小失败或总大小为0: userID=%d, totalStr=%s, err=%v", userID, totalStr, parseErr)
-		}
-	} else {
-		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
+	if totalBytes > 0 {
+		usage = float64(size) / float64(totalBytes) * 100
 	}
 
 	return &dto.DiskUsageData{

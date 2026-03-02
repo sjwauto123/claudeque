@@ -223,6 +223,10 @@ func (a *App) initDependencies() {
 	// 创建 WebSocket 连接池
 	a.wsPool = websocket.NewConnectionPool()
 
+	// 初始化异步任务服务，并注入 WebSocket 连接池
+	asyncTaskSvc := service.GetAsyncTaskService()
+	asyncTaskSvc.SetPool(a.wsPool)
+
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
@@ -240,7 +244,7 @@ func (a *App) initDependencies() {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
 		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
 	}
-	fileSvc := service.NewFileService(sessionManager, authSvc)
+	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo)
 	terminalSvc := service.NewTerminalService(sessionManager, authSvc)
 
 	// 创建调度器

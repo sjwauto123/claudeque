@@ -35,6 +35,7 @@ const (
 	CodeMissingParam     = 2002
 	CodeParamFormatError = 2003
 	CodeFileNotFound     = 2004
+	CodeFileExists       = 2005
 
 	// 资源错误 3xxx
 	CodeResourceNotFound      = 3001
@@ -77,6 +78,7 @@ var codeMessages = map[int]string{
 	CodeMissingParam:              "缺少必要参数",
 	CodeParamFormatError:          "参数格式错误",
 	CodeFileNotFound:              "文件不存在",
+	CodeFileExists:                "文件或目录已存在",
 	CodeResourceNotFound:          "资源不存在",
 	CodeResourceAlreadyExists:     "资源已存在",
 	CodeResourceLocked:            "资源已被锁定",

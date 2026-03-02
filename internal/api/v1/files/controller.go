@@ -295,7 +295,7 @@ func (ctrl *Controller) DownloadFile(c *gin.Context) {
 	}
 }
 
-// UnzipFile 解压文件
+// UnzipFile 解压文件 (异步)
 func (ctrl *Controller) UnzipFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UnzipRequest
@@ -310,11 +310,15 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 		return
 	}
 
+	// 同步执行解压，以便立即返回错误（如文件已存在）
+	// 注意：如果解压文件过大，可能会导致请求超时，建议后续优化为 预检查+异步任务 模式
 	err = ctrl.fileService.UnzipFile(userID, &req, isRootMode)
 	if err != nil {
 		response.BizError(c, err)
 		return
 	}
 
-	response.Success(c, nil)
+	response.Success(c, gin.H{
+		"message": "解压成功",
+	})
 }
