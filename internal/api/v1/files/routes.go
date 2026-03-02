@@ -20,6 +20,7 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 		fileGroup.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
 		fileGroup.DELETE("/delete", middleware.WithOperation("删除文件"), ctrl.DeleteFile)
 		fileGroup.POST("/upload", middleware.WithOperation("上传文件"), ctrl.UploadFile)
+		fileGroup.GET("/upload/progress", middleware.WithOperation("获取上传进度"), ctrl.GetUploadProgress)
 		fileGroup.GET("/download", middleware.WithOperation("下载文件"), ctrl.DownloadFile)
 		fileGroup.POST("/unzip", middleware.WithOperation("解压文件"), ctrl.UnzipFile)
 		fileGroup.GET("/size", middleware.WithOperation("计算文件大小"), ctrl.CalculateSize)

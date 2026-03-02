@@ -265,12 +265,21 @@ func (c *Client) NewTerminalSession(stdin io.Reader, stdout, stderr io.Writer, c
 	session.Stdout = stdout
 	session.Stderr = stderr
 
-	if err := session.Shell(); err != nil {
-		err := session.Close()
-		if err != nil {
-			return nil, fmt.Errorf("session关闭失败: %w", err)
+	// 优先使用登录交互式 shell，确保 PATH 等环境变量正确加载
+	started := false
+	if err := session.Start("bash -l"); err == nil {
+		started = true
+	} else if err := session.Start("sh -l"); err == nil {
+		started = true
+	}
+	if !started {
+		if err := session.Shell(); err != nil {
+			err := session.Close()
+			if err != nil {
+				return nil, fmt.Errorf("session关闭失败: %w", err)
+			}
+			return nil, fmt.Errorf("启动shell失败: %w", err)
 		}
-		return nil, fmt.Errorf("启动shell失败: %w", err)
 	}
 
 	go func() {

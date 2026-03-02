@@ -47,3 +47,15 @@ type BreadcrumbItem struct {
 	Name string `json:"name"`
 	Path string `json:"path"`
 }
+
+// UploadProgressData 上传进度数据
+type UploadProgressData struct {
+	Filename  string  `json:"filename"`
+	Status    string  `json:"status"`    // pending, uploading, completed, failed
+	Progress  float64 `json:"progress"`  // 0-100
+	Uploaded  int64   `json:"uploaded"`  // 已上传字节数
+	Total     int64   `json:"total"`     // 总字节数
+	Speed     string  `json:"speed"`     // 上传速度
+	Remaining string  `json:"remaining"` // 剩余时间
+	Error     string  `json:"error,omitempty"`
+}

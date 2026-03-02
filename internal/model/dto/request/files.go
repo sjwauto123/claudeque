@@ -38,3 +38,8 @@ type UnzipRequest struct {
 	Filename   string `json:"filename" binding:"required"`   // 解压后的文件名
 	TargetPath string `json:"targetpath" binding:"required"` // 解压到的路径
 }
+
+// UploadProgressRequest 上传进度查询请求
+type UploadProgressRequest struct {
+	Filename string `form:"filename" json:"filename" binding:"required"` // 文件名
+}

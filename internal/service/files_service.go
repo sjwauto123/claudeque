@@ -341,35 +341,30 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 			}
 		}
 
-		// 2. 如果缓存为空或命中率低，则执行命令加载
+		// 2. 如果缓存为空或命中率低，则执行命令加载（不再限制目录大小，确保始终能解析为用户名）
 		if len(uidToName) == 0 {
-			// 限制：只有当条目数少于 2000 时才尝试解析用户名，否则大目录还是会有性能问题
-			if len(entries) < 2000 {
-				passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", isRootMode)
-				if err != nil {
-					logger.Warnf("获取用户列表失败(非致命): userID=%d, err=%v", opUserID, err)
-				} else {
-					var cachePairs []string
-					lines := strings.Split(passwdOut, "\n")
-					for _, line := range lines {
-						parts := strings.Split(line, ":")
-						if len(parts) >= 3 {
-							username := parts[0]
-							uidStr := parts[2]
-							if uid, err := strconv.ParseUint(uidStr, 10, 32); err == nil {
-								uidToName[uint32(uid)] = username
-								cachePairs = append(cachePairs, fmt.Sprintf("%d:%s", uid, username))
-							}
+			passwdOut, err := s.executeSSHCommand(opUserID, "getent passwd || cat /etc/passwd", isRootMode)
+			if err != nil {
+				logger.Warnf("获取用户列表失败(非致命): userID=%d, err=%v", opUserID, err)
+			} else {
+				var cachePairs []string
+				lines := strings.Split(passwdOut, "\n")
+				for _, line := range lines {
+					parts := strings.Split(line, ":")
+					if len(parts) >= 3 {
+						username := parts[0]
+						uidStr := parts[2]
+						if uid, err := strconv.ParseUint(uidStr, 10, 32); err == nil {
+							uidToName[uint32(uid)] = username
+							cachePairs = append(cachePairs, fmt.Sprintf("%d:%s", uid, username))
 						}
 					}
-
-					// 3. 更新 Redis 缓存 (有效期 1 小时)
-					if s.redisRepo != nil && len(cachePairs) > 0 {
-						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-						cacheVal := strings.Join(cachePairs, ",")
-						_ = s.redisRepo.Set(ctx, cacheKey, cacheVal, 1*time.Hour)
-						cancel()
-					}
+				}
+				if s.redisRepo != nil && len(cachePairs) > 0 {
+					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+					cacheVal := strings.Join(cachePairs, ",")
+					_ = s.redisRepo.Set(ctx, cacheKey, cacheVal, 1*time.Hour)
+					cancel()
 				}
 			}
 		}
@@ -382,7 +377,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 					if found {
 						owner = name
 					} else {
-						owner = fmt.Sprintf("%d", stat.UID)
+						owner = entry.Name()
 					}
 				} else {
 					owner = "unknown"
@@ -567,6 +562,30 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 
 	// 简单的文件名清理，防止路径遍历
 	safeFilename := path.Base(header.Filename)
+
+	// 检查是否有正在进行的上传任务 (简单的锁机制)
+	lockKey := fmt.Sprintf("upload:lock:%d", userID)
+	if s.redisRepo != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		// 尝试获取锁，如果存在则说明有任务在运行
+		val, err := s.redisRepo.Get(ctx, lockKey)
+		cancel()
+		if err == nil && val != "" && val != safeFilename {
+			return nil, errors.New(errors.CodeInvalidParam, fmt.Sprintf("当前有正在进行的上传任务: %s，请等待完成后再试", val))
+		}
+		// 设置锁，有效期 1 小时 (防止死锁)
+		ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
+		_ = s.redisRepo.Set(ctx2, lockKey, safeFilename, 1*time.Hour)
+		cancel2()
+
+		// 确保函数退出时释放锁
+		defer func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+			_ = s.redisRepo.Del(ctx, lockKey)
+			cancel()
+		}()
+	}
+
 	remotePath := path.Join(resolvedPath, safeFilename)
 	dst, err := client.Create(remotePath)
 	if err != nil {
@@ -580,12 +599,89 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 		}
 	}(dst)
 
-	// 使用较大的缓冲区进行复制，提高大文件传输效率
-	buf := make([]byte, 1024*1024) // 1MB buffer
-	if _, err := io.CopyBuffer(dst, file, buf); err != nil {
-		logger.Errorf("写入文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
-		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("写入文件失败: %s", remotePath), err)
+	// 进度上报
+	var total int64 = header.Size
+	progressKey := fmt.Sprintf("upload:progress:%d:%s", userID, safeFilename)
+	startTime := time.Now()
+
+	report := func(sent int64, status string, errMsg string) {
+		if s.redisRepo == nil {
+			return
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		var percent float64
+		if total > 0 {
+			percent = float64(sent) / float64(total) * 100
+			if percent > 100 {
+				percent = 100
+			}
+		}
+
+		// 计算速度和剩余时间
+		duration := time.Since(startTime).Seconds()
+		var speed string
+		var remaining string
+		if duration > 0 && sent > 0 {
+			bytesPerSec := float64(sent) / duration
+			speed = formatUploadSpeed(bytesPerSec)
+			if total > sent {
+				remBytes := float64(total - sent)
+				remSec := remBytes / bytesPerSec
+				remaining = formatUploadDuration(time.Duration(remSec) * time.Second)
+			}
+		}
+
+		data := &dto.UploadProgressData{
+			Filename:  safeFilename,
+			Status:    status,
+			Progress:  percent,
+			Uploaded:  sent,
+			Total:     total,
+			Speed:     speed,
+			Remaining: remaining,
+			Error:     errMsg,
+		}
+
+		if b, e := json.Marshal(data); e == nil {
+			_ = s.redisRepo.Set(ctx, progressKey, string(b), 30*time.Minute)
+		}
 	}
+	report(0, "uploading", "")
+
+	buf := make([]byte, 4*1024*1024)
+	var sent int64
+	last := time.Now()
+	for {
+		nr, rerr := file.Read(buf)
+		if nr > 0 {
+			nw, werr := dst.Write(buf[:nr])
+			if werr != nil {
+				report(sent, "failed", werr.Error())
+				logger.Errorf("写入文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, werr)
+				return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("写入文件失败: %s", remotePath), werr)
+			}
+			if nw < nr {
+				report(sent, "failed", "写入不完整")
+				return nil, errors.New(errors.CodeInternalError, "写入不完整")
+			}
+			sent += int64(nw)
+			if time.Since(last) > 500*time.Millisecond {
+				report(sent, "uploading", "")
+				last = time.Now()
+			}
+		}
+		if rerr == io.EOF {
+			break
+		}
+		if rerr != nil {
+			report(sent, "failed", rerr.Error())
+			logger.Errorf("读取上传内容失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, rerr)
+			return nil, errors.NewWithErr(errors.CodeInternalError, "读取上传内容失败", rerr)
+		}
+	}
+	report(sent, "done", "")
 
 	// 成功上传后清除缓存
 	s.invalidateFileListCache(userID, isRootMode, resolvedPath)
@@ -727,7 +823,7 @@ func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMod
 	return nil
 }
 
-// GetDiskUsage 计算目录大小
+// GetDiskUsage 计算目录大小及磁盘占用
 func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.DiskUsageData, error) {
 	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
@@ -809,40 +905,58 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	cmdTotal := fmt.Sprintf("df -kP %s", safePath)
 	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
 	if err == nil {
+		// 优化解析逻辑
 		lines := strings.Split(strings.TrimSpace(outTotal), "\n")
-		if len(lines) > 0 {
-			// 取最后一行
-			lastLine := lines[len(lines)-1]
-			fields := strings.Fields(lastLine)
+		var targetLine string
+		// 倒序查找第一个非表头、非空的行
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if line == "" {
+				continue
+			}
+			// 跳过表头
+			if strings.Contains(line, "Filesystem") || strings.Contains(line, "1024-blocks") {
+				continue
+			}
+			targetLine = line
+			break
+		}
 
-			// df -kP 输出通常是：Filesystem 1024-blocks Used Available Capacity Mounted on
-			// 至少有 6 列，或者是 5 列（如果 Filesystem 很长换行了）
-			// 我们尝试解析第2列（Total），或者倒数第5列（Total）
+		if targetLine != "" {
+			fields := strings.Fields(targetLine)
+			// 策略：寻找带有 % 的 Capacity 列，Total 通常在它前面第3列
+			// Filesystem Total Used Avail Cap% Mounted
+			capIndex := -1
+			for i := len(fields) - 1; i >= 0; i-- {
+				if strings.HasSuffix(fields[i], "%") {
+					capIndex = i
+					break
+				}
+			}
 
 			var parsed bool
-			// 尝试 1：取第2列
-			if len(fields) >= 2 {
-				if t, parseErr := strconv.ParseInt(fields[1], 10, 64); parseErr == nil {
+			// 尝试 1：基于 Capacity 位置推断
+			if capIndex >= 3 {
+				if t, err := strconv.ParseInt(fields[capIndex-3], 10, 64); err == nil {
 					totalBytes = t * 1024
 					parsed = true
 				}
 			}
 
-			// 尝试 2：如果第2列解析失败，或者列数很多，尝试取倒数第5列
-			// 因为有时候 Filesystem 包含空格（虽然不太常见）或者输出被换行
-			// 标准 POSIX df 输出最后 5 列是固定的：Blocks Used Available Capacity Mounted
+			// 尝试 2：如果找不到 %，或者解析失败，尝试倒数第5列 (标准 POSIX)
 			if !parsed && len(fields) >= 5 {
-				if t, parseErr := strconv.ParseInt(fields[len(fields)-5], 10, 64); parseErr == nil {
+				// 倒数第5列通常是 Total
+				if t, err := strconv.ParseInt(fields[len(fields)-5], 10, 64); err == nil {
 					totalBytes = t * 1024
 					parsed = true
 				}
 			}
 
 			if !parsed {
-				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s", userID, lastLine)
+				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s, outTotal=%q", userID, targetLine, outTotal)
 			}
 		} else {
-			logger.Errorf("df输出行数不足: userID=%d, output=%s", userID, outTotal)
+			logger.Errorf("df输出未找到有效数据行: userID=%d, output=%q", userID, outTotal)
 		}
 	} else {
 		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
@@ -922,30 +1036,49 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 
 	var usagePercent float64
 	if err == nil {
+		// 优化解析逻辑
 		lines := strings.Split(strings.TrimSpace(outTotal), "\n")
-		if len(lines) > 0 {
-			// 取最后一行
-			lastLine := lines[len(lines)-1]
-			fields := strings.Fields(lastLine)
+		var targetLine string
+		// 倒序查找第一个非表头、非空的行
+		for i := len(lines) - 1; i >= 0; i-- {
+			line := strings.TrimSpace(lines[i])
+			if line == "" {
+				continue
+			}
+			// 跳过表头
+			if strings.Contains(line, "Filesystem") || strings.Contains(line, "1024-blocks") {
+				continue
+			}
+			targetLine = line
+			break
+		}
+
+		if targetLine != "" {
+			fields := strings.Fields(targetLine)
+			// 策略：寻找带有 % 的 Capacity 列，Total 通常在它前面第3列
+			// Filesystem Total Used Avail Cap% Mounted
+			capIndex := -1
+			for i := len(fields) - 1; i >= 0; i-- {
+				if strings.HasSuffix(fields[i], "%") {
+					capIndex = i
+					break
+				}
+			}
 
 			var totalBytes int64
 			var parsed bool
 
-			// df -kP 输出通常是：Filesystem 1024-blocks Used Available Capacity Mounted on
-			// 至少有 6 列，或者是 5 列（如果 Filesystem 很长换行了）
-			// 我们尝试解析第2列（Total），或者倒数第5列（Total）
-
-			// 尝试 1：取第2列
-			if len(fields) >= 2 {
-				if t, parseErr := strconv.ParseInt(fields[1], 10, 64); parseErr == nil {
+			// 尝试 1：基于 Capacity 位置推断
+			if capIndex >= 3 {
+				if t, err := strconv.ParseInt(fields[capIndex-3], 10, 64); err == nil {
 					totalBytes = t * 1024
 					parsed = true
 				}
 			}
 
-			// 尝试 2：如果第2列解析失败，或者列数很多，尝试取倒数第5列
+			// 尝试 2：如果找不到 %，或者解析失败，尝试倒数第5列 (标准 POSIX)
 			if !parsed && len(fields) >= 5 {
-				if t, parseErr := strconv.ParseInt(fields[len(fields)-5], 10, 64); parseErr == nil {
+				if t, err := strconv.ParseInt(fields[len(fields)-5], 10, 64); err == nil {
 					totalBytes = t * 1024
 					parsed = true
 				}
@@ -956,10 +1089,10 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 					usagePercent = float64(bytess) / float64(totalBytes) * 100
 				}
 			} else {
-				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s", userID, lastLine)
+				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s, outTotal=%q", userID, targetLine, outTotal)
 			}
 		} else {
-			logger.Errorf("df输出行数不足: userID=%d, output=%s", userID, outTotal)
+			logger.Errorf("df输出未找到有效数据行: userID=%d, output=%q", userID, outTotal)
 		}
 	} else {
 		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
@@ -1098,6 +1231,51 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 		Page:          req.Page,
 		PageSize:      req.PageSize,
 	}, nil
+}
+
+// GetUploadProgress 获取上传进度
+func (s *fileService) GetUploadProgress(userID int, filename string) (*dto.UploadProgressData, error) {
+	if s.redisRepo == nil {
+		return nil, errors.New(errors.CodeInternalError, "未配置进度存储")
+	}
+	key := fmt.Sprintf("upload:progress:%d:%s", userID, filename)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	val, err := s.redisRepo.Get(ctx, key)
+	if err != nil || val == "" {
+		return &dto.UploadProgressData{
+			Filename: filename,
+			Status:   "unknown",
+		}, nil
+	}
+	var out dto.UploadProgressData
+	if err := json.Unmarshal([]byte(val), &out); err != nil {
+		return nil, errors.NewWithErr(errors.CodeInternalError, "解析进度失败", err)
+	}
+	return &out, nil
+}
+
+func formatUploadSpeed(bytesPerSec float64) string {
+	if bytesPerSec < 1024 {
+		return fmt.Sprintf("%.1f B/s", bytesPerSec)
+	} else if bytesPerSec < 1024*1024 {
+		return fmt.Sprintf("%.1f KB/s", bytesPerSec/1024)
+	} else {
+		return fmt.Sprintf("%.1f MB/s", bytesPerSec/1024/1024)
+	}
+}
+
+func formatUploadDuration(d time.Duration) string {
+	d = d.Round(time.Second)
+	h := d / time.Hour
+	d -= h * time.Hour
+	m := d / time.Minute
+	d -= m * time.Minute
+	s := d / time.Second
+	if h > 0 {
+		return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+	}
+	return fmt.Sprintf("%02d:%02d", m, s)
 }
 
 // formatFileSize 格式化文件大小

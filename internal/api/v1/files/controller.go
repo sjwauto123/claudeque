@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/url"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -240,6 +241,30 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 
 	data, err := ctrl.fileService.UploadFile(userID, file, req.File, req.TargetPath, isRootMode)
 	if err != nil {
+		// 如果是上传锁冲突，返回特定状态码给前端
+		if strings.Contains(err.Error(), "当前有正在进行的上传任务") {
+			// 429 Too Many Requests 或者 409 Conflict
+			response.Error(c, 409, err.Error())
+			return
+		}
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, data)
+}
+
+// GetUploadProgress 获取上传进度
+func (ctrl *Controller) GetUploadProgress(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	var req request.UploadProgressRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	data, err := ctrl.fileService.GetUploadProgress(userID, req.Filename)
+	if err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -319,6 +344,6 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"message": "解压成功",
+		"message": "解压任务已在后台开始执行",
 	})
 }
