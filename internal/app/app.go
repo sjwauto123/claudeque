@@ -224,8 +224,7 @@ func (a *App) initDependencies() {
 	a.wsPool = websocket.NewConnectionPool()
 
 	// 初始化异步任务服务，并注入 WebSocket 连接池
-	asyncTaskSvc := service.GetAsyncTaskService()
-	asyncTaskSvc.SetPool(a.wsPool)
+	service.GetAsyncTaskService().SetPool(a.wsPool)
 
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)

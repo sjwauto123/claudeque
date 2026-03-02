@@ -9,6 +9,7 @@ import (
 	"cloudque/pkg/logger"
 	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
+	"cloudque/pkg/websocket"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -1043,4 +1044,162 @@ func formatFileSize(s int64) string {
 		i++
 	}
 	return fmt.Sprintf("%.2f %s", humanfmt, sizes[i])
+}
+
+// TaskStatus 任务状态
+type TaskStatus int
+
+const (
+	TaskStatusPending   TaskStatus = 0
+	TaskStatusRunning   TaskStatus = 1
+	TaskStatusCompleted TaskStatus = 2
+	TaskStatusFailed    TaskStatus = 3
+)
+
+// FileTask 文件操作任务
+type FileTask struct {
+	ID        string     `json:"id"`
+	Type      string     `json:"type"` // "unzip", "download", etc.
+	Status    TaskStatus `json:"status"`
+	Progress  int        `json:"progress"` // 0-100
+	Error     string     `json:"error,omitempty"`
+	Result    any        `json:"result,omitempty"`
+	CreatedAt time.Time  `json:"created_at"`
+	UpdatedAt time.Time  `json:"updated_at"`
+	UserID    int        `json:"user_id"`
+}
+
+// AsyncTaskService 异步任务服务接口
+type AsyncTaskService interface {
+	SubmitTask(taskID string, task func() error)
+	GetTask(taskID string) (*FileTask, bool)
+	CreateTask(userID int, taskType string) *FileTask
+	UpdateTaskStatus(taskID string, status TaskStatus, progress int, err error)
+	SetPool(pool *websocket.ConnectionPool)
+}
+
+type asyncTaskService struct {
+	tasks  sync.Map // map[string]*FileTask
+	wsPool *websocket.ConnectionPool
+}
+
+var (
+	globalAsyncTaskService *asyncTaskService
+	once                   sync.Once
+)
+
+// GetAsyncTaskService 获取单例
+func GetAsyncTaskService() AsyncTaskService {
+	once.Do(func() {
+		globalAsyncTaskService = &asyncTaskService{}
+		// 启动清理过期任务的协程
+		go globalAsyncTaskService.cleanupLoop()
+	})
+	return globalAsyncTaskService
+}
+
+func (s *asyncTaskService) SetPool(pool *websocket.ConnectionPool) {
+	s.wsPool = pool
+}
+
+func (s *asyncTaskService) CreateTask(userID int, taskType string) *FileTask {
+	taskID := fmt.Sprintf("task_%d_%d", userID, time.Now().UnixNano())
+	task := &FileTask{
+		ID:        taskID,
+		Type:      taskType,
+		Status:    TaskStatusPending,
+		CreatedAt: time.Now(),
+		UpdatedAt: time.Now(),
+		UserID:    userID,
+	}
+	s.tasks.Store(taskID, task)
+	return task
+}
+
+func (s *asyncTaskService) SubmitTask(taskID string, taskFunc func() error) {
+	go func() {
+		// 更新为运行中
+		s.UpdateTaskStatus(taskID, TaskStatusRunning, 0, nil)
+
+		err := taskFunc()
+
+		if err != nil {
+			logger.Errorf("异步任务执行失败: taskID=%s, err=%v", taskID, err)
+			s.UpdateTaskStatus(taskID, TaskStatusFailed, 0, err)
+		} else {
+			logger.Infof("异步任务执行成功: taskID=%s", taskID)
+			s.UpdateTaskStatus(taskID, TaskStatusCompleted, 100, nil)
+		}
+	}()
+}
+
+func (s *asyncTaskService) GetTask(taskID string) (*FileTask, bool) {
+	if val, ok := s.tasks.Load(taskID); ok {
+		return val.(*FileTask), true
+	}
+	return nil, false
+}
+
+func (s *asyncTaskService) UpdateTaskStatus(taskID string, status TaskStatus, progress int, err error) {
+	if val, ok := s.tasks.Load(taskID); ok {
+		task := val.(*FileTask)
+		task.Status = status
+		task.Progress = progress
+		if err != nil {
+			task.Error = err.Error()
+		}
+		task.UpdatedAt = time.Now()
+
+		// 发送 WebSocket 通知
+		s.sendNotification(task)
+	}
+}
+
+// sendNotification 发送 WebSocket 通知
+func (s *asyncTaskService) sendNotification(task *FileTask) {
+	if s.wsPool == nil {
+		return
+	}
+
+	msg := map[string]interface{}{
+		"type": "task_update",
+		"data": task,
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		logger.Errorf("JSON序列化失败: %v", err)
+		return
+	}
+
+	s.wsPool.SendToUser(task.UserID, data)
+}
+
+// cleanupLoop 定期清理过期任务（例如保留1小时）
+func (s *asyncTaskService) cleanupLoop() {
+	ticker := time.NewTicker(10 * time.Minute)
+	for range ticker.C {
+		now := time.Now()
+		s.tasks.Range(func(key, value any) bool {
+			task := value.(*FileTask)
+			// 如果任务完成或失败超过1小时，则清理
+			if (task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed) &&
+				now.Sub(task.UpdatedAt) > 1*time.Hour {
+				s.tasks.Delete(key)
+			}
+			return true
+		})
+	}
+}
+
+// Helper to run in background
+func RunInBackground(ctx context.Context, fn func()) {
+	go func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logger.Errorf("后台任务Panic: %v", r)
+			}
+		}()
+		fn()
+	}()
 }
