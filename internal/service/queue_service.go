@@ -73,13 +73,13 @@ func (s *queueService) Remove(ctx context.Context, jobID int) error {
 
 // GetQueuePage 分页查询，按条件检索，返回完整排队任务信息 (包含正在执行中的任务)
 func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error) {
-	// 1. 获取正在执行中的任务
+	// 获取正在执行中的任务
 	runningJobs, _, err := s.jobRepo.GetRunningJobs(req, startTime, endTime)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
 
-	// 2. 获取排队中和等待显卡的任务
+	// 获取排队中和等待显卡的任务
 	members, err := s.queueRepo.Range(ctx, 0, -1)
 	if err != nil {
 		return nil, 0, 0, 0, err
@@ -99,12 +99,12 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 		return nil, 0, 0, 0, err
 	}
 
-	// 3. 合并任务列表，保持各自内部顺序，正在执行中的任务在前
+	// 合并任务列表，保持各自内部顺序，正在执行中的任务在前
 	allJobs := make([]response.QueueJobDBRow, 0, len(runningJobs)+len(queuedAndWaitingJobs))
 	allJobs = append(allJobs, runningJobs...)
 	allJobs = append(allJobs, queuedAndWaitingJobs...)
 
-	// 4. 处理分页
+	// 处理分页
 	total := int64(len(allJobs))
 	if req.PageSize <= 0 {
 		req.PageSize = 10
@@ -127,7 +127,7 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 	now := time.Now()
 	list := make([]response.QueueJobResponse, 0, len(paginatedJobs))
 	for _, row := range paginatedJobs {
-		rank := -1 // 正在执行中的任务没有排队 rank
+		rank := 0 // 正在执行中的任务没有排队
 		if row.Status == entity.JobStatusQueued || row.Status == entity.JobStatusWaitingGpu {
 			r, err := s.queueRepo.Rank(ctx, row.JobID)
 			if err == nil {
@@ -147,6 +147,7 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 			Status:      row.Status,
 			SubmittedAt: row.SubmittedAt,
 			WaitSeconds: waitSec,
+			Sug:         row.Sug,
 			FrontCount:  rank, // 对于正在执行的任务，rank 为 -1
 		})
 	}
@@ -184,6 +185,9 @@ func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID in
 	}
 	// 执行移动操作
 	if err := s.queueRepo.Add(ctx, jobID, newScore); err != nil {
+		return err
+	}
+	if err := s.jobRepo.UpdateSug(jobID); err != nil {
 		return err
 	}
 	// 如果任务被移出了队首，或者之前的队首被挤到了后面,我们需要将不再处于队首且状态为 "等待显卡" 的任务重置为 "排队中"

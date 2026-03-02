@@ -270,34 +270,6 @@ func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	return &result, nil
 }
 
-// buildBaseQueueJobQuery 辅助方法：构建队列任务的基础查询
-func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, startTime, endTime time.Time) *gorm.DB {
-	baseDB := r.db.Table("jobs j").
-		Select(`
-			j.id AS job_id,
-			j.name AS job_name,
-			j.description,
-			j.status,
-			j.created_at AS submitted_at,
-			u.username AS user_name
-		`).
-		Joins("LEFT JOIN admin_users u ON u.id = j.user_id")
-
-	if req.Id > 0 {
-		baseDB = baseDB.Where("j.id = ?", req.Id)
-	}
-	if req.Name != "" {
-		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
-	}
-	if !startTime.IsZero() {
-		baseDB = baseDB.Where("j.created_at >= ?", startTime)
-	}
-	if !endTime.IsZero() {
-		baseDB = baseDB.Where("j.created_at <= ?", endTime)
-	}
-	return baseDB
-}
-
 // GetRunningJobs 获取正在执行中的任务列表
 func (r *jobRepository) GetRunningJobs(req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error) {
 	baseDB := r.buildBaseQueueJobQuery(req, startTime, endTime).
@@ -322,4 +294,39 @@ func (r *jobRepository) GetRunningJobs(req request.QueueListRequest, startTime, 
 	}
 
 	return rows, int(total), nil
+}
+
+// buildBaseQueueJobQuery 辅助方法：构建队列任务的基础查询
+func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, startTime, endTime time.Time) *gorm.DB {
+	baseDB := r.db.Table("jobs j").
+		Select(`
+			j.id AS job_id,
+			j.name AS job_name,
+			j.description,
+			j.status,
+			j.sug,
+			j.created_at AS submitted_at,
+			u.username AS user_name
+		`).
+		Joins("LEFT JOIN admin_users u ON u.id = j.user_id")
+
+	if req.Id > 0 {
+		baseDB = baseDB.Where("j.id = ?", req.Id)
+	}
+	if req.Name != "" {
+		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
+	}
+	if !startTime.IsZero() {
+		baseDB = baseDB.Where("j.created_at >= ?", startTime)
+	}
+	if !endTime.IsZero() {
+		baseDB = baseDB.Where("j.created_at <= ?", endTime)
+	}
+	return baseDB
+}
+
+// UpdateSug 修改标识
+func (r *jobRepository) UpdateSug(jobId int) error {
+	err := r.db.Table("jobs").Where("id = ?", jobId).Update("sug", 1).Error
+	return err
 }
