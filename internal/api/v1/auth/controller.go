@@ -30,7 +30,7 @@ func NewController(authService service.AuthService, userService service.UserServ
 func (ctrl *Controller) Register(c *gin.Context) {
 	var req request.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, "数据格式有误")
 		return
 	}
 

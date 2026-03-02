@@ -8,6 +8,7 @@ import (
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
 	"os/exec"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -40,6 +41,18 @@ func (ctrl *Controller) CreateUser(c *gin.Context) {
 		return
 	}
 
+	qqEmailRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9_.]{2,14})[a-zA-Z0-9]@qq\.com$`)
+	if qqEmailRegex.MatchString(req.Email) == false {
+		response.BadRequest(c, "目前仅支持qq邮箱")
+		return
+	}
+
+	var regexpLetterOnly = regexp.MustCompile(`^[a-zA-Z]+$`)
+	if regexpLetterOnly.MatchString(req.Username) == false {
+		response.BadRequest(c, "用户名只能包含大小写英文字母，不能有数字、符号或中文")
+		return
+	}
+
 	if err := ctrl.adminService.CreateUser(&req); err != nil {
 		response.BizError(c, err)
 		return
@@ -52,7 +65,7 @@ func (ctrl *Controller) DeleteUser(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 32)
 	if err != nil {
-		response.BadRequest(c, "invalid user id")
+		response.BadRequest(c, "不存在的id")
 		return
 	}
 
@@ -68,7 +81,7 @@ func (ctrl *Controller) UpdateUser(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.ParseInt(idStr, 10, 32)
 	if err != nil {
-		response.BadRequest(c, "invalid user id")
+		response.BadRequest(c, "不存在的id")
 		return
 	}
 
