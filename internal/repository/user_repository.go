@@ -98,6 +98,10 @@ func (r *userRepository) List(offset, limit int, username, email string, status 
 		return nil, 0, err
 	}
 
+	if total == 0 {
+		return nil, 0, nil
+	}
+
 	// 分页查询
 	err := query.Preload("Roles").Order("created_at DESC").Offset(offset).Limit(limit).Find(&users).Error
 	if err != nil {

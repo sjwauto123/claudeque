@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -396,7 +397,12 @@ func (s *userService) ListUsers(req *request.UserListRequest) (*response.PageRes
 	offset := (page - 1) * size
 
 	// 查询数据
-	users, total, err := s.userRepo.List(offset, size, req.Username, req.Email, req.Status)
+	var status *int
+	if req.Status != "" {
+		v, _ := strconv.Atoi(req.Status)
+		status = &v
+	}
+	users, total, err := s.userRepo.List(offset, size, req.Username, req.Email, status)
 	if err != nil {
 		return nil, err
 	}
