@@ -21,7 +21,7 @@ func (u *userOperationLogService) GetUserLogs(r *request.UserLogsRequest, start 
 	offset := (r.Page - 1) * r.Size
 
 	// 查询日志
-	logs, total, err := u.userOperationLogRep.FindUserLogs(offset, r.Size, r.Username, r.ActionType, start, end)
+	logs, total, err := u.userOperationLogRep.FindUserLogs(offset, r.Size, r.Username, r.ActionType, r.Status, start, end)
 	if err != nil {
 		return nil, errors.NewWithErr(errors.CodeInternalError, "查询用户日志失败", err)
 	}
