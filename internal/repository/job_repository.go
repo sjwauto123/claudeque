@@ -85,12 +85,8 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 			j.description,
 			j.status,
 			j.created_at,
-			COALESCE(g.card, '') AS card,
+			j.gpu_ids AS card,
 			0 AS count
-		`).
-		Joins(`
-			LEFT JOIN (SELECT current_job_id,GROUP_CONCAT(name ORDER BY id SEPARATOR ',') AS card FROM gpu_cards GROUP BY current_job_id
-			) g ON g.current_job_id = j.id
 		`).
 		Order("j.created_at DESC").
 		Limit(req.PageSize).
@@ -99,6 +95,42 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 
 	if err != nil {
 		return []response.JobResponse{}, 0, req.Page, req.PageSize, err
+	}
+
+	// 批量查询显卡信息
+	gpuIDMap := make(map[string]string)
+	var allGpuIDs []string
+
+	// 收集所有需要查询的显卡ID
+	for _, job := range list {
+		if job.Card != "" {
+			ids := strings.Split(job.Card, ",")
+			allGpuIDs = append(allGpuIDs, ids...)
+		}
+	}
+
+	// 如果有显卡ID，进行查询
+	if len(allGpuIDs) > 0 {
+		var gpuCards []entity.GpuCard
+		if err := r.db.Table("gpu_cards").Where("id IN ?", allGpuIDs).Find(&gpuCards).Error; err == nil {
+			for _, card := range gpuCards {
+				gpuIDMap[strconv.Itoa(card.ID)] = card.Name
+			}
+		}
+	}
+
+	// 替换ID为名称
+	for i := range list {
+		if list[i].Card != "" {
+			ids := strings.Split(list[i].Card, ",")
+			var names []string
+			for _, id := range ids {
+				if name, ok := gpuIDMap[id]; ok {
+					names = append(names, name)
+				}
+			}
+			list[i].Card = strings.Join(names, ",")
+		}
 	}
 
 	return list, total, req.Page, req.PageSize, nil
@@ -179,31 +211,9 @@ func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request
 		return []response.QueueJobDBRow{}, 0, nil
 	}
 
-	baseDB := r.db.Table("jobs j").
-		Select(`
-			j.id AS job_id,
-			j.name AS job_name,
-			j.description,
-			j.status,
-			j.created_at AS submitted_at,
-			u.username AS user_name
-		`).
-		Joins("LEFT JOIN admin_users u ON u.id = j.user_id").
-		Where("j.id IN ?", orderedJobIDs)
-	// 只查排队的和等待显卡的
-	baseDB = baseDB.Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
-	if req.Id > 0 {
-		baseDB = baseDB.Where("j.id = ?", req.Id)
-	}
-	if req.Name != "" {
-		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
-	}
-	if !startTime.IsZero() {
-		baseDB = baseDB.Where("j.created_at >= ?", startTime)
-	}
-	if !endTime.IsZero() {
-		baseDB = baseDB.Where("j.created_at <= ?", endTime)
-	}
+	baseDB := r.buildBaseQueueJobQuery(req, startTime, endTime).
+		Where("j.id IN ?", orderedJobIDs).
+		Where("j.status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu})
 
 	var total int64
 	if err := baseDB.Count(&total).Error; err != nil {
@@ -258,4 +268,58 @@ func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	result.Exception = int(exception)
 
 	return &result, nil
+}
+
+// buildBaseQueueJobQuery 辅助方法：构建队列任务的基础查询
+func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, startTime, endTime time.Time) *gorm.DB {
+	baseDB := r.db.Table("jobs j").
+		Select(`
+			j.id AS job_id,
+			j.name AS job_name,
+			j.description,
+			j.status,
+			j.created_at AS submitted_at,
+			u.username AS user_name
+		`).
+		Joins("LEFT JOIN admin_users u ON u.id = j.user_id")
+
+	if req.Id > 0 {
+		baseDB = baseDB.Where("j.id = ?", req.Id)
+	}
+	if req.Name != "" {
+		baseDB = baseDB.Where("j.name LIKE ?", "%"+req.Name+"%")
+	}
+	if !startTime.IsZero() {
+		baseDB = baseDB.Where("j.created_at >= ?", startTime)
+	}
+	if !endTime.IsZero() {
+		baseDB = baseDB.Where("j.created_at <= ?", endTime)
+	}
+	return baseDB
+}
+
+// GetRunningJobs 获取正在执行中的任务列表
+func (r *jobRepository) GetRunningJobs(req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error) {
+	baseDB := r.buildBaseQueueJobQuery(req, startTime, endTime).
+		Where("j.status = ?", entity.JobStatusRunning) // 只查询正在执行中的任务
+
+	var total int64
+	if err := baseDB.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	offset := (req.Page - 1) * req.PageSize
+
+	var rows []response.QueueJobDBRow
+	err := baseDB.
+		Order("j.created_at DESC"). // 正在执行中的任务按创建时间倒序排列
+		Limit(req.PageSize).
+		Offset(offset).
+		Scan(&rows).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return rows, int(total), nil
 }

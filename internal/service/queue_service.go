@@ -35,7 +35,14 @@ func (s *queueService) Enqueue(ctx context.Context, jobID int, priority int) err
 		return err
 	}
 
-	base := priority * PriorityGap
+	// 优先级越高，base 越小，score 越小，排名越靠前
+	// 假设 priority: 1=Low, 2=High
+	// 为了让 High 排在 Low 前面，High 的 base 应该更小
+	// 我们可以用一个大数减去 priority * PriorityGap，或者取反
+	// 这里采用: base = (MaxPriority - priority) * PriorityGap
+	// 假设 MaxPriority = 10 (足够覆盖 1 和 2)
+	const MaxPriority = 10
+	base := (MaxPriority - priority) * PriorityGap
 
 	score := float64(base + seq)
 
@@ -64,19 +71,18 @@ func (s *queueService) Remove(ctx context.Context, jobID int) error {
 	return s.queueRepo.Remove(ctx, jobID)
 }
 
-// GetQueuePage 分页查询，按条件检索，返回完整排队任务信息
+// GetQueuePage 分页查询，按条件检索，返回完整排队任务信息 (包含正在执行中的任务)
 func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobResponse, int64, int, int, error) {
-	members, err := s.queueRepo.Range(ctx, 0, -1)
+	// 1. 获取正在执行中的任务
+	runningJobs, _, err := s.jobRepo.GetRunningJobs(req, startTime, endTime)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
 
-	if req.PageSize <= 0 {
-		req.PageSize = 10
-	}
-
-	if len(members) == 0 {
-		return []response.QueueJobResponse{}, 0, req.Page, req.PageSize, err
+	// 2. 获取排队中和等待显卡的任务
+	members, err := s.queueRepo.Range(ctx, 0, -1)
+	if err != nil {
+		return nil, 0, 0, 0, err
 	}
 
 	orderedJobIDs := make([]int, 0, len(members))
@@ -88,19 +94,47 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 		orderedJobIDs = append(orderedJobIDs, jobID)
 	}
 
-	rows, total, err := s.jobRepo.GetQueueJobListFiltered(orderedJobIDs, req, startTime, endTime)
+	queuedAndWaitingJobs, _, err := s.jobRepo.GetQueueJobListFiltered(orderedJobIDs, req, startTime, endTime)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
 
+	// 3. 合并任务列表，保持各自内部顺序，正在执行中的任务在前
+	allJobs := make([]response.QueueJobDBRow, 0, len(runningJobs)+len(queuedAndWaitingJobs))
+	allJobs = append(allJobs, runningJobs...)
+	allJobs = append(allJobs, queuedAndWaitingJobs...)
+
+	// 4. 处理分页
+	total := int64(len(allJobs))
+	if req.PageSize <= 0 {
+		req.PageSize = 10
+	}
+	if req.Page <= 0 {
+		req.Page = 1
+	}
+
+	startIdx := (req.Page - 1) * req.PageSize
+	endIdx := startIdx + req.PageSize
+	if startIdx >= len(allJobs) {
+		return []response.QueueJobResponse{}, total, req.Page, req.PageSize, nil
+	}
+	if endIdx > len(allJobs) {
+		endIdx = len(allJobs)
+	}
+
+	paginatedJobs := allJobs[startIdx:endIdx]
+
 	now := time.Now()
-	list := make([]response.QueueJobResponse, 0, len(rows))
-	for _, row := range rows {
-		rank, err := s.queueRepo.Rank(ctx, row.JobID)
-		frontCount := 0
-		if err == nil {
-			frontCount = int(rank)
+	list := make([]response.QueueJobResponse, 0, len(paginatedJobs))
+	for _, row := range paginatedJobs {
+		rank := -1 // 正在执行中的任务没有排队 rank
+		if row.Status == entity.JobStatusQueued || row.Status == entity.JobStatusWaitingGpu {
+			r, err := s.queueRepo.Rank(ctx, row.JobID)
+			if err == nil {
+				rank = int(r)
+			}
 		}
+
 		waitSec := int(now.Sub(row.SubmittedAt).Seconds())
 		if waitSec < 0 {
 			waitSec = 0
@@ -113,11 +147,11 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 			Status:      row.Status,
 			SubmittedAt: row.SubmittedAt,
 			WaitSeconds: waitSec,
-			FrontCount:  frontCount,
+			FrontCount:  rank, // 对于正在执行的任务，rank 为 -1
 		})
 	}
 
-	return list, int64(total), req.Page, req.PageSize, nil
+	return list, total, req.Page, req.PageSize, nil
 }
 
 // MoveBefore 更新排队

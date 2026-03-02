@@ -10,19 +10,19 @@ import (
 func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 
 	// 文件管理接口
-	r := router.Group("/files")
-	r.Use(middleware.Auth())
-	r.Use(middleware.RequirePermission(ctrl.authService))
-	r.Use(middleware.UserOperationLogs(ctrl.userLogService))
+	fileGroup := router.Group("/files")
+	fileGroup.Use(middleware.Auth())
+	fileGroup.Use(middleware.RequirePermission(ctrl.authService))
+	fileGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
 
 	{
 		// 文件管理
-		r.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
-		r.DELETE("/delete", middleware.WithOperation("删除文件"), ctrl.DeleteFile)
-		r.POST("/upload", middleware.WithOperation("上传文件"), ctrl.UploadFile)
-		r.GET("/download", middleware.WithOperation("下载文件"), ctrl.DownloadFile)
-		r.POST("/unzip", middleware.WithOperation("解压文件"), ctrl.UnzipFile)
-		r.GET("/size", middleware.WithOperation("计算文件大小"), ctrl.CalculateSize)
+		fileGroup.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
+		fileGroup.DELETE("/delete", middleware.WithOperation("删除文件"), ctrl.DeleteFile)
+		fileGroup.POST("/upload", middleware.WithOperation("上传文件"), ctrl.UploadFile)
+		fileGroup.GET("/download", middleware.WithOperation("下载文件"), ctrl.DownloadFile)
+		fileGroup.POST("/unzip", middleware.WithOperation("解压文件"), ctrl.UnzipFile)
+		fileGroup.GET("/size", middleware.WithOperation("计算文件大小"), ctrl.CalculateSize)
 	}
 
 	// 用户目录接口
