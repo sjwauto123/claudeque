@@ -64,22 +64,28 @@ func UserOperationLogs(userLogService service.UserOperationLogService) gin.Handl
 			actionType = typeStr
 		}
 		// 获取业务状态码和响应消息（优先从响应体中提取）
-		status := getBusinessStatusCode(blw.Body())
+		status, errorMessage := getBusinessStatus(blw.Body())
 
 		// 如果没有提取到业务状态码，使用 HTTP 状态码
 		if status == 0 {
 			status = blw.Status()
 		}
 
+		// 如果响应体中没有错误消息，尝试从 c.Errors 中获取
+		if errorMessage == "" && len(c.Errors) > 0 {
+			errorMessage = c.Errors.String()
+		}
+
 		log := &entity.UserOperationLog{
-			Username:    username,
-			Method:      c.Request.Method,
-			Path:        c.Request.URL.Path,
-			ActionType:  actionType,
-			RequestData: requestData,
-			Status:      status,
-			CreatedAt:   startTime,
-			UpdatedAt:   time.Now(),
+			Username:     username,
+			Method:       c.Request.Method,
+			Path:         c.Request.URL.Path,
+			ActionType:   actionType,
+			RequestData:  requestData,
+			Status:       status,
+			ErrorMessage: errorMessage,
+			CreatedAt:    startTime,
+			UpdatedAt:    time.Now(),
 		}
 
 		// 7. 异步保存日志
@@ -120,27 +126,33 @@ func (w *bodyLogWriter) Body() []byte {
 	return w.body.Bytes()
 }
 
-// getBusinessStatusCode 从响应体中提取业务状态码和响应消息
-func getBusinessStatusCode(body []byte) int {
+// getBusinessStatus 从响应体中提取业务状态码和响应消息
+func getBusinessStatus(body []byte) (int, string) {
 	if len(body) == 0 {
-		return 0
+		return 0, ""
 	}
 	// 尝试解析响应体为统一响应结构
 	var resp struct {
 		Code    int    `json:"code"`
-		Message string `json:"message"`
+		Message string `json:"msg"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0
+		return 0, ""
 	}
-	return resp.Code
+	return resp.Code, resp.Message
 }
 
+// 修改 getDataFormUrl 函数
 func getDataFormUrl(c *gin.Context) string {
 	query := c.Request.URL.Query()
 	if len(query) > 0 {
-		requestData := query.Encode()
-		return requestData
+		var requestData []string
+		for key, values := range query {
+			for _, value := range values {
+				requestData = append(requestData, key+"="+value)
+			}
+		}
+		return strings.Join(requestData, "&")
 	}
 	return ""
 }
