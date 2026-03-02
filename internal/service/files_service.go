@@ -847,9 +847,6 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	} else {
 		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
 	}
-	//}()
-
-	//wg.Wait()
 
 	if errDu != nil {
 		return nil, errDu
