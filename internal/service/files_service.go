@@ -740,23 +740,23 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	var (
 		size       int64
 		totalBytes int64
-		wg         sync.WaitGroup
-		errDu      error
+		//wg         sync.WaitGroup
+		errDu error
 	)
 
-	wg.Add(2)
+	//wg.Add(2)
 
-	// 1. 并行执行 du
-	go func() {
-		defer wg.Done()
-		cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
-		output, err := s.executeSSHCommand(userID, cmd, isRootMode)
-		if err != nil {
-			// 尝试回退方案
-			if strings.Contains(err.Error(), "Permission denied") {
-				errDu = errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
-				return
-			}
+	// 1. 串行执行 du (不再并行，避免 SSH 通道竞争)
+	//go func() {
+	//	defer wg.Done()
+	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
+	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
+	if err != nil {
+		// 尝试回退方案
+		if strings.Contains(err.Error(), "Permission denied") {
+			errDu = errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
+			//return
+		} else {
 			// 尝试使用 du -sk 作为回退方案
 			cmdFallback := fmt.Sprintf("du -sk %s | awk '{print $1}'", safePath)
 			outputFallback, errFallback := s.executeSSHCommand(userID, cmdFallback, isRootMode)
@@ -770,49 +770,83 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 				}
 				if kb, parseErr := strconv.ParseInt(kbStr, 10, 64); parseErr == nil {
 					size = kb * 1024
-					return
+					//return
 				}
+			} else {
+				errDu = errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
+				//return
 			}
-			errDu = errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("获取目录大小失败: %v", err), err)
-			return
 		}
-
+	} else {
 		sizeStr := strings.TrimSpace(output)
 		if sizeStr == "" {
 			size = 0
-			return
-		}
-
-		fields := strings.Fields(sizeStr)
-		if len(fields) > 0 {
-			sizeStr = fields[0]
-		}
-		if s, parseErr := strconv.ParseInt(sizeStr, 10, 64); parseErr == nil {
-			size = s
+			//return
 		} else {
-			logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, parseErr)
-			errDu = errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小数据失败: %s", sizeStr), parseErr)
-		}
-	}()
-
-	// 2. 并行执行 df
-	go func() {
-		defer wg.Done()
-		cmdTotal := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $2}'", safePath)
-		outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
-		if err == nil {
-			totalStr := strings.TrimSpace(outTotal)
-			if t, parseErr := strconv.ParseInt(totalStr, 10, 64); parseErr == nil {
-				totalBytes = t
+			fields := strings.Fields(sizeStr)
+			if len(fields) > 0 {
+				sizeStr = fields[0]
+			}
+			if s, parseErr := strconv.ParseInt(sizeStr, 10, 64); parseErr == nil {
+				size = s
 			} else {
-				logger.Errorf("解析磁盘总大小失败: userID=%d, totalStr=%s, err=%v", userID, totalStr, parseErr)
+				logger.Errorf("解析目录大小失败: userID=%d, sizeStr=%s, err=%v", userID, sizeStr, parseErr)
+				errDu = errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("解析目录大小数据失败: %s", sizeStr), parseErr)
+			}
+		}
+	}
+	//}()
+
+	// 如果 du 失败，直接返回错误，不再执行 df
+	if errDu != nil {
+		return nil, errDu
+	}
+
+	// 2. 串行执行 df
+	//go func() {
+	//	defer wg.Done()
+	// 直接执行 df -kP，不使用管道，在 Go 中解析
+	cmdTotal := fmt.Sprintf("df -kP %s", safePath)
+	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
+	if err == nil {
+		lines := strings.Split(strings.TrimSpace(outTotal), "\n")
+		if len(lines) > 0 {
+			// 取最后一行
+			lastLine := lines[len(lines)-1]
+			fields := strings.Fields(lastLine)
+
+			// df -kP 输出通常是：Filesystem 1024-blocks Used Available Capacity Mounted on
+			// 至少有 6 列，或者是 5 列（如果 Filesystem 很长换行了）
+			// 我们尝试解析第2列（Total），或者倒数第5列（Total）
+
+			var parsed bool
+			// 尝试 1：取第2列
+			if len(fields) >= 2 {
+				if t, parseErr := strconv.ParseInt(fields[1], 10, 64); parseErr == nil {
+					totalBytes = t * 1024
+					parsed = true
+				}
+			}
+
+			// 尝试 2：如果第2列解析失败，或者列数很多，尝试取倒数第5列
+			// 因为有时候 Filesystem 包含空格（虽然不太常见）或者输出被换行
+			// 标准 POSIX df 输出最后 5 列是固定的：Blocks Used Available Capacity Mounted
+			if !parsed && len(fields) >= 5 {
+				if t, parseErr := strconv.ParseInt(fields[len(fields)-5], 10, 64); parseErr == nil {
+					totalBytes = t * 1024
+					parsed = true
+				}
+			}
+
+			if !parsed {
+				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s", userID, lastLine)
 			}
 		} else {
-			logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
+			logger.Errorf("df输出行数不足: userID=%d, output=%s", userID, outTotal)
 		}
-	}()
-
-	wg.Wait()
+	} else {
+		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
+	}
 
 	if errDu != nil {
 		return nil, errDu
@@ -883,17 +917,52 @@ func (s *fileService) CalculateSize(userID int, p string, isRootMode bool) (int6
 	}
 
 	// 2. 使用 df 获取磁盘总大小和可用空间，计算占比
-	cmdTotal := fmt.Sprintf("df -B1 %s | tail -1 | awk '{print $2}'", quotedPath)
+	cmdTotal := fmt.Sprintf("df -kP %s", quotedPath)
 	outTotal, err := s.executeSSHCommand(userID, cmdTotal, isRootMode)
 
 	var usagePercent float64
 	if err == nil {
-		totalStr := strings.TrimSpace(outTotal)
-		totalBytes, _ := strconv.ParseInt(totalStr, 10, 64)
+		lines := strings.Split(strings.TrimSpace(outTotal), "\n")
+		if len(lines) > 0 {
+			// 取最后一行
+			lastLine := lines[len(lines)-1]
+			fields := strings.Fields(lastLine)
 
-		if totalBytes > 0 {
-			usagePercent = float64(bytess) / float64(totalBytes) * 100
+			var totalBytes int64
+			var parsed bool
+
+			// df -kP 输出通常是：Filesystem 1024-blocks Used Available Capacity Mounted on
+			// 至少有 6 列，或者是 5 列（如果 Filesystem 很长换行了）
+			// 我们尝试解析第2列（Total），或者倒数第5列（Total）
+
+			// 尝试 1：取第2列
+			if len(fields) >= 2 {
+				if t, parseErr := strconv.ParseInt(fields[1], 10, 64); parseErr == nil {
+					totalBytes = t * 1024
+					parsed = true
+				}
+			}
+
+			// 尝试 2：如果第2列解析失败，或者列数很多，尝试取倒数第5列
+			if !parsed && len(fields) >= 5 {
+				if t, parseErr := strconv.ParseInt(fields[len(fields)-5], 10, 64); parseErr == nil {
+					totalBytes = t * 1024
+					parsed = true
+				}
+			}
+
+			if parsed {
+				if totalBytes > 0 {
+					usagePercent = float64(bytess) / float64(totalBytes) * 100
+				}
+			} else {
+				logger.Errorf("解析磁盘总大小数值失败: userID=%d, line=%s", userID, lastLine)
+			}
+		} else {
+			logger.Errorf("df输出行数不足: userID=%d, output=%s", userID, outTotal)
 		}
+	} else {
+		logger.Errorf("执行df命令获取总量失败: userID=%d, cmd=%s, err=%v", userID, cmdTotal, err)
 	}
 
 	return bytess, formatFileSize(bytess), usagePercent, nil
