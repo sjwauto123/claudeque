@@ -21,7 +21,7 @@ func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWor
 		Where("EXISTS (SELECT 1 FROM (SELECT id FROM admin_operation_log ORDER BY created_at DESC LIMIT 5000) AS latest WHERE latest.id = admin_operation_log.id)")
 
 	if keyWord != "" {
-		query = query.Where("username LIKE ?  OR object LIKE  ?", "%"+keyWord+"%", "%"+keyWord+"%")
+		query = query.Where("username LIKE ? OR action_type LIKE ?", "%"+keyWord+"%", "%"+keyWord+"%")
 	}
 
 	// 状态筛选
