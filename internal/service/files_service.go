@@ -1191,15 +1191,3 @@ func (s *asyncTaskService) cleanupLoop() {
 		})
 	}
 }
-
-// Helper to run in background
-func RunInBackground(ctx context.Context, fn func()) {
-	go func() {
-		defer func() {
-			if r := recover(); r != nil {
-				logger.Errorf("后台任务Panic: %v", r)
-			}
-		}()
-		fn()
-	}()
-}
