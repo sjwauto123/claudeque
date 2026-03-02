@@ -159,8 +159,14 @@ func (c *Client) WritePump() {
 			// 将队列中剩余的消息合并发送
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
-				w.Write([]byte("\n"))
-				w.Write(<-c.Send)
+				_, err2 := w.Write([]byte("\n"))
+				if err2 != nil {
+					return
+				}
+				_, err3 := w.Write(<-c.Send)
+				if err3 != nil {
+					return
+				}
 			}
 
 			if err := w.Close(); err != nil {

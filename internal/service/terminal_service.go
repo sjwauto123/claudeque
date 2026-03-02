@@ -203,7 +203,10 @@ func (s *terminalService) GetOrCreateTerminal(userID int, isRoot bool, cols, row
 	// 监控会话退出
 	go func() {
 		_ = session.Session.Wait()
-		s.CloseTerminal(userID, isRoot)
+		err := s.CloseTerminal(userID, isRoot)
+		if err != nil {
+			return
+		}
 	}()
 
 	// 返回副本
