@@ -28,8 +28,8 @@ const (
 
 // JobPriority 优先级常量
 const (
-	JobPriorityHigh = 1 // 高优先级
-	JobPriorityLow  = 2 // 低优先级
+	JobPriorityHigh = 2 // 高优先级
+	JobPriorityLow  = 1 // 低优先级
 )
 
 func (Job) TableName() string {

@@ -35,7 +35,14 @@ func (s *queueService) Enqueue(ctx context.Context, jobID int, priority int) err
 		return err
 	}
 
-	base := priority * PriorityGap
+	// 优先级越高，base 越小，score 越小，排名越靠前
+	// 假设 priority: 1=Low, 2=High
+	// 为了让 High 排在 Low 前面，High 的 base 应该更小
+	// 我们可以用一个大数减去 priority * PriorityGap，或者取反
+	// 这里采用: base = (MaxPriority - priority) * PriorityGap
+	// 假设 MaxPriority = 10 (足够覆盖 1 和 2)
+	const MaxPriority = 10
+	base := (MaxPriority - priority) * PriorityGap
 
 	score := float64(base + seq)
 
