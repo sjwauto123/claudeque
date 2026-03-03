@@ -9,6 +9,9 @@ import (
 	"io"
 	"mime/multipart"
 	"net/url"
+	"path"
+	"strconv"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -39,16 +42,27 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 	}
 
 	var req request.FileListRequest
-	// 优先尝试从 Query 参数获取 (标准 GET 请求)
+	// 1. 尝试从 Query 参数获取 (标准 GET 请求)
 	if err := c.ShouldBindQuery(&req); err != nil {
-		// 如果 Query 绑定失败或为空，尝试从 JSON Body 获取 (支持前端非标准调用)
-		if errBody := c.ShouldBindJSON(&req); errBody != nil {
-			response.BadRequest(c, err.Error())
-			return
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	// 2. 兼容性：支持从路径参数获取 path (解决前端路径传参问题)
+	if pathParam := c.Param("path"); pathParam != "" {
+		// 如果 pathParam 是 /*path 形式，可能会带前缀斜杠，需要处理
+		req.Path = path.Clean(pathParam)
+	}
+
+	// 3. 兼容性：如果 PageSize 为空，尝试从 pageSize (小驼峰) 获取
+	if req.PageSize == 0 {
+		if ps := c.Query("pageSize"); ps != "" {
+			if v, _ := strconv.Atoi(ps); v > 0 {
+				req.PageSize = v
+			}
 		}
 	}
-	// 二次检查：如果 Query 绑定成功但关键参数为空，尝试 JSON
-	// 注意：FileListRequest 的字段可能都不是必填的，所以这里只是尝试性补充
+	// 4. 如果依然没有任何核心参数，尝试从 JSON Body 获取 (兼容前端非标准调用)
 	if req.Path == "" && req.Page == 0 && req.PageSize == 0 {
 		_ = c.ShouldBindJSON(&req)
 	}
@@ -128,15 +142,26 @@ func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 	}
 
 	var req request.FileListRequest
-	// 优先尝试从 Query 参数获取 (标准 GET 请求)
+	// 1. 尝试从 Query 参数获取 (标准 GET 请求)
 	if err := c.ShouldBindQuery(&req); err != nil {
-		// 如果 Query 绑定失败，尝试从 JSON Body 获取
-		if errBody := c.ShouldBindJSON(&req); errBody != nil {
-			response.BadRequest(c, err.Error())
-			return
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	// 2. 兼容性：支持从路径参数获取 path
+	if pathParam := c.Param("path"); pathParam != "" {
+		req.Path = path.Clean(pathParam)
+	}
+
+	// 3. 兼容性：如果 PageSize 为空，尝试从 pageSize (小驼峰) 获取
+	if req.PageSize == 0 {
+		if ps := c.Query("pageSize"); ps != "" {
+			if v, _ := strconv.Atoi(ps); v > 0 {
+				req.PageSize = v
+			}
 		}
 	}
-	// 如果 Query 参数没传，尝试 JSON
+	// 4. 如果依然没有任何核心参数，尝试从 JSON Body 获取 (兼容前端非标准调用)
 	if req.Path == "" && req.Page == 0 && req.PageSize == 0 {
 		_ = c.ShouldBindJSON(&req)
 	}
@@ -240,6 +265,30 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 
 	data, err := ctrl.fileService.UploadFile(userID, file, req.File, req.TargetPath, isRootMode)
 	if err != nil {
+		// 如果是上传锁冲突，返回特定状态码给前端
+		if strings.Contains(err.Error(), "当前有正在进行的上传任务") {
+			// 429 Too Many Requests 或者 409 Conflict
+			response.Error(c, 409, err.Error())
+			return
+		}
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, data)
+}
+
+// GetUploadProgress 获取上传进度
+func (ctrl *Controller) GetUploadProgress(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	var req request.UploadProgressRequest
+	if err := c.ShouldBindQuery(&req); err != nil {
+		response.BadRequest(c, err.Error())
+		return
+	}
+
+	data, err := ctrl.fileService.GetUploadProgress(userID, req.Filename, req.TargetPath)
+	if err != nil {
 		response.BizError(c, err)
 		return
 	}
@@ -319,6 +368,6 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 	}
 
 	response.Success(c, gin.H{
-		"message": "解压成功",
+		"message": "解压任务已在后台开始执行",
 	})
 }

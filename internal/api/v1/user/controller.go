@@ -79,15 +79,17 @@ func (ctrl *Controller) ChangePassword(c *gin.Context) {
 
 	var req request.ChangePasswordRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, "数据格式有误")
 		return
 	}
 	n1 := utils.DecryptIfCryptoJS(req.NewPassword)
 	n2 := utils.DecryptIfCryptoJS(req.ConfirmPassword)
-	if strings.Contains(n1, " ") {
-		response.BadRequest(c, "密码不能包含空格")
+
+	if err := utils.ValidatePassword(n1); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
+
 	if n1 != n2 {
 		response.BadRequest(c, "两次输入的密码不一致")
 	}
@@ -114,7 +116,7 @@ func (ctrl *Controller) ChangePassword(c *gin.Context) {
 func (ctrl *Controller) ListUsers(c *gin.Context) {
 	var req request.UserListRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, "数据格式有误")
 		return
 	}
 

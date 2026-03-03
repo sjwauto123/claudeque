@@ -87,7 +87,7 @@ func (ctrl *Controller) UpdateUser(c *gin.Context) {
 
 	var req request.AdminUpdateUserRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		response.BadRequest(c, err.Error())
+		response.BadRequest(c, "请求格式错误")
 		return
 	}
 

@@ -7,7 +7,7 @@ import (
 // RegisterRequest 用户注册请求
 type RegisterRequest struct {
 	Username        string `json:"username" binding:"required,min=3,max=50"`
-	Password        string `json:"password" binding:"required,min=6,max=50"`
+	Password        string `json:"password" binding:"required,min=6,max=300"`
 	ConfirmPassword string `json:"confirm_password" binding:"required"`
 	Email           string `json:"email" binding:"required,email"`
 	EmailCaptcha    string `json:"captcha" binding:"required,len=6"`
@@ -46,7 +46,8 @@ type CreateRequest struct {
 	Password string `json:"password" binding:"required,min=6,max=50"`
 	Email    string `json:"email" binding:"required,email"`
 
-	Status int `json:"status"`
+	Status int       `json:"status"`
+	Roles  *[]string `json:"roles" binding:"omitempty"`
 }
 
 // AdminUpdateUserRequest 管理员更新用户信息请求
