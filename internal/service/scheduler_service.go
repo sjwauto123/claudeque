@@ -274,7 +274,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	}
 
 	// 构建命令
-	cmd := exec.Command("python", "-u", scriptPath)
+	cmd := exec.Command("python3", "-u", scriptPath)
 	cmd.Dir = filepath.Dir(scriptPath)
 
 	// 获取显存中的显卡信息以获取其当前的系统索引
