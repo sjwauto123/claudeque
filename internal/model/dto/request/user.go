@@ -46,7 +46,8 @@ type CreateRequest struct {
 	Password string `json:"password" binding:"required,min=6,max=50"`
 	Email    string `json:"email" binding:"required,email"`
 
-	Status int `json:"status"`
+	Status int       `json:"status"`
+	Roles  *[]string `json:"roles" binding:"omitempty"`
 }
 
 // AdminUpdateUserRequest 管理员更新用户信息请求

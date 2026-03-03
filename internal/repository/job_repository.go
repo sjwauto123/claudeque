@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
@@ -315,6 +316,16 @@ func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, sta
 		baseDB = baseDB.Where("j.created_at <= ?", endTime)
 	}
 	return baseDB
+}
+
+// GetRunningJobsWithoutPagination 获取所有正在执行中的任务列表，不带分页
+func (r *jobRepository) GetRunningJobsWithoutPagination(ctx context.Context) ([]*entity.Job, error) {
+	var jobs []*entity.Job
+	err := r.db.WithContext(ctx).Where("status = ?", entity.JobStatusRunning).Find(&jobs).Error
+	if err != nil {
+		return nil, err
+	}
+	return jobs, nil
 }
 
 // UpdateSug 修改标识

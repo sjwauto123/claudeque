@@ -33,18 +33,24 @@ type scheduler struct {
 	isRunning bool
 	mu        sync.RWMutex
 
-	// 跟踪正在运行的任务进程
+	// 跟踪正在运行的任务进程 (键为 PID)
 	runningJobs map[int]*JobProcess
 	runningMu   sync.RWMutex
 }
 
 // JobProcess 任务进程信息
 type JobProcess struct {
-	cmd     *exec.Cmd
+	pid     int // 存储进程ID
 	jobID   int
 	jobName string
 	cardIDs []int
 	done    chan struct{}
+}
+
+// 用于接收 process.Wait 结果
+type waitResult struct {
+	state *os.ProcessState
+	err   error
 }
 
 // NewScheduler 创建调度器
@@ -79,10 +85,35 @@ func (s *scheduler) Start() {
 
 	s.isRunning = true
 
+	// 恢复之前运行的任务
+	s.recoverRunningJobs()
+
 	s.wg.Add(1)
 	go s.run()
 
+	// 启动周期性同步
+	s.wg.Add(1)
+	go s.startAuditor()
+
 	logger.Info("任务调度器已启动")
+}
+
+// startAuditor 启动同步器 goroutine
+func (s *scheduler) startAuditor() {
+	defer s.wg.Done()
+
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.ctx.Done():
+			logger.Info("同步器停止")
+			return
+		case <-ticker.C:
+			s.auditRunningJobs()
+		}
+	}
 }
 
 // Stop 停止调度器
@@ -98,75 +129,17 @@ func (s *scheduler) Stop() {
 	// 立即取消上下文，停止 Run() 循环中的 Ticker 触发
 	s.cancel()
 
-	// 终止所有正在运行的任务
-	// 触发 MonitorJob 退出并执行清理逻辑
-	s.TerminateAllRunningJobs()
-
-	// 3. 等待所有goroutine退出（包括 Run 和所有的 MonitorJob）
+	// 等待所有goroutine退出（包括 Run 和所有的 MonitorJob）
 	s.wg.Wait()
 
 	logger.Info("任务调度器已停止")
-}
-
-// TerminateAllRunningJobs 终止所有正在运行的任务并清理资源
-func (s *scheduler) TerminateAllRunningJobs() {
-	s.runningMu.Lock()
-	// 复制一份任务列表，避免在循环中操作锁
-	jobs := make(map[int]*JobProcess)
-	for id, jp := range s.runningJobs {
-		jobs[id] = jp
-	}
-	s.runningMu.Unlock()
-
-	if len(jobs) == 0 {
-		return
-	}
-
-	var wg sync.WaitGroup
-	for jobID, jp := range jobs {
-		wg.Add(1)
-		go func(id int, p *JobProcess) {
-			defer wg.Done()
-			s.terminateSingleJob(id, p)
-		}(jobID, jp)
-	}
-
-	// 等待所有清理任务完成（或者达到总超时）
-	wg.Wait()
-}
-
-// terminateSingleJob 终止单个任务的私有方法
-func (s *scheduler) terminateSingleJob(jobID int, jp *JobProcess) {
-	logger.Info("正在终止残留任务", zap.Int("job_id", jobID))
-
-	if jp.cmd.Process != nil {
-		// 尝试发送 SIGTERM ,优雅退出
-		if err := jp.cmd.Process.Signal(syscall.SIGTERM); err == nil {
-			// 如果信号发送成功，等待 MonitorJob 报告进程退出
-			select {
-			case <-jp.done:
-				logger.Info("任务已优雅退出", zap.Int("job_id", jobID))
-				return
-			case <-time.After(10 * time.Second):
-				logger.Warn("任务未在规定时间内优雅退出，强制杀掉", zap.Int("job_id", jobID))
-				err = jp.cmd.Process.Kill()
-				if err != nil {
-					logger.Error("强制杀死进程失败：", zap.Int("pid", jp.cmd.Process.Pid))
-				}
-			}
-		}
-	}
-
-	// 等待 MonitorJob 完成清理逻辑
-	<-jp.done
-	logger.Info("残留任务清理完成", zap.Int("job_id", jobID))
 }
 
 // run 调度器主循环
 func (s *scheduler) run() {
 	defer s.wg.Done()
 
-	ticker := time.NewTicker(3600 * time.Second)
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {
@@ -307,7 +280,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	}
 
 	// 构建命令
-	cmd := exec.Command("python", "-u", scriptPath)
+	cmd := exec.Command("python3", "-u", scriptPath)
 	cmd.Dir = filepath.Dir(scriptPath)
 
 	// 获取显存中的显卡信息以获取其当前的系统索引
@@ -323,7 +296,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		gpuIndices[i] = strconv.Itoa(card.Index)
 	}
 	cmd.Env = append(os.Environ(),
-		"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
+		//	"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
 		"JOB_ID="+strconv.Itoa(job.ID),
 		"PYTHONUNBUFFERED=1",
 	)
@@ -341,14 +314,14 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	// 记录运行中的任务
 	jp := &JobProcess{
-		cmd:     cmd,
+		pid:     cmd.Process.Pid, // 存储 PID
 		jobID:   job.ID,
 		jobName: job.Name,
 		cardIDs: cardIDs,
 		done:    make(chan struct{}),
 	}
 	s.runningMu.Lock()
-	s.runningJobs[job.ID] = jp
+	s.runningJobs[jp.pid] = jp // 使用 jp.pid 作为键
 	s.runningMu.Unlock()
 
 	// 写入进程表
@@ -375,7 +348,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	logger.Info("任务已启动",
 		zap.Int("job_id", job.ID),
-		zap.String("pid", strconv.Itoa(cmd.Process.Pid)),
+		zap.Int("pid", cmd.Process.Pid), // 直接使用 cmd.Process.Pid
 		zap.Ints("gpu_ids", cardIDs))
 
 	return nil
@@ -392,7 +365,7 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 	defer func() {
 		// 从运行列表中移除
 		s.runningMu.Lock()
-		delete(s.runningJobs, jobID)
+		delete(s.runningJobs, jp.pid) // 使用 jp.pid 作为键
 		s.runningMu.Unlock()
 
 		// 释放显卡和清理进程表使用 Background，确保在程序关闭时也能执行成功
@@ -426,32 +399,240 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		}
 	}()
 
-	// 等待命令执行完成
-	err := jp.cmd.Wait()
-
-	// 获取任务详情
-	// 使用 Background 确保更新状态不受 scheduler 取消影响
-	job, err2 := s.jobRepo.GetByID(jobID)
-	if err2 != nil {
-		logger.Error("获取任务详情失败", zap.Error(err2), zap.Int("job_id", jobID))
-		return
-	}
-
-	if job == nil {
-		return
-	}
-
-	// 更新任务状态
-	status := entity.JobStatusCompleted
+	// 获取 *os.Process 对象
+	process, err := os.FindProcess(jp.pid)
 	if err != nil {
-		// 如果进程被杀掉，err 会包含 exit status 1 等信息
-		status = entity.JobStatusFailed
-		logger.Info("任务执行结束（非正常退出）", zap.Int("job_id", jobID), zap.Error(err))
-	} else {
-		logger.Info("任务执行成功", zap.Int("job_id", jobID))
+		logger.Error("监控任务时查找进程失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+		// 进程可能已经不存在，直接按失败处理
+		// 更新任务状态为失败
+		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
+			logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", jobID))
+		}
+		return
 	}
 
-	if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
-		logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+	// 使用 select 监听进程结束或调度器停止
+	processWaitChan := make(chan waitResult, 1)
+	go func() {
+		state, err := process.Wait() // 忽略 *os.ProcessState，只发送 error
+		processWaitChan <- waitResult{
+			state: state,
+			err:   err,
+		}
+	}()
+
+	select {
+	case <-s.ctx.Done():
+		logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+		return // 调度器停止，monitorJob 退出，不影响任务进程
+	case result := <-processWaitChan: // 进程结束
+		// 获取任务详情
+		logger.Info("任务进程退出", zap.Int("job_id", jobID), zap.Int("pid", jp.pid), zap.Error(result.err))
+		job, err2 := s.jobRepo.GetByID(jobID)
+		if err2 != nil {
+			logger.Error("获取任务详情失败", zap.Error(err2), zap.Int("job_id", jobID))
+			return
+		}
+
+		if job == nil {
+			return
+		}
+
+		// 更新任务状态
+		status := entity.JobStatusCompleted
+		if result.err != nil {
+			status = entity.JobStatusFailed
+			logger.Info("任务执行结束（Wait调用失败）", zap.Int("job_id", jobID), zap.Error(result.err))
+		} else {
+			exitCode := result.state.ExitCode()
+			// 非0退出码（包括 kill -9）
+			if exitCode != 0 {
+				status = entity.JobStatusFailed
+				logger.Info("任务执行结束（异常退出）", zap.Int("job_id", jobID), zap.Int("exit_code", exitCode))
+			} else {
+				status = entity.JobStatusCompleted
+				logger.Info("任务执行成功", zap.Int("job_id", jobID))
+			}
+		}
+
+		if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
+			logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+		}
+	}
+}
+
+// recoverRunningJobs 恢复调度器启动前正在运行的任务
+func (s *scheduler) recoverRunningJobs() {
+	logger.Info("开始恢复正在运行的任务...")
+	ctx := context.Background() // 使用 Background context 进行恢复操作
+
+	// 查询数据库中所有状态为 JobStatusRunning 的任务
+	runningJobsInDB, err := s.jobRepo.GetRunningJobsWithoutPagination(ctx)
+	if err != nil {
+		logger.Error("恢复任务时，查询数据库中运行中的任务失败", zap.Error(err))
+		return
+	}
+
+	for _, job := range runningJobsInDB {
+		logger.Info("发现数据库中运行中的任务", zap.Int("job_id", job.ID), zap.String("job_name", job.Name))
+
+		// 2. 查询该任务对应的活跃进程记录
+		processes, err := s.processRepo.FindActiveByJobID(job.ID)
+		if err != nil {
+			logger.Error("恢复任务时，查询任务活跃进程失败", zap.Error(err), zap.Int("job_id", job.ID))
+			continue
+		}
+
+		if len(processes) == 0 {
+			logger.Warn("数据库中任务状态为运行中，但未找到活跃进程记录，将任务标记为失败", zap.Int("job_id", job.ID))
+			handleMissingProcess(s, ctx, job, nil) // 进程记录不存在，传递 nil
+			continue
+		}
+
+		// 遍历所有活跃进程记录
+		for _, processRecord := range processes {
+			pid := processRecord.PID
+
+			// 3. 检查进程是否存在
+			if isProcessRunning(pid) {
+				logger.Info("进程仍在运行，重新接管任务", zap.Int("job_id", job.ID), zap.Int("pid", pid))
+
+				// 重新构建 JobProcess
+				jp := &JobProcess{
+					pid:     pid,
+					jobID:   job.ID,
+					jobName: job.Name,
+					cardIDs: parseGpuIDs(job.GpuIDs),
+					done:    make(chan struct{}),
+				}
+
+				// 添加到 runningJobs
+				s.runningMu.Lock()
+				s.runningJobs[jp.pid] = jp // 使用 jp.pid 作为键
+				s.runningMu.Unlock()
+
+				// 重新启动 monitorJob
+				s.wg.Add(1)
+				go s.monitorJob(jp)
+
+				// 确保进程缓存存在
+				if err := s.procCache.CreatePid(ctx, pid, job.Name); err != nil {
+					logger.Warn("恢复时写入进程缓存失败", zap.Error(err), zap.String("job_name", job.Name), zap.Int("pid", pid))
+				}
+
+			} else {
+				logger.Warn("进程已不存在，清理任务记录", zap.Int("job_id", job.ID), zap.Int("pid", pid))
+				handleMissingProcess(s, ctx, job, &processRecord) // 传递 processRecord 的地址
+			}
+		}
+	}
+
+	logger.Info("正在运行的任务恢复完成。")
+}
+
+// auditRunningJobs 周期性同步运行中的任务，清理已不存在的进程
+func (s *scheduler) auditRunningJobs() {
+	logger.Info("开始周期性同步运行中的任务...")
+	ctx := context.Background() // 使用 Background context 进行同步操作
+
+	// 查询数据库中所有状态为 JobStatusRunning 的任务
+	runningJobsInDB, err := s.jobRepo.GetRunningJobsWithoutPagination(ctx)
+	if err != nil {
+		logger.Error("同步任务时，查询数据库中运行中的任务失败", zap.Error(err))
+		return
+	}
+
+	for _, job := range runningJobsInDB {
+		// 查询该任务对应的活跃进程记录
+		processes, err := s.processRepo.FindActiveByJobID(job.ID)
+		if err != nil {
+			logger.Error("同步任务时，查询任务活跃进程失败", zap.Error(err), zap.Int("job_id", job.ID))
+			continue
+		}
+
+		if len(processes) == 0 {
+			logger.Warn("同步发现数据库中任务状态为运行中，但未找到活跃进程记录，将任务标记为失败", zap.Int("job_id", job.ID))
+			handleMissingProcess(s, ctx, job, nil) // 进程记录不存在，传递 nil
+			continue
+		}
+
+		// 遍历所有活跃进程记录，确保处理一个任务的多个相关进程
+		for _, processRecord := range processes {
+			pid := processRecord.PID
+
+			// 检查该进程是否在调度器的 runningJobs 列表中
+			s.runningMu.RLock()
+			_, isTracked := s.runningJobs[pid]
+			s.runningMu.RUnlock()
+
+			if isTracked {
+				// 如果进程正在被调度器跟踪，则跳过，monitorJob 会处理其状态
+				continue
+			}
+
+			// 检查进程是否存在
+			if !isProcessRunning(pid) {
+				logger.Warn("同步发现进程已不存在，清理任务记录", zap.Int("job_id", job.ID), zap.Int("pid", pid))
+				handleMissingProcess(s, ctx, job, &processRecord) // 传递 processRecord 的地址
+			}
+		}
+	}
+
+	logger.Info("周期性同步运行中的任务完成。")
+}
+
+// isProcessRunning 检查指定 PID 的进程是否仍在运行
+func isProcessRunning(pid int) bool {
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return false // 进程不存在
+	}
+
+	err = process.Signal(syscall.Signal(0))
+	return err == nil
+}
+
+// parseGpuIDs 辅助函数，解析 GPU ID 字符串
+func parseGpuIDs(gpuIDsStr string) []int {
+	var cardIDs []int
+	if gpuIDsStr != "" {
+		idStrs := strings.Split(gpuIDsStr, ",")
+		for _, s := range idStrs {
+			id, err := strconv.Atoi(strings.TrimSpace(s))
+			if err != nil {
+				logger.Warn("解析任务显卡ID失败", zap.Error(err), zap.String("gpu_ids", gpuIDsStr))
+				continue
+			}
+			cardIDs = append(cardIDs, id)
+		}
+	}
+	return cardIDs
+}
+
+// handleMissingProcess 处理进程不存在的情况
+func handleMissingProcess(s *scheduler, ctx context.Context, job *entity.Job, processRecord *entity.Process) {
+	// 更新任务状态为失败
+	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
+		logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", job.ID))
+	}
+
+	// 清理 processRepo 记录
+	if processRecord != nil {
+		now := time.Now()
+		processRecord.EndedAt = &now
+		if err := s.processRepo.Update(processRecord); err != nil {
+			logger.Error("更新进程结束时间失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Int("pid", processRecord.PID))
+		}
+	}
+
+	// 清理 procCache 缓存
+	if err := s.procCache.DelPid(ctx, job.Name); err != nil {
+		logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.String("job_name", job.Name))
+	}
+
+	// 释放显卡
+	cardIDs := parseGpuIDs(job.GpuIDs)
+	if err := s.gpuSvc.ReleaseCards(ctx, cardIDs); err != nil {
+		logger.Error("恢复时释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 	}
 }

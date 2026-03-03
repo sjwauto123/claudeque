@@ -4,6 +4,7 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
+	"context"
 	"time"
 )
 
@@ -25,6 +26,8 @@ type JobRepository interface {
 	GetQueueJobListFiltered(orderedJobIDs []int, req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error)
 	// GetRunningJobs 获取执行中的任务
 	GetRunningJobs(req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error)
+	// GetRunningJobsWithoutPagination 获取所有正在执行中的任务列表，不带分页
+	GetRunningJobsWithoutPagination(ctx context.Context) ([]*entity.Job, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
 	// UpdateSug 更改标识
