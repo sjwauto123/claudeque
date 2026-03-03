@@ -10,7 +10,8 @@ func (ctrl *MenuController) RegisterRoutes(r *gin.RouterGroup) {
 	menuGroup := r.Group("/permissionManage/menus")
 	menuGroup.Use(middleware.Auth())
 	menuGroup.Use(middleware.RequirePermission(ctrl.authService))
-	menuGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
+	menuGroup.Use(middleware.CaptureRawBody())
+	menuGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		menuGroup.GET("/page", middleware.WithOperation("分页查询菜单列表"), ctrl.PageList)
 		menuGroup.GET("/:id", middleware.WithOperation("获取菜单信息"), ctrl.GetMenuByID)

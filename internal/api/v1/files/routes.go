@@ -13,8 +13,8 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	fileGroup := router.Group("/files")
 	fileGroup.Use(middleware.Auth())
 	fileGroup.Use(middleware.RequirePermission(ctrl.authService))
-	fileGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
-
+	fileGroup.Use(middleware.CaptureRawBody())
+	fileGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		// 文件管理
 		fileGroup.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
@@ -31,7 +31,8 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	userDirGroup := router.Group("/directories")
 	userDirGroup.Use(middleware.Auth())
 	userDirGroup.Use(middleware.RequirePermission(ctrl.authService))
-	userDirGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
+	userDirGroup.Use(middleware.CaptureRawBody())
+	userDirGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		// 计算目录磁盘占比和大小
 		userDirGroup.GET("/calculate-usage", middleware.WithOperation("计算目录磁盘大小"), ctrl.GetDiskUsage)

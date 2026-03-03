@@ -9,7 +9,8 @@ func (ctrl *RoleController) RegisterRoutes(r *gin.RouterGroup) {
 	roleGroup := r.Group("/permissionManage/roles")
 	roleGroup.Use(middleware.Auth())
 	roleGroup.Use(middleware.RequirePermission(ctrl.authService))
-	roleGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
+	roleGroup.Use(middleware.CaptureRawBody())
+	roleGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		roleGroup.GET("/page", middleware.WithOperation("分页获取角色列表"), ctrl.PageList)
 		roleGroup.GET("/:id", middleware.WithOperation("获取角色"), ctrl.GetRoleByID)

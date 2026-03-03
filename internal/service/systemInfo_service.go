@@ -25,7 +25,9 @@ import (
 type ResourceCollector struct {
 	Pool     *websocket.ConnectionPool
 	ProcRepo repository.ProcessCacheRepository
-	Done     chan struct{}
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 	Once     sync.Once
 	mutex    sync.RWMutex
 }
@@ -33,6 +35,12 @@ type ResourceCollector struct {
 type systemInfoService struct {
 	Pool      *websocket.ConnectionPool
 	Collector *ResourceCollector
+}
+
+// Stop 停止系统信息服务
+func (s *systemInfoService) Stop() {
+	s.Collector.Stop()
+	logger.Info("系统信息服务已停止")
 }
 
 func NewSystemInfoService(pool *websocket.ConnectionPool, procRepo repository.ProcessCacheRepository) SystemInfoService {
@@ -77,22 +85,36 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 
 // NewResourceCollector 创建资源收集器
 func NewResourceCollector(pool *websocket.ConnectionPool, procRepo repository.ProcessCacheRepository) *ResourceCollector {
+	ctx, cancel := context.WithCancel(context.Background())
 	return &ResourceCollector{
 		Pool:     pool,
 		ProcRepo: procRepo,
-		Done:     make(chan struct{}),
+		ctx:      ctx,
+		cancel:   cancel,
 	}
+}
+
+// Stop 停止资源收集
+func (rc *ResourceCollector) Stop() {
+	// 取消上下文，通知协程退出
+	rc.cancel()
+	// 等待协程退出
+	rc.wg.Wait()
+	logger.Info("资源收集器已完全停止")
 }
 
 // Start 启动资源收集
 func (rc *ResourceCollector) Start() {
 	rc.Once.Do(func() {
+		rc.wg.Add(1)
 		go func() {
+			defer rc.wg.Done()
 			ticker := time.NewTicker(2 * time.Second)
 			defer ticker.Stop()
 			for {
 				select {
-				case <-rc.Done:
+				case <-rc.ctx.Done():
+					logger.Info("资源收集器已停止")
 					return
 				case <-ticker.C:
 					// 检查连接数
@@ -117,6 +139,7 @@ func (rc *ResourceCollector) Start() {
 				}
 			}
 		}()
+		logger.Info("资源收集器已启动")
 	})
 }
 
@@ -250,10 +273,14 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 	if err != nil {
 		return nil, fmt.Errorf("查询进程信息失败: %w", err)
 	}
+
+	// 获取所有进程与GPU的映射
+	gpuMap := getGPUMap()
+
 	var processInfos []response.ProcessInfoResponse
 	for _, p := range processes {
 		// 通过本地命令获取进程的详细信息
-		info, err := getProcessDetails(p)
+		info, err := getProcessDetails(p, gpuMap)
 		if err != nil {
 			logger.Infof("获取进程id为%v详细信息失败:%v", p, err)
 		}
@@ -263,8 +290,32 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 	return processInfos, nil
 }
 
+// getGPUMap 获取所有进程与GPU的映射
+func getGPUMap() map[string]string {
+	gpuMap := make(map[string]string)
+
+	// 使用nvidia-smi命令获取所有进程所在的GPU信息
+	cmd := exec.Command("nvidia-smi", "--query-compute-apps=pid,gpu_name", "--format=csv,noheader")
+	output, err := cmd.Output()
+	if err != nil {
+		return gpuMap
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		parts := strings.Split(strings.TrimSpace(line), ", ")
+		if len(parts) == 2 {
+			pidStr := parts[0]
+			gpuName := parts[1]
+			gpuMap[pidStr] = gpuName
+		}
+	}
+
+	return gpuMap
+}
+
 // getProcessDetails 获取进程的详细信息
-func getProcessDetails(pid int) (response.ProcessInfoResponse, error) {
+func getProcessDetails(pid int, gpuMap map[string]string) (response.ProcessInfoResponse, error) {
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
 		return response.ProcessInfoResponse{}, err
@@ -289,8 +340,8 @@ func getProcessDetails(pid int) (response.ProcessInfoResponse, error) {
 	duration := time.Since(time.Unix(createTime/1000, 0))
 	r := formatDuration(duration)
 
-	// 获取GPU信息
-	gpuName := getGPUNameByPID(pid)
+	// 从映射中获取GPU信息
+	gpuName := gpuMap[strconv.Itoa(pid)]
 
 	return response.ProcessInfoResponse{
 		Username:  username,
@@ -301,29 +352,6 @@ func getProcessDetails(pid int) (response.ProcessInfoResponse, error) {
 		Runtime:   r,
 		Command:   cmdline,
 	}, nil
-}
-
-// getGPUNameByPID 根据进程ID获取GPU名称
-func getGPUNameByPID(pid int) string {
-	// 使用nvidia-smi命令获取进程所在的GPU信息
-	cmd := exec.Command("nvidia-smi", "--query-compute-apps=pid,gpu_name", "--format=csv,noheader")
-	output, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		parts := strings.Split(strings.TrimSpace(line), ", ")
-		if len(parts) == 2 {
-			pidStr := parts[0]
-			if pidStr == strconv.Itoa(pid) {
-				return parts[1]
-			}
-		}
-	}
-
-	return ""
 }
 
 // formatDuration 格式化时间间隔，只保留整数秒部分
