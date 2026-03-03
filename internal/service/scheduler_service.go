@@ -47,6 +47,12 @@ type JobProcess struct {
 	done    chan struct{}
 }
 
+// 用于接收 process.Wait 结果
+type waitResult struct {
+	state *os.ProcessState
+	err   error
+}
+
 // NewScheduler 创建调度器
 func NewScheduler(
 	jobRepo repository.JobRepository,
@@ -406,18 +412,22 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 	}
 
 	// 使用 select 监听进程结束或调度器停止
-	processWaitChan := make(chan error, 1)
+	processWaitChan := make(chan waitResult, 1)
 	go func() {
-		_, err := process.Wait() // 忽略 *os.ProcessState，只发送 error
-		processWaitChan <- err
+		state, err := process.Wait() // 忽略 *os.ProcessState，只发送 error
+		processWaitChan <- waitResult{
+			state: state,
+			err:   err,
+		}
 	}()
 
 	select {
 	case <-s.ctx.Done():
 		logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 		return // 调度器停止，monitorJob 退出，不影响任务进程
-	case waitErr := <-processWaitChan: // 进程结束
+	case result := <-processWaitChan: // 进程结束
 		// 获取任务详情
+		logger.Info("任务进程退出", zap.Int("job_id", jobID), zap.Int("pid", jp.pid), zap.Error(result.err))
 		job, err2 := s.jobRepo.GetByID(jobID)
 		if err2 != nil {
 			logger.Error("获取任务详情失败", zap.Error(err2), zap.Int("job_id", jobID))
@@ -430,11 +440,19 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 
 		// 更新任务状态
 		status := entity.JobStatusCompleted
-		if waitErr != nil {
+		if result.err != nil {
 			status = entity.JobStatusFailed
-			logger.Info("任务执行结束（非正常退出）", zap.Int("job_id", jobID), zap.Error(waitErr))
+			logger.Info("任务执行结束（Wait调用失败）", zap.Int("job_id", jobID), zap.Error(result.err))
 		} else {
-			logger.Info("任务执行成功", zap.Int("job_id", jobID))
+			exitCode := result.state.ExitCode()
+			// 非0退出码（包括 kill -9）
+			if exitCode != 0 {
+				status = entity.JobStatusFailed
+				logger.Info("任务执行结束（异常退出）", zap.Int("job_id", jobID), zap.Int("exit_code", exitCode))
+			} else {
+				status = entity.JobStatusCompleted
+				logger.Info("任务执行成功", zap.Int("job_id", jobID))
+			}
 		}
 
 		if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
