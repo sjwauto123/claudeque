@@ -137,7 +137,7 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 	// 验证数据库密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
-		return nil, bizerrors.New(bizerrors.CodeInvalidCredentials, "登录失败：数据库密码错误")
+		return nil, bizerrors.New(bizerrors.CodeInvalidCredentials, "登录失败：密码错误")
 	}
 
 	// 将用户凭证存入Redis（供终端模块重连使用）

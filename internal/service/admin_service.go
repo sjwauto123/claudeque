@@ -6,7 +6,6 @@ import (
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/utils"
-	"strings"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -30,8 +29,8 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
-	if strings.Contains(pwd, " ") {
-		return bizerrors.New(bizerrors.CodeInvalidParam, "密码不能包含空格")
+	if err := utils.ValidatePassword(pwd); err != nil {
+		return bizerrors.New(bizerrors.CodeInvalidParam, err.Error())
 	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 	if err != nil {
@@ -104,8 +103,8 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 
 	if req.Password != "" {
 		pwd := utils.DecryptIfCryptoJS(req.Password)
-		if strings.Contains(pwd, " ") {
-			return bizerrors.New(bizerrors.CodeInvalidParam, "密码不能包含空格")
+		if err := utils.ValidatePassword(pwd); err != nil {
+			return bizerrors.New(bizerrors.CodeInvalidParam, err.Error())
 		}
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err != nil {

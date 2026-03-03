@@ -7,7 +7,6 @@ import (
 	"cloudque/pkg/response"
 	"cloudque/pkg/utils"
 	"regexp"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -37,10 +36,12 @@ func (ctrl *Controller) Register(c *gin.Context) {
 
 	p1 := utils.DecryptIfCryptoJS(req.Password)
 	p2 := utils.DecryptIfCryptoJS(req.ConfirmPassword)
-	if strings.Contains(p1, " ") {
-		response.BadRequest(c, "密码不能包含空格")
+
+	if err := utils.ValidatePassword(p1); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
+
 	if p1 != p2 {
 		response.BadRequest(c, "两次输入的密码不一致")
 		return
@@ -107,10 +108,12 @@ func (ctrl *Controller) ResetPassword(c *gin.Context) {
 
 	n1 := utils.DecryptIfCryptoJS(req.NewPassword)
 	n2 := utils.DecryptIfCryptoJS(req.ConfirmPassword)
-	if strings.Contains(n1, " ") {
-		response.BadRequest(c, "密码不能包含空格")
+
+	if err := utils.ValidatePassword(n1); err != nil {
+		response.BadRequest(c, err.Error())
 		return
 	}
+
 	if n1 != n2 {
 		response.BadRequest(c, "两次输入的密码不一致")
 	}
