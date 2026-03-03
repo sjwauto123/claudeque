@@ -149,7 +149,7 @@ func (a *App) initDatabase() error {
 	// 初始化 Redis
 	rs, err := database.InitRedis(&a.cfg.Database.Redis)
 	if err != nil {
-		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
+		panic("初始化redis失败")
 	}
 	a.redis = rs
 

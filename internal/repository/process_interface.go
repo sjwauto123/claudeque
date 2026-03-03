@@ -8,12 +8,12 @@ import (
 type ProcessRepository interface {
 	// Create 创建进程信息
 	Create(p *entity.Process) error
-	// Update 记录进程结束
+	// FindActiveByJobID 根据任务ID查找活跃进程记录
+	FindActiveByJobID(jobID int) ([]entity.Process, error)
+	// Update 更新进程记录
 	Update(p *entity.Process) error
 	// FindAll 获取所有活跃进程
 	FindAll() ([]entity.Process, error)
-	// FindActiveByJobID 根据任务ID获取活跃进程记录
-	FindActiveByJobID(jobID int) ([]entity.Process, error)
 }
 
 // ProcessCacheRepository GPU缓存接口
