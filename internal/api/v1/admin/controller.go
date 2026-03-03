@@ -154,8 +154,7 @@ func (ctrl *Controller) Restart(c *gin.Context) {
 
 	logId, err := ctrl.adminOperationLogSer.CreateLog(&entity.AdminOperationLog{
 		Username:   middleware.GetUsername(c),
-		ActionType: "restart",
-		Object:     "重启系统",
+		ActionType: "重启系统",
 		Status:     1,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
@@ -181,8 +180,7 @@ func (ctrl *Controller) Restart(c *gin.Context) {
 func (ctrl *Controller) Shutdown(c *gin.Context) {
 	logId, err := ctrl.adminOperationLogSer.CreateLog(&entity.AdminOperationLog{
 		Username:   middleware.GetUsername(c),
-		ActionType: "close",
-		Object:     "关闭系统",
+		ActionType: "关闭系统",
 		Status:     1,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),

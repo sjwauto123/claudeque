@@ -220,8 +220,6 @@ func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request
 		return nil, 0, err
 	}
 
-	offset := (req.Page - 1) * req.PageSize
-
 	ids := make([]string, len(orderedJobIDs))
 	for i, id := range orderedJobIDs {
 		ids[i] = strconv.Itoa(id)
@@ -231,8 +229,6 @@ func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request
 	var rows []response.QueueJobDBRow
 	err := baseDB.
 		Order(orderSQL).
-		Limit(req.PageSize).
-		Offset(offset).
 		Scan(&rows).Error
 
 	if err != nil {
@@ -270,6 +266,28 @@ func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	return &result, nil
 }
 
+// GetRunningJobs 获取正在执行中的任务列表
+func (r *jobRepository) GetRunningJobs(req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error) {
+	baseDB := r.buildBaseQueueJobQuery(req, startTime, endTime).
+		Where("j.status = ?", entity.JobStatusRunning) // 只查询正在执行中的任务
+
+	var total int64
+	if err := baseDB.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+
+	var rows []response.QueueJobDBRow
+	err := baseDB.
+		Order("j.created_at DESC"). // 正在执行中的任务按创建时间倒序排列
+		Scan(&rows).Error
+
+	if err != nil {
+		return nil, 0, err
+	}
+
+	return rows, int(total), nil
+}
+
 // buildBaseQueueJobQuery 辅助方法：构建队列任务的基础查询
 func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, startTime, endTime time.Time) *gorm.DB {
 	baseDB := r.db.Table("jobs j").
@@ -278,6 +296,7 @@ func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, sta
 			j.name AS job_name,
 			j.description,
 			j.status,
+			j.sug,
 			j.created_at AS submitted_at,
 			u.username AS user_name
 		`).
@@ -298,28 +317,8 @@ func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, sta
 	return baseDB
 }
 
-// GetRunningJobs 获取正在执行中的任务列表
-func (r *jobRepository) GetRunningJobs(req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error) {
-	baseDB := r.buildBaseQueueJobQuery(req, startTime, endTime).
-		Where("j.status = ?", entity.JobStatusRunning) // 只查询正在执行中的任务
-
-	var total int64
-	if err := baseDB.Count(&total).Error; err != nil {
-		return nil, 0, err
-	}
-
-	offset := (req.Page - 1) * req.PageSize
-
-	var rows []response.QueueJobDBRow
-	err := baseDB.
-		Order("j.created_at DESC"). // 正在执行中的任务按创建时间倒序排列
-		Limit(req.PageSize).
-		Offset(offset).
-		Scan(&rows).Error
-
-	if err != nil {
-		return nil, 0, err
-	}
-
-	return rows, int(total), nil
+// UpdateSug 修改标识
+func (r *jobRepository) UpdateSug(jobId int) error {
+	err := r.db.Table("jobs").Where("id = ?", jobId).Update("sug", 1).Error
+	return err
 }

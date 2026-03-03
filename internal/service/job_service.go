@@ -63,7 +63,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 	// 检查文件路径是否存在
 	if _, err := os.Stat(req.FilePath); err != nil {
 		if os.IsNotExist(err) {
-			return nil, errors.New(errors.CodeFileNotFound, "任务文件不存在: "+req.FilePath)
+			return nil, errors.New(errors.CodeFileNotFound, "任务文件不存在")
 		}
 		return nil, fmt.Errorf("检查任务文件失败: %w", err)
 	}

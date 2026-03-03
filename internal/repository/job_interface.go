@@ -27,4 +27,6 @@ type JobRepository interface {
 	GetRunningJobs(req request.QueueListRequest, startTime, endTime time.Time) ([]response.QueueJobDBRow, int, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
+	// UpdateSug 更改标识
+	UpdateSug(jobId int) error
 }
