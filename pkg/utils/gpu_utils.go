@@ -63,5 +63,6 @@ func GetGpuInfo() ([]GpuInfo, error) {
 
 	return []GpuInfo{
 		{Index: 0, UUID: "GPU-mock-uuid-001", Name: "gpu-0", Type: "NVIDIA GeForce RTX 3080 (Mock)", Memory: 10240},
+		{Index: 1, UUID: "GPU-mock-uuid-002", Name: "gpu-1", Type: "NVIDIA GeForce RTX 3080 (Mock)", Memory: 10240},
 	}, nil
 }

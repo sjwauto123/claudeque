@@ -7,6 +7,7 @@ import (
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
 	"cloudque/pkg/utils"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -63,12 +64,28 @@ func (ctrl *Controller) ReorderQueue(c *gin.Context) {
 		response.BadRequest(c, err.Error())
 		return
 	}
-	if _, err := ctrl.jobRepo.GetByID(req.JobID); err != nil {
+
+	// 获取 JobID 任务信息
+	job, err := ctrl.jobRepo.GetByID(req.JobID)
+	if err != nil {
 		response.InternalError(c, err.Error())
 		return
 	}
-	if _, err := ctrl.jobRepo.GetByID(req.TargetJobID); err != nil {
+	// 检查 JobID 任务状态，如果是正在执行中，则不允许重排
+	if job.Status == entity.JobStatusRunning {
+		response.BadRequest(c, "正在执行中的任务不允许重排")
+		return
+	}
+
+	// 获取 TargetJobID 任务信息
+	targetJob, err := ctrl.jobRepo.GetByID(req.TargetJobID)
+	if err != nil {
 		response.InternalError(c, err.Error())
+		return
+	}
+	// 检查 TargetJobID 任务状态，如果是正在执行中，则不允许重排到其前面
+	if targetJob.Status == entity.JobStatusRunning {
+		response.BadRequest(c, "不允许将任务重排到正在执行中的任务前面")
 		return
 	}
 	// 语义：把 JobID 插到 TargetJobID 前面

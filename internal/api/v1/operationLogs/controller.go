@@ -4,8 +4,9 @@ import (
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
 	"cloudque/pkg/response"
-	"github.com/gin-gonic/gin"
 	"time"
+
+	"github.com/gin-gonic/gin"
 )
 
 type Controller struct {
@@ -43,6 +44,12 @@ func (ctrl *Controller) GetAdminLogs(c *gin.Context) {
 	}
 	if size > 100 {
 		size = 100
+	}
+
+	// 验证状态参数格式是否正确
+	if req.Status != "" && req.Status != "success" && req.Status != "fail" {
+		response.BadRequest(c, "状态参数格式错误，只能是 success 或 fail")
+		return
 	}
 
 	data, err := ctrl.adminOperationLogSer.GetAdminLogs(&req)
@@ -96,6 +103,12 @@ func (ctrl *Controller) GetUserLogs(c *gin.Context) {
 	// 验证开始时间是否小于结束时间
 	if !start.IsZero() && !end.IsZero() && start.After(end) {
 		response.BadRequest(c, "开始时间不能晚于结束时间")
+		return
+	}
+
+	// 验证状态参数格式是否正确
+	if req.Status != "" && req.Status != "success" && req.Status != "fail" {
+		response.BadRequest(c, "状态参数格式错误，只能是 success 或 fail")
 		return
 	}
 

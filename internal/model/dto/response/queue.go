@@ -11,6 +11,7 @@ type QueueJobResponse struct {
 	SubmittedAt time.Time `json:"submittedAt"`
 	WaitSeconds int       `json:"wait_seconds"`
 	FrontCount  int       `json:"front_count"`
+	Sug         int       `json:"sug"`
 }
 
 type QueueJobDBRow struct {
@@ -20,4 +21,5 @@ type QueueJobDBRow struct {
 	Status      int
 	SubmittedAt time.Time
 	UserName    string
+	Sug         int
 }

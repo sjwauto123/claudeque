@@ -15,13 +15,20 @@ func NewAdminOperationLogRepository(db *gorm.DB) AdminOperationLogRepository {
 	return &adminOperationLogRepository{db: db}
 }
 
-func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWord string) (*[]dto.AdminLogResponse, int64, error) {
+func (a *adminOperationLogRepository) FindAdminLogs(offset int, size int, keyWord string, status string) (*[]dto.AdminLogResponse, int64, error) {
 	// 使用 EXISTS 子查询限制查询范围为最新的5000条记录
 	query := a.db.Model(&entity.AdminOperationLog{}).
 		Where("EXISTS (SELECT 1 FROM (SELECT id FROM admin_operation_log ORDER BY created_at DESC LIMIT 5000) AS latest WHERE latest.id = admin_operation_log.id)")
 
 	if keyWord != "" {
-		query = query.Where("username LIKE ? OR action_type LIKE ? OR object LIKE  ?", "%"+keyWord+"%", "%"+keyWord+"%", "%"+keyWord+"%")
+		query = query.Where("username LIKE ? OR action_type LIKE ?", "%"+keyWord+"%", "%"+keyWord+"%")
+	}
+
+	// 状态筛选
+	if status == "success" {
+		query = query.Where("status = ?", 1)
+	} else if status == "fail" {
+		query = query.Where("status != ? ", 1)
 	}
 
 	var total int64

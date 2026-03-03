@@ -77,17 +77,33 @@ func (r *userRepository) Delete(id int) error {
 }
 
 // List 分页获取用户列表
-func (r *userRepository) List(offset, limit int) ([]*entity.User, int64, error) {
+func (r *userRepository) List(offset, limit int, username, email string, status *int) ([]*entity.User, int64, error) {
 	var users []*entity.User
 	var total int64
 
+	query := r.db.Model(&entity.User{})
+
+	if username != "" {
+		query = query.Where("username LIKE ?", "%"+username+"%")
+	}
+	if email != "" {
+		query = query.Where("email LIKE ?", "%"+email+"%")
+	}
+	if status != nil {
+		query = query.Where("status = ?", *status)
+	}
+
 	// 统计总数
-	if err := r.db.Model(&entity.User{}).Count(&total).Error; err != nil {
+	if err := query.Count(&total).Error; err != nil {
 		return nil, 0, err
 	}
 
+	if total == 0 {
+		return nil, 0, nil
+	}
+
 	// 分页查询
-	err := r.db.Preload("Roles").Order("created_at DESC").Offset(offset).Limit(limit).Find(&users).Error
+	err := query.Preload("Roles").Order("created_at DESC").Offset(offset).Limit(limit).Find(&users).Error
 	if err != nil {
 		return nil, 0, err
 	}

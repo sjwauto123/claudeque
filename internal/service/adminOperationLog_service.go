@@ -19,7 +19,7 @@ func NewAdminOperationLogService(adminLogRep repository.AdminOperationLogReposit
 func (a *adminOperationLogService) GetAdminLogs(r *request.AdminLogsRequest) (interface{}, error) {
 	offset := (r.Page - 1) * r.Size
 
-	logs, total, err := a.adminOperationLogRep.FindAdminLogs(offset, r.Size, r.KeyWord)
+	logs, total, err := a.adminOperationLogRep.FindAdminLogs(offset, r.Size, r.KeyWord, r.Status)
 	if err != nil {
 		return nil, errors.NewWithErr(errors.CodeInternalError, "查询管理员日志失败", err)
 	}

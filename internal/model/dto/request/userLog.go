@@ -8,6 +8,10 @@ type UserLogsRequest struct {
 	Username string `form:"username" json:"username,omitempty"`
 	// 操作类型
 	ActionType string `form:"action_type" json:"action_type,omitempty"`
+
+	//状态
+	Status string `form:"status" json:"status,omitempty"`
+
 	// 结束时间
 	EndTime string `form:"end_time" json:"end_time,omitempty"`
 

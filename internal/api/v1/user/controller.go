@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -83,6 +84,10 @@ func (ctrl *Controller) ChangePassword(c *gin.Context) {
 	}
 	n1 := utils.DecryptIfCryptoJS(req.NewPassword)
 	n2 := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+	if strings.Contains(n1, " ") {
+		response.BadRequest(c, "密码不能包含空格")
+		return
+	}
 	if n1 != n2 {
 		response.BadRequest(c, "两次输入的密码不一致")
 	}
@@ -148,12 +153,34 @@ func (ctrl *Controller) UploadAvatar(c *gin.Context) {
 		response.BadRequest(c, "缺少文件")
 		return
 	}
+
+	// 检查文件扩展名
+	ext := strings.ToLower(filepath.Ext(file.Filename))
+	allowedExts := map[string]bool{
+		".jpg":  true,
+		".jpeg": true,
+		".png":  true,
+		".gif":  true,
+		".bmp":  true,
+		".webp": true,
+	}
+	if !allowedExts[ext] {
+		response.BadRequest(c, "只允许上传图片文件 (jpg, jpeg, png, gif, bmp, webp)")
+		return
+	}
+
+	// 检查 Content-Type
+	contentType := file.Header.Get("Content-Type")
+	if !strings.HasPrefix(contentType, "image/") {
+		response.BadRequest(c, "只允许上传图片文件")
+		return
+	}
+
 	dir := filepath.Join("uploads", "avatars")
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		response.BizError(c, err)
 		return
 	}
-	ext := filepath.Ext(file.Filename)
 	name := fmt.Sprintf("%d_%d%s", userID, time.Now().UnixNano(), ext)
 	dst := filepath.Join(dir, name)
 	if err := c.SaveUploadedFile(file, dst); err != nil {
