@@ -248,7 +248,7 @@ func (p *ConnectionPool) GetAdminConnectionCount() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	for client, _ := range p.adminClients {
+	for client := range p.adminClients {
 		if client.Metadata.SessionType == "ws" {
 			return true
 		}
