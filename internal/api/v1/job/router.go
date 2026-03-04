@@ -10,7 +10,8 @@ func (ctrl *Controller) JobsRoutes(router *gin.RouterGroup) {
 	r := router.Group("/job")
 	r.Use(middleware.Auth())
 	r.Use(middleware.RequirePermission(ctrl.authService))
-	r.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
+	r.Use(middleware.CaptureRawBody())
+	r.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		r.POST("", middleware.WithOperation("提交任务"), ctrl.SubmitJob)
 		r.GET("", middleware.WithOperation("获取任务列表"), ctrl.GetJobsList)

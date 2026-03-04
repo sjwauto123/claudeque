@@ -29,6 +29,11 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
+	confirmPwd := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+	if pwd != confirmPwd {
+		return bizerrors.New(bizerrors.CodeInvalidParam, "两次输入的密码不一致")
+	}
+
 	if err := utils.ValidatePassword(pwd); err != nil {
 		return bizerrors.New(bizerrors.CodeInvalidParam, err.Error())
 	}
@@ -119,6 +124,11 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 
 	if req.Password != "" {
 		pwd := utils.DecryptIfCryptoJS(req.Password)
+		confirmPwd := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+		if pwd != confirmPwd {
+			return bizerrors.New(bizerrors.CodeInvalidParam, "两次输入的密码不一致")
+		}
+
 		if err := utils.ValidatePassword(pwd); err != nil {
 			return bizerrors.New(bizerrors.CodeInvalidParam, err.Error())
 		}
