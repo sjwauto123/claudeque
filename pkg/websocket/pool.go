@@ -1,6 +1,7 @@
 package websocket
 
 import (
+	"cloudque/pkg/logger"
 	"sync"
 	"time"
 
@@ -19,7 +20,7 @@ const (
 // SessionMetadata 会话元数据
 type SessionMetadata struct {
 	UserID      int
-	SessionType string // "terminal" or "systeminfo"
+	SessionType string // "terminal" or "systemInfo"
 	Role        string // "admin" or "user"
 	CreatedAt   int64
 }
@@ -129,7 +130,7 @@ func (c *Client) ReadPump() {
 		messageType, data, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				// log error if needed
+				logger.Errorf("websocket读协程出错%v", err)
 			}
 			break
 		}
@@ -199,6 +200,24 @@ func (c *Client) WritePump() {
 	}
 }
 
+// CloseUserConnectionsByType 关闭指定用户且指定会话类型的连接
+func (p *ConnectionPool) CloseUserConnectionsByType(userID int, sessionType string) {
+	p.mu.Lock()
+	var clientsToClose []*Client
+	if clients, ok := p.userClients[userID]; ok {
+		for client := range clients {
+			if client.Metadata != nil && client.Metadata.SessionType == sessionType {
+				clientsToClose = append(clientsToClose, client)
+			}
+		}
+	}
+	p.mu.Unlock()
+
+	for _, client := range clientsToClose {
+		client.Close()
+	}
+}
+
 // SendToUser 发送消息给指定用户的所有客户端
 func (p *ConnectionPool) SendToUser(userID int, data []byte) {
 	p.mu.RLock()
@@ -258,7 +277,7 @@ func (p *ConnectionPool) GetAdminConnectionCount() bool {
 	defer p.mu.RUnlock()
 
 	for client := range p.adminClients {
-		if client.Metadata.SessionType == "ws" {
+		if client.Metadata.SessionType == "systemInfo" {
 			return true
 		}
 	}
@@ -278,6 +297,9 @@ func (p *ConnectionPool) CloseAll() {
 	p.mu.RUnlock()
 
 	for _, client := range allClients {
+		client.Close()
+	}
+	for client := range p.adminClients {
 		client.Close()
 	}
 }

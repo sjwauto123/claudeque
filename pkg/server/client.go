@@ -154,7 +154,7 @@ func dialAndCreateClient(config *Config, sshConfig *ssh.ClientConfig) (*Client, 
 
 	sftpClient, err := sftp.NewClient(sshClient, sftp.MaxPacket(32768), sftp.UseConcurrentWrites(true))
 	if err != nil {
-		_ = sshClient.Close()
+		err = sshClient.Close()
 		return nil, fmt.Errorf("SFTP连接失败: %w", err)
 	}
 
@@ -252,7 +252,7 @@ func (c *Client) ExecuteCommand(cmd string) (string, error) {
 }
 
 // NewTerminalSession 创建一个新的终端会话
-func (c *Client) NewTerminalSession(stdin io.Reader, stdout, stderr io.Writer, cols, rows int) (*TerminalSession, error) {
+func (c *Client) NewTerminalSession(stdout, stderr io.Writer, cols, rows int) (*TerminalSession, error) {
 	session, err := c.sshClient.NewSession()
 	if err != nil {
 		return nil, fmt.Errorf("创建会话失败: %w", err)

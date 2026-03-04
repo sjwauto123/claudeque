@@ -63,7 +63,7 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 	}
 
 	// 使用连接池添加新客户端
-	client := s.Pool.Add(userID, conn, metadata,nil)
+	s.Pool.Add(userID, conn, metadata, nil)
 
 	// 资源收集器会定期收集并分发给所有管理员客户端
 	logger.Infof("新的管理员websocket连接已建立，进行接收系统消息，用户ID: %d", userID)
@@ -120,7 +120,7 @@ func (rc *ResourceCollector) Start() {
 							continue
 						}
 						// 分发给所有管理员客户端
-						rc.Pool.BroadcastToAdminsByType("systeminfo", data)
+						rc.Pool.BroadcastToAdminsByType("systemInfo", data)
 					}
 				}
 			}

@@ -76,6 +76,83 @@ func (s *terminalService) getSSHClient(userID int, isRoot bool) (*server.Client,
 	return session.Client, nil
 }
 
+// PrivateTerminalWriter 将输出直接发送给特定的 websocket 客户端
+type PrivateTerminalWriter struct {
+	client *websocket.Client
+	mu     sync.Mutex
+	buffer []byte
+}
+
+func (w *PrivateTerminalWriter) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	// 1. 将新数据追加到缓存
+	data := append(w.buffer, p...)
+	w.buffer = nil
+
+	// 2. 寻找最后一次有效的 UTF-8 边界
+	n := len(data)
+	cut := n
+
+	// UTF-8 最大长度为 4 字节
+	// 从末尾倒序扫描，最多检查 3 个字节
+	for i := 0; i < 3 && i < n; i++ {
+		b := data[n-1-i]
+
+		if b&0x80 == 0 {
+			break
+		}
+
+		if b&0xC0 == 0xC0 {
+			req := 0
+			if b&0xE0 == 0xC0 {
+				req = 2
+			} else if b&0xF0 == 0xE0 {
+				req = 3
+			} else if b&0xF8 == 0xF0 {
+				req = 4
+			}
+
+			if i+1 < req {
+				cut = n - 1 - i
+			}
+			break
+		}
+	}
+
+	// 3. 分割数据
+	toSend := data[:cut]
+	w.buffer = data[cut:]
+
+	if len(toSend) == 0 {
+		return len(p), nil
+	}
+
+	// 4. 构造 JSON 消息
+	msg := struct {
+		Type string `json:"type"`
+		Data string `json:"data"`
+	}{
+		Type: "output",
+		Data: string(toSend),
+	}
+
+	jsonBytes, err := json.Marshal(msg)
+	if err != nil {
+		return 0, err
+	}
+
+	// 直接发送给特定客户端
+	select {
+	case w.client.Send <- jsonBytes:
+	default:
+		// 如果发送缓冲区满了，不做处理或记录日志
+	}
+
+	return len(p), nil
+}
+
 // TerminalWriter 捕获输出并将其广播给用户的 websocket 客户端。
 type TerminalWriter struct {
 	userID      int
@@ -189,7 +266,7 @@ func (s *terminalService) getOrCreateSshSession(userID int, isRoot bool, cols, r
 	writer := &TerminalWriter{userID: userID, pool: s.wsPool}
 
 	// 不再使用 pipe，直接使用 SSH 会话的 Stdin
-	session, err := sshClient.NewTerminalSession(nil, writer, writer, cols, rows)
+	session, err := sshClient.NewTerminalSession(writer, writer, cols, rows)
 	if err != nil {
 		return nil, err
 	}
@@ -232,15 +309,23 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 		}
 
 		var msg inboundMsg
-		if err := json.Unmarshal(data, &msg); err == nil {
+		if err := json.Unmarshal(data, &msg); err == nil && msg.Type != "" {
 			switch msg.Type {
 			case "resize":
 				if msg.Cols > 0 && msg.Rows > 0 {
-					return s.ResizeTerminal(userID, isRoot, msg.Cols, msg.Rows)
+					swMu.Lock()
+					if sw != nil && !sw.closed && sw.Session != nil {
+						_ = sw.Session.Resize(msg.Cols, msg.Rows)
+					}
+					swMu.Unlock()
 				}
-				return nil // 忽略无效的调整大小消息。
+				return nil
+			case "ping":
+				return nil // 忽略心跳消息
 			case "input":
 				data = []byte(msg.Data) // 使用嵌套的数据作为输入。
+			default:
+				return nil // 忽略其他未知类型的 JSON 消息
 			}
 		}
 
@@ -272,20 +357,36 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 		metadata.Role = "admin"
 	}
 
-	// 1. 先将客户端添加到池中。这确保了它能够接收随后的 SSH 输出广播。
-	_ = s.wsPool.Add(userID, conn, metadata, messageHandler)
+	// 1. 先将客户端添加到池中。
+	wsClient := s.wsPool.Add(userID, conn, metadata, messageHandler)
 
-	// 2. 获取或创建 SSH PTY 会话。
-	// 注意：如果这是新会话，创建过程中产生的输出（如 shell 欢迎语）
-	// 将通过 TerminalWriter -> wsPool 广播给刚刚添加的客户端。
-	swInstance, err := s.getOrCreateSshSession(userID, isRoot, cols, rows)
+	// 2. 创建新的 SSH 会话（一对一绑定）。
+	sshClient, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
-		// 如果会话创建失败，我们应该关闭连接
-		_ = conn.Close()
+		// 这里我们无法直接关闭 conn，因为 wsPool 已经接管了
+		// 但 wsPool.Add 会启动读写 pump，如果 wsClient 被关闭，conn 也会被关闭
+		wsClient.Close()
 		return err
 	}
 
-	// 3. 更新会话引用，以便消息处理程序可以使用它
+	// 创建专用的 Writer
+	writer := &PrivateTerminalWriter{client: wsClient}
+
+	// 创建新的终端会话
+	session, err := sshClient.NewTerminalSession(writer, writer, cols, rows)
+	if err != nil {
+		wsClient.Close()
+		return err
+	}
+
+	swInstance := &sshSessionWrapper{
+		ID:          fmt.Sprintf("%d:%v:%d", userID, isRoot, time.Now().UnixNano()), // 唯一ID
+		Session:     session,
+		stdinWriter: session.Stdin,
+		LastActive:  time.Now(),
+	}
+
+	// 3. 更新会话引用
 	swMu.Lock()
 	sw = swInstance
 	// 将缓冲的输入写入会话
@@ -298,6 +399,20 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 		pendingInput = nil
 	}
 	swMu.Unlock()
+
+	// 4. 生命周期管理
+	// 当 SSH 会话结束时，关闭 WebSocket
+	go func() {
+		_ = session.Session.Wait()
+		swInstance.close()
+		wsClient.Close()
+	}()
+
+	// 当 WebSocket 结束时，关闭 SSH 会话
+	go func() {
+		<-wsClient.Done
+		swInstance.close()
+	}()
 
 	return nil
 }
