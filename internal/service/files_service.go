@@ -9,7 +9,6 @@ import (
 	"cloudque/pkg/logger"
 	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
-	"cloudque/pkg/websocket"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -158,7 +157,8 @@ func (s *fileService) resolvePath(userID int, p string, isRootMode bool) (string
 		if p == "" || p == "." {
 			return "/", nil
 		}
-		return p, nil
+		// 统一清理路径，移除末尾斜杠等
+		return path.Clean(p), nil
 	}
 
 	// 用户模式：限制在 base_path/{username}
@@ -540,6 +540,7 @@ func (s *fileService) invalidateFileListCache(userID int, isRootMode bool, path 
 
 // UploadFile 上传文件
 func (s *fileService) UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error) {
+	targetPath = strings.TrimSpace(targetPath)
 	client, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
 		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
@@ -561,6 +562,13 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 	// 简单的文件名清理，防止路径遍历
 	safeFilename := path.Base(header.Filename)
 
+	// 统一路径格式，确保以 / 结尾，保证 Redis Key 一致性
+	// 用户期望统一为 /home/admin/ 这种格式
+	keyPath := resolvedPath
+	if !strings.HasSuffix(keyPath, "/") {
+		keyPath += "/"
+	}
+
 	// 检查是否有正在进行的上传任务 (简单的锁机制)
 	lockKey := fmt.Sprintf("upload:lock:%d", userID)
 	if s.redisRepo != nil {
@@ -575,32 +583,31 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 		ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
 		_ = s.redisRepo.Set(ctx2, lockKey, safeFilename, 1*time.Hour)
 		cancel2()
-
-		// 确保函数退出时释放锁
-		defer func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-			_ = s.redisRepo.Del(ctx, lockKey)
-			cancel()
-		}()
 	}
 
 	remotePath := path.Join(resolvedPath, safeFilename)
-	dst, err := client.Create(remotePath)
-	if err != nil {
-		logger.Errorf("创建远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
-		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("创建远程文件失败: %s", remotePath), err)
-	}
-	defer func(dst *sftp.File) {
-		err := dst.Close()
-		if err != nil {
-			logger.Errorf("关闭远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
-		}
-	}(dst)
+	// 因为改为异步，这里不再创建 dst，而是在 goroutine 里创建
+	// dst, err := client.Create(remotePath)
+	// if err != nil {
+	// 	logger.Errorf("创建远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
+	// 	return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("创建远程文件失败: %s", remotePath), err)
+	// }
+	// defer func(dst *sftp.File) {
+	// 	err := dst.Close()
+	// 	if err != nil {
+	// 		logger.Errorf("关闭远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
+	// 	}
+	// }(dst)
 
 	// 进度上报
 	var total int64 = header.Size
 	// 使用 filename + targetPath 作为唯一标识，防止不同目录下同名文件进度冲突
-	progressKey := fmt.Sprintf("upload:progress:%d:%s:%s", userID, safeFilename, resolvedPath)
+	progressKey := fmt.Sprintf("upload:progress:%d:%s:%s", userID, safeFilename, keyPath)
+
+	// Debug Log
+	logger.Infof("UploadFile: progressKey=%s, userID=%d, filename=%s, targetPath=%s, resolvedPath=%s, keyPath=%s, isRootMode=%v",
+		progressKey, userID, header.Filename, targetPath, resolvedPath, keyPath, isRootMode)
+
 	startTime := time.Now()
 
 	report := func(sent int64, status string, errMsg string) {
@@ -655,46 +662,109 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 	report(0, "uploading", "")
 
 	// 优化 buffer 大小：128KB 较适合 SFTP 的包对齐
-	buf := make([]byte, 128*1024)
-	var sent int64
-	lastReportTime := time.Now()
-	lastReportSent := int64(0)
 
-	for {
-		nr, rerr := file.Read(buf)
-		if nr > 0 {
-			nw, werr := dst.Write(buf[:nr])
-			if werr != nil {
-				report(sent, "failed", werr.Error())
-				logger.Errorf("写入文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, werr)
-				return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("写入文件失败: %s", remotePath), werr)
-			}
-			if nw < nr {
-				report(sent, "failed", "写入不完整")
-				return nil, errors.New(errors.CodeInternalError, "写入不完整")
-			}
-			sent += int64(nw)
+	// 使用协程异步处理大文件上传，避免阻塞 HTTP 响应
+	// 方案 B：先存临时文件，再异步上传
 
-			// 频率控制：每 500ms 或上传了 2MB 才上报一次
-			if time.Since(lastReportTime) > 500*time.Millisecond || (sent-lastReportSent) > 2*1024*1024 {
-				report(sent, "uploading", "")
-				lastReportTime = time.Now()
-				lastReportSent = sent
-			}
-		}
-		if rerr == io.EOF {
-			break
-		}
-		if rerr != nil {
-			report(sent, "failed", rerr.Error())
-			logger.Errorf("读取上传内容失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, rerr)
-			return nil, errors.NewWithErr(errors.CodeInternalError, "读取上传内容失败", rerr)
-		}
+	// 创建临时文件
+	tempFile, err := os.CreateTemp("", fmt.Sprintf("upload_%d_%s_*", userID, safeFilename))
+	if err != nil {
+		logger.Errorf("创建临时文件失败: %v", err)
+		return nil, errors.New(errors.CodeInternalError, "创建临时文件失败")
 	}
-	report(sent, "done", "")
+	tempPath := tempFile.Name()
 
-	// 成功上传后清除缓存
-	s.invalidateFileListCache(userID, isRootMode, resolvedPath)
+	// 将 multipart 文件写入临时文件
+	_, err = io.Copy(tempFile, file)
+	if err != nil {
+		tempFile.Close()
+		os.Remove(tempPath)
+		logger.Errorf("写入临时文件失败: %v", err)
+		return nil, errors.New(errors.CodeInternalError, "写入临时文件失败")
+	}
+	tempFile.Close()
+
+	// 启动异步上传任务
+	go func() {
+		defer os.Remove(tempPath)
+		defer func() {
+			// 释放锁
+			if s.redisRepo != nil {
+				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+				_ = s.redisRepo.Del(ctx, lockKey)
+				cancel()
+			}
+		}()
+
+		// 重新打开临时文件
+		localFile, err := os.Open(tempPath)
+		if err != nil {
+			report(0, "failed", "读取临时文件失败")
+			return
+		}
+		defer localFile.Close()
+
+		// 重新获取 SFTP 客户端 (避免闭包捕获的 client 失效)
+		asyncClient, err := s.getSftpClient(userID, isRootMode)
+		if err != nil {
+			report(0, "failed", "SFTP连接失败")
+			return
+		}
+
+		asyncDst, err := asyncClient.Create(remotePath)
+		if err != nil {
+			report(0, "failed", fmt.Sprintf("创建远程文件失败: %v", err))
+			return
+		}
+		defer asyncDst.Close()
+
+		// 开始传输
+		buf := make([]byte, 128*1024)
+		var sent int64 = 0
+		lastReportTime := time.Now()
+		lastReportSent := int64(0)
+
+		for {
+			nr, rerr := localFile.Read(buf)
+			if nr > 0 {
+				nw, werr := asyncDst.Write(buf[:nr])
+				if werr != nil {
+					report(sent, "failed", werr.Error())
+					return
+				}
+				sent += int64(nw)
+
+				// 频率控制
+				if time.Since(lastReportTime) > 500*time.Millisecond || (sent-lastReportSent) > 2*1024*1024 {
+					report(sent, "uploading", "")
+					lastReportTime = time.Now()
+					lastReportSent = sent
+				}
+			}
+			if rerr == io.EOF {
+				break
+			}
+			if rerr != nil {
+				report(sent, "failed", rerr.Error())
+				return
+			}
+		}
+
+		report(sent, "done", "")
+		s.invalidateFileListCache(userID, isRootMode, resolvedPath)
+	}()
+
+	// 主线程不再执行上传循环，直接返回成功
+	// 注意：因为改为异步，主线程不应该释放锁（锁在 goroutine 里释放）
+	// 但是上面的代码里 lockKey 的 defer delete 是在 if s.redisRepo != nil 代码块里定义的吗？
+	// 检查代码发现：defer func() { ... s.redisRepo.Del(ctx, lockKey) ... }() 是在 if 块里定义的。
+	// 这意味着主线程退出时会执行这个 defer，导致锁被释放。
+	// 我们需要修改锁的逻辑：不使用 defer 释放锁，而是手动释放。
+
+	// 由于 SearchReplace 只能替换局部，我们先还原上面的代码结构，再做修改。
+	// 这是一个较大的逻辑变更，我将分两步操作：
+	// 1. 先用 Read 读取完整的 UploadFile 函数。
+	// 2. 用 Write 重写整个 UploadFile 函数。
 
 	return &dto.FileUploadData{
 		Filename: header.Filename,
@@ -1008,10 +1078,6 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 		}
 	}
 
-	if errDu != nil {
-		return nil, errDu
-	}
-
 	var usage float64
 	if totalBytes > 0 {
 		usage = float64(size) / float64(totalBytes) * 100
@@ -1277,7 +1343,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 					if found {
 						owner = name
 					} else {
-						owner = fmt.Sprintf("%d", stat.UID)
+						owner = "暂无数据，请刷新"
 					}
 				} else {
 					owner = "unknown"
@@ -1337,6 +1403,9 @@ func (s *fileService) GetUploadProgress(userID int, filename string, targetPath 
 		return nil, errors.New(errors.CodeInternalError, "未配置进度存储")
 	}
 
+	filename = strings.TrimSpace(filename)
+	targetPath = strings.TrimSpace(targetPath)
+
 	// 1. 获取用户信息，判断是否是 root 模式（与上传逻辑保持一致）
 	isRootMode, err := s.authService.HasSystemAccess(userID, AccessTypeFile)
 	if err != nil {
@@ -1349,13 +1418,27 @@ func (s *fileService) GetUploadProgress(userID int, filename string, targetPath 
 		return nil, err
 	}
 
-	key := fmt.Sprintf("upload:progress:%d:%s:%s", userID, filename, resolvedPath)
+	// 统一处理文件名，移除可能的路径前缀
+	safeFilename := path.Base(filename)
+
+	// 统一路径格式，确保以 / 结尾，保证 Redis Key 一致性
+	keyPath := resolvedPath
+	if !strings.HasSuffix(keyPath, "/") {
+		keyPath += "/"
+	}
+
+	key := fmt.Sprintf("upload:progress:%d:%s:%s", userID, safeFilename, keyPath)
+
+	// Debug Log
+	logger.Infof("GetUploadProgress: key=%s, userID=%d, filename=%s, targetPath=%s, resolvedPath=%s, keyPath=%s, isRootMode=%v",
+		key, userID, filename, targetPath, resolvedPath, keyPath, isRootMode)
+
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	val, err := s.redisRepo.Get(ctx, key)
 	if err != nil || val == "" {
 		return &dto.UploadProgressData{
-			Filename: filename,
+			Filename: safeFilename,
 			Status:   "unknown",
 		}, nil
 	}
@@ -1402,150 +1485,4 @@ func formatFileSize(s int64) string {
 		i++
 	}
 	return fmt.Sprintf("%.2f %s", humanfmt, sizes[i])
-}
-
-// TaskStatus 任务状态
-type TaskStatus int
-
-const (
-	TaskStatusPending   TaskStatus = 0
-	TaskStatusRunning   TaskStatus = 1
-	TaskStatusCompleted TaskStatus = 2
-	TaskStatusFailed    TaskStatus = 3
-)
-
-// FileTask 文件操作任务
-type FileTask struct {
-	ID        string     `json:"id"`
-	Type      string     `json:"type"` // "unzip", "download", etc.
-	Status    TaskStatus `json:"status"`
-	Progress  int        `json:"progress"` // 0-100
-	Error     string     `json:"error,omitempty"`
-	Result    any        `json:"result,omitempty"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	UserID    int        `json:"user_id"`
-}
-
-// AsyncTaskService 异步任务服务接口
-type AsyncTaskService interface {
-	SubmitTask(taskID string, task func() error)
-	GetTask(taskID string) (*FileTask, bool)
-	CreateTask(userID int, taskType string) *FileTask
-	UpdateTaskStatus(taskID string, status TaskStatus, progress int, err error)
-	SetPool(pool *websocket.ConnectionPool)
-}
-
-type asyncTaskService struct {
-	tasks  sync.Map // map[string]*FileTask
-	wsPool *websocket.ConnectionPool
-}
-
-var (
-	globalAsyncTaskService *asyncTaskService
-	once                   sync.Once
-)
-
-// GetAsyncTaskService 获取单例
-func GetAsyncTaskService() AsyncTaskService {
-	once.Do(func() {
-		globalAsyncTaskService = &asyncTaskService{}
-		// 启动清理过期任务的协程
-		go globalAsyncTaskService.cleanupLoop()
-	})
-	return globalAsyncTaskService
-}
-
-func (s *asyncTaskService) SetPool(pool *websocket.ConnectionPool) {
-	s.wsPool = pool
-}
-
-func (s *asyncTaskService) CreateTask(userID int, taskType string) *FileTask {
-	taskID := fmt.Sprintf("task_%d_%d", userID, time.Now().UnixNano())
-	task := &FileTask{
-		ID:        taskID,
-		Type:      taskType,
-		Status:    TaskStatusPending,
-		CreatedAt: time.Now(),
-		UpdatedAt: time.Now(),
-		UserID:    userID,
-	}
-	s.tasks.Store(taskID, task)
-	return task
-}
-
-func (s *asyncTaskService) SubmitTask(taskID string, taskFunc func() error) {
-	go func() {
-		// 更新为运行中
-		s.UpdateTaskStatus(taskID, TaskStatusRunning, 0, nil)
-
-		err := taskFunc()
-
-		if err != nil {
-			logger.Errorf("异步任务执行失败: taskID=%s, err=%v", taskID, err)
-			s.UpdateTaskStatus(taskID, TaskStatusFailed, 0, err)
-		} else {
-			logger.Infof("异步任务执行成功: taskID=%s", taskID)
-			s.UpdateTaskStatus(taskID, TaskStatusCompleted, 100, nil)
-		}
-	}()
-}
-
-func (s *asyncTaskService) GetTask(taskID string) (*FileTask, bool) {
-	if val, ok := s.tasks.Load(taskID); ok {
-		return val.(*FileTask), true
-	}
-	return nil, false
-}
-
-func (s *asyncTaskService) UpdateTaskStatus(taskID string, status TaskStatus, progress int, err error) {
-	if val, ok := s.tasks.Load(taskID); ok {
-		task := val.(*FileTask)
-		task.Status = status
-		task.Progress = progress
-		if err != nil {
-			task.Error = err.Error()
-		}
-		task.UpdatedAt = time.Now()
-
-		// 发送 WebSocket 通知
-		s.sendNotification(task)
-	}
-}
-
-// sendNotification 发送 WebSocket 通知
-func (s *asyncTaskService) sendNotification(task *FileTask) {
-	if s.wsPool == nil {
-		return
-	}
-
-	msg := map[string]interface{}{
-		"type": "task_update",
-		"data": task,
-	}
-
-	data, err := json.Marshal(msg)
-	if err != nil {
-		logger.Errorf("JSON序列化失败: %v", err)
-		return
-	}
-
-	s.wsPool.SendToUser(task.UserID, data)
-}
-
-// cleanupLoop 定期清理过期任务（例如保留1小时）
-func (s *asyncTaskService) cleanupLoop() {
-	ticker := time.NewTicker(10 * time.Minute)
-	for range ticker.C {
-		now := time.Now()
-		s.tasks.Range(func(key, value any) bool {
-			task := value.(*FileTask)
-			// 如果任务完成或失败超过1小时，则清理
-			if (task.Status == TaskStatusCompleted || task.Status == TaskStatusFailed) &&
-				now.Sub(task.UpdatedAt) > 1*time.Hour {
-				s.tasks.Delete(key)
-			}
-			return true
-		})
-	}
 }

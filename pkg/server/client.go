@@ -285,27 +285,15 @@ func (c *Client) NewTerminalSession(stdin io.Reader, stdout, stderr io.Writer, c
 	session.Stdout = stdout
 	session.Stderr = stderr
 
-	// 优先使用登录交互式 shell，确保 PATH 等环境变量正确加载
-	started := false
-	if err := session.Start("bash -l"); err == nil {
-		started = true
-	} else if err := session.Start("sh -l"); err == nil {
-		started = true
-	}
-	if !started {
-		if err := session.Shell(); err != nil {
-			err := session.Close()
-			if err != nil {
-				return nil, fmt.Errorf("session关闭失败: %w", err)
-			}
-			return nil, fmt.Errorf("启动shell失败: %w", err)
+	// 直接启动 shell，不要在 NewTerminalSession 里做 io.Copy(termIn, stdin)
+	// 因为我们需要更精细地控制写入过程，或者让外部直接持有 Stdin
+	if err := session.Shell(); err != nil {
+		err := session.Close()
+		if err != nil {
+			return nil, fmt.Errorf("session关闭失败: %w", err)
 		}
+		return nil, fmt.Errorf("启动shell失败: %w", err)
 	}
-
-	go func() {
-		_, _ = io.Copy(termIn, stdin)
-		_ = termIn.Close()
-	}()
 
 	return &TerminalSession{
 		Session: session,

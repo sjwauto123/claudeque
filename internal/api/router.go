@@ -16,6 +16,8 @@ import (
 	"cloudque/internal/middleware"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
+	"cloudque/pkg/websocket"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -52,6 +54,7 @@ func NewRouter(
 	gpuService service.GpuService,
 	fileService service.FileService,
 	terminalService service.TerminalService,
+	wsPool *websocket.ConnectionPool,
 ) *Router {
 	return &Router{
 		roleCtrl:         role.NewRoleController(roleService, authService, userOperationLogService),
@@ -61,7 +64,7 @@ func NewRouter(
 		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
 		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
 		filesCtrl:        files.NewController(fileService, authService, userOperationLogService),
-		terminalCtrl:     terminal.NewController(terminalService, authService, userOperationLogService),
+		terminalCtrl:     terminal.NewController(terminalService, authService, userOperationLogService, wsPool),
 		jobCtrl:          job.NewController(jobService, authService, gpuService, userOperationLogService),
 		queueCtrl:        queue.NewController(queueService, userOperationLogService, repository, authService),
 		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),

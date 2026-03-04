@@ -19,18 +19,23 @@ const (
 // SessionMetadata 会话元数据
 type SessionMetadata struct {
 	UserID      int
-	SessionType string // "terminal" or "files" or "ws"
+	SessionType string // "terminal" or "systeminfo"
 	Role        string // "admin" or "user"
 	CreatedAt   int64
 }
 
+// MessageHandler 处理接收到的消息
+type MessageHandler func(client *Client, messageType int, data []byte) error
+
 // Client 包装了 WebSocket 连接和发送缓冲区
 type Client struct {
-	Pool     *ConnectionPool
-	Conn     *websocket.Conn
-	Send     chan []byte
-	Metadata *SessionMetadata
-	once     sync.Once
+	Pool           *ConnectionPool // 连接池引用,该客户端所属的连接池
+	Conn           *websocket.Conn // WebSocket 连接
+	Send           chan []byte     // 发送缓冲区
+	Metadata       *SessionMetadata
+	MessageHandler MessageHandler // 消息处理回调
+	Done           chan struct{}  // 用于通知连接已关闭
+	once           sync.Once      // 确保关闭连接只执行一次
 }
 
 // ConnectionPool WebSocket连接池（优化版：读写分离、心跳检测）
@@ -51,12 +56,15 @@ func NewConnectionPool() *ConnectionPool {
 }
 
 // Add 创建并添加一个新客户端
-func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *SessionMetadata) *Client {
+func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *SessionMetadata, handler MessageHandler) *Client {
+
 	client := &Client{
-		Pool:     p,
-		Conn:     conn,
-		Send:     make(chan []byte, 256),
-		Metadata: metadata,
+		Pool:           p,
+		Conn:           conn,
+		Send:           make(chan []byte, 1024),
+		Metadata:       metadata,
+		MessageHandler: handler,
+		Done:           make(chan struct{}),
 	}
 
 	p.mu.Lock()
@@ -86,6 +94,7 @@ func (c *Client) Close() {
 		defer c.Pool.mu.Unlock()
 
 		userID := c.Metadata.UserID
+		//关闭该userID的一个客户端连接
 		if clients, ok := c.Pool.userClients[userID]; ok {
 			delete(clients, c)
 			if len(clients) == 0 {
@@ -96,6 +105,7 @@ func (c *Client) Close() {
 		// 如果是管理员，从管理员客户端map中移除
 		delete(c.Pool.adminClients, c)
 
+		close(c.Done)
 		close(c.Send)
 		_ = c.Conn.Close()
 	})
@@ -107,7 +117,7 @@ func (c *Client) ReadPump() {
 		c.Close()
 	}()
 
-	c.Conn.SetReadLimit(512) // 设置最大读取消息大小，防止恶意大包
+	c.Conn.SetReadLimit(1024) // 设置最大读取消息大小，防止恶意大包
 	if err := c.Conn.SetReadDeadline(time.Now().Add(PongWait)); err != nil {
 		return
 	}
@@ -116,14 +126,23 @@ func (c *Client) ReadPump() {
 	})
 
 	for {
-		_, _, err := c.Conn.ReadMessage()
+		messageType, data, err := c.Conn.ReadMessage()
 		if err != nil {
 			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
 				// log error if needed
 			}
 			break
 		}
-		// 丢弃读取到的消息，因为目前只需要单向推送
+
+		// 刷新读取超时
+		_ = c.Conn.SetReadDeadline(time.Now().Add(PongWait))
+
+		// 如果定义了消息处理回调，则调用它
+		if c.MessageHandler != nil {
+			if err := c.MessageHandler(c, messageType, data); err != nil {
+				break
+			}
+		}
 	}
 }
 
@@ -159,10 +178,6 @@ func (c *Client) WritePump() {
 			// 将队列中剩余的消息合并发送
 			n := len(c.Send)
 			for i := 0; i < n; i++ {
-				_, err2 := w.Write([]byte("\n"))
-				if err2 != nil {
-					return
-				}
 				_, err3 := w.Write(<-c.Send)
 				if err3 != nil {
 					return
@@ -201,13 +216,33 @@ func (p *ConnectionPool) SendToUser(userID int, data []byte) {
 	}
 }
 
-// Broadcast 广播消息给所有用户
-func (p *ConnectionPool) Broadcast(data []byte) {
+// SendToUserByType 发送消息给指定用户且指定会话类型的客户端
+func (p *ConnectionPool) SendToUserByType(userID int, sessionType string, data []byte) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
-	for _, clients := range p.userClients {
+	if clients, ok := p.userClients[userID]; ok {
 		for client := range clients {
+			// 过滤 SessionType
+			if client.Metadata != nil && client.Metadata.SessionType == sessionType {
+				select {
+				case client.Send <- data:
+				default:
+					// 如果发送缓冲区满了，主动关闭这个慢连接
+					go client.Close()
+				}
+			}
+		}
+	}
+}
+
+// BroadcastToAdminsByType 广播消息给指定类型的管理员用户
+func (p *ConnectionPool) BroadcastToAdminsByType(sessionType string, data []byte) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	for client := range p.adminClients {
+		if client.Metadata != nil && client.Metadata.SessionType == sessionType {
 			select {
 			case client.Send <- data:
 			default:
@@ -215,32 +250,6 @@ func (p *ConnectionPool) Broadcast(data []byte) {
 			}
 		}
 	}
-}
-
-// BroadcastToAdmins 广播消息给管理员用户
-func (p *ConnectionPool) BroadcastToAdmins(data []byte) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	for client := range p.adminClients {
-		select {
-		case client.Send <- data:
-		default:
-			go client.Close()
-		}
-	}
-}
-
-// GetConnectionCount 获取总连接数
-func (p *ConnectionPool) GetConnectionCount() int {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	count := 0
-	for _, clients := range p.userClients {
-		count += len(clients)
-	}
-	return count
 }
 
 // GetAdminConnectionCount 获取管理员连接数

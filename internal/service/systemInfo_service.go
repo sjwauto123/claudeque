@@ -55,24 +55,10 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 	}
 
 	// 使用连接池添加新客户端
-	client := s.Pool.Add(userID, conn, metadata)
+	s.Pool.Add(userID, conn, metadata, nil)
 
 	// 资源收集器会定期收集并分发给所有管理员客户端
 	logger.Infof("新的管理员websocket连接已建立，进行接收系统消息，用户ID: %d", userID)
-
-	// 启动一个goroutine来处理连接关闭
-	go func() {
-		// 读取消息，当连接关闭时会退出循环
-		for {
-			_, _, err := conn.ReadMessage()
-			if err != nil {
-				// 连接关闭，清理资源
-				client.Close()
-				logger.Infof("管理员websocket连接已关闭，用户ID: %d", userID)
-				break
-			}
-		}
-	}()
 }
 
 // NewResourceCollector 创建资源收集器
@@ -112,7 +98,7 @@ func (rc *ResourceCollector) Start() {
 							continue
 						}
 						// 分发给所有管理员客户端
-						rc.Pool.BroadcastToAdmins(data)
+						rc.Pool.BroadcastToAdminsByType("systeminfo", data)
 					}
 				}
 			}

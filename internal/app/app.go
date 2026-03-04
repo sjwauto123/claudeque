@@ -223,9 +223,6 @@ func (a *App) initDependencies() {
 	// 创建 WebSocket 连接池
 	a.wsPool = websocket.NewConnectionPool()
 
-	// 初始化异步任务服务，并注入 WebSocket 连接池
-	service.GetAsyncTaskService().SetPool(a.wsPool)
-
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
@@ -244,7 +241,7 @@ func (a *App) initDependencies() {
 		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
 	}
 	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo)
-	terminalSvc := service.NewTerminalService(sessionManager, authSvc)
+	terminalSvc := service.NewTerminalService(sessionManager, authSvc, a.wsPool)
 
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
@@ -265,6 +262,7 @@ func (a *App) initDependencies() {
 		gpuSvc,
 		fileSvc,
 		terminalSvc,
+		a.wsPool,
 	)
 }
 
@@ -291,11 +289,11 @@ func (a *App) initServer() {
 
 	// 创建 HTTP 服务器
 	a.server = &http.Server{
-		Addr:    fmt.Sprintf(":%d", a.cfg.App.Port),
-		Handler: engine,
-		// ReadTimeout:    60 * time.Second, // 移除超时限制，避免大文件上传中断
-		// WriteTimeout:   60 * time.Second, // 移除超时限制，避免大文件下载中断
-		MaxHeaderBytes: 1 << 20, // 1 MB
+		Addr:              fmt.Sprintf(":%d", a.cfg.App.Port),
+		Handler:           engine,
+		ReadHeaderTimeout: 60 * time.Second,  // 增加读取头超时，防范慢连接攻击
+		IdleTimeout:       120 * time.Second, // 增加空闲连接超时，释放资源
+		MaxHeaderBytes:    1 << 20,           // 1 MB
 	}
 }
 

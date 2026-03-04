@@ -1,18 +1,17 @@
 package terminal
 
 import (
+	"cloudque/internal/middleware"
+	"cloudque/internal/model/entity"
+	"cloudque/internal/service"
 	"cloudque/pkg/logger"
-	"encoding/json"
+	"cloudque/pkg/response"
+	"cloudque/pkg/websocket"
 	"net/http"
-	"sync"
 	"time"
 
-	"cloudque/internal/middleware"
-	"cloudque/internal/service"
-	"cloudque/pkg/response"
-
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
+	gwebsocket "github.com/gorilla/websocket"
 	"go.uber.org/zap"
 )
 
@@ -21,25 +20,27 @@ type Controller struct {
 	terminalService service.TerminalService
 	authService     service.AuthService
 	userLogService  service.UserOperationLogService
+	wsPool          *websocket.ConnectionPool
 }
 
 // NewController 创建终端控制器
-func NewController(terminalService service.TerminalService, authService service.AuthService, userLogService service.UserOperationLogService) *Controller {
+func NewController(terminalService service.TerminalService, authService service.AuthService, userLogService service.UserOperationLogService, wsPool *websocket.ConnectionPool) *Controller {
 	return &Controller{
 		terminalService: terminalService,
 		authService:     authService,
 		userLogService:  userLogService,
+		wsPool:          wsPool,
 	}
 }
 
-var wsUpgrader = websocket.Upgrader{
+var wsUpgrader = gwebsocket.Upgrader{
 	ReadBufferSize:  1024,
 	WriteBufferSize: 1024,
 	CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
-// WebSocketTerminal WebSocket 终端透传：将浏览器与 SSH 终端双向透传
-// 认证：Query 参数 token=JWT 或 Header Authorization: Bearer <token>
+// WebSocketTerminal 处理浏览器与 SSH 终端之间的双向通信。
+// 它将 HTTP 连接升级为 WebSocket 并将其传递给终端服务。
 func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
@@ -47,158 +48,47 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		return
 	}
 
-	// 判断身份：根据用户权限决定是 root 终端还是普通用户终端
-	// 如果用户拥有系统级权限，则使用 root 终端，否则使用普通用户终端
+	// 确定用户是否需要 root 终端。
 	isRoot, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeTerminal)
 	if err != nil {
 		response.BizError(c, err)
 		return
 	}
 
-	// 确保对应身份的 SSH 会话存在
-	// 注意：如果 Redis 中没有凭证（例如用户很久没登录），这里会失败，提示用户重新登录
-	if err := ctrl.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
-		logger.Error("无法建立SSH会话", zap.Error(err))
-		response.BizError(c, err)
-		return
-	}
-
+	// 将 HTTP 连接升级为 WebSocket 连接。
 	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
+		// 升级将写入响应，因此我们只需记录并返回。
+		logger.Error("无法升级到WebSocket", zap.Error(err))
 		return
 	}
-	defer func(conn *websocket.Conn) {
-		err := conn.Close()
-		if err != nil {
-			logger.Error("无法关闭web连接")
-		}
-	}(conn)
 
-	// 设置心跳和超时
-	const pongWait = 60 * time.Second
-	err = conn.SetReadDeadline(time.Now().Add(pongWait))
-	if err != nil {
-		return
-	}
-	conn.SetPongHandler(func(string) error {
-		err := conn.SetReadDeadline(time.Now().Add(pongWait))
-		if err != nil {
-			return err
-		}
-		return nil
-	})
-
-	// 获取或创建持久化终端会话
-	// 默认大小 80x24，后续可通过 resize 消息调整
-	pt, err := ctrl.terminalService.GetOrCreateTerminal(userID, isRoot, 80, 24)
-	if err != nil {
-		response.BizError(c, err)
-		return
-	}
-	// 注意：不要在 defer 中关闭 Session，因为它是持久化的
-
-	type inboundMsg struct {
-		Type string `json:"type"`
-		Data string `json:"data"`
-		Cols int    `json:"cols"`
-		Rows int    `json:"rows"`
+	// 服务层现在处理终端连接的整个生命周期。
+	// 我们传递连接，服务将管理 SSH 会话和 I/O。
+	// 初始大小为默认值，可以通过“resize”消息进行调整。
+	if err := ctrl.terminalService.HandleTerminalConnection(userID, isRoot, 80, 24, conn); err != nil {
+		logger.Error("处理终端连接失败", zap.Error(err))
+		// 连接可能已经关闭或处于错误状态。
+		// 我们不需要在这里写入响应，因为 websocket 握手已完成。
+		_ = conn.Close() // 尝试清理。
 	}
 
-	writeCh := make(chan []byte, 64)
-	var writeWg sync.WaitGroup
-	writeWg.Add(1)
+	// 记录成功的连接建立。
+	username := middleware.GetUsername(c)
+	log := &entity.UserOperationLog{
+		Username:   username,
+		Method:     c.Request.Method,
+		Path:       c.Request.URL.Path,
+		ActionType: "连接Web终端",
+		Status:     1,
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	// 异步保存日志
 	go func() {
-		defer writeWg.Done()
-		for msg := range writeCh {
-			err := conn.WriteMessage(websocket.TextMessage, msg)
-			if err != nil {
-				return // 连接断开，退出
-			}
+		if err := ctrl.userLogService.CreateLog(log); err != nil {
+			logger.Warn("创建用户日志失败", zap.Error(err))
 		}
 	}()
-
-	sendJSON := func(v any) {
-		b, err := json.Marshal(v)
-		if err != nil {
-			return
-		}
-		// 使用带超时的写入，防止阻塞
-		select {
-		case writeCh <- b:
-		case <-time.After(100 * time.Millisecond):
-			// 写入超时，丢弃
-		}
-	}
-
-	// 1. 发送历史记录
-	if len(pt.History) > 0 {
-		sendJSON(map[string]any{
-			"type": "output",
-			"data": string(pt.History),
-		})
-	}
-
-	// 2. 监听新的 SSH 输出
-	// 创建一个退出信号通道
-	done := make(chan struct{})
-
-	go func() {
-		defer close(writeCh) // 退出时关闭写入通道
-		for {
-			select {
-			case data, ok := <-pt.OutputChan:
-				if !ok {
-					return // 通道关闭
-				}
-				sendJSON(map[string]any{
-					"type": "output",
-					"data": string(data),
-				})
-			case <-done:
-				return // WebSocket 断开
-			}
-		}
-	}()
-
-	// 3. 从 WebSocket 读取并写入 SSH stdin
-	for {
-		_, data, err := conn.ReadMessage()
-		if err != nil {
-			break
-		}
-		// 每次收到消息都刷新读取超时
-		err = conn.SetReadDeadline(time.Now().Add(pongWait))
-		if err != nil {
-			break
-		}
-
-		var in inboundMsg
-		if err := json.Unmarshal(data, &in); err != nil {
-			// 兼容：如果前端直接发原始输入（非JSON）
-			if _, err := pt.Stdin.Write(data); err != nil {
-				break
-			}
-			continue
-		}
-
-		switch in.Type {
-		case "resize":
-			if in.Cols > 0 && in.Rows > 0 {
-				_ = ctrl.terminalService.ResizeTerminal(userID, isRoot, in.Cols, in.Rows)
-			}
-		case "input":
-			if _, err := pt.Stdin.Write([]byte(in.Data)); err != nil {
-				goto EndLoop
-			}
-		default:
-			// 默认作为输入
-			if _, err := pt.Stdin.Write([]byte(in.Data)); err != nil {
-				goto EndLoop
-			}
-		}
-	}
-
-EndLoop:
-	close(done)    // 通知输出协程退出
-	writeWg.Wait() // 等待写入协程结束
 }
