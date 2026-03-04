@@ -23,7 +23,7 @@ const (
 	JobStatusCompleted  = 3 // 已完成
 	JobStatusFailed     = 4 // 失败
 	JobStatusCancelled  = 5 // 被终止
-	JobStatusWaitingGpu = 6 // 等待足够显卡
+	JobStatusWaitingGpu = 6 // 等待显卡
 )
 
 // JobPriority 优先级常量

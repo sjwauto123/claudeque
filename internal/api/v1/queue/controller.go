@@ -88,7 +88,7 @@ func (ctrl *Controller) ReorderQueue(c *gin.Context) {
 		response.BadRequest(c, "不允许将任务重排到正在执行中的任务前面")
 		return
 	}
-	// 语义：把 JobID 插到 TargetJobID 前面
+	// 把 JobID 插到 TargetJobID 前面
 	if err := ctrl.queueService.MoveBefore(c.Request.Context(), req.JobID, req.TargetJobID); err != nil {
 		response.InternalError(c, err.Error())
 		return

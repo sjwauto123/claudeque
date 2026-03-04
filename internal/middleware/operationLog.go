@@ -7,76 +7,103 @@ import (
 	"cloudque/pkg/logger"
 	"encoding/json"
 	"io"
-	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 )
 
-// WithOperation 操作类型装饰器
-func WithOperation(actionType string) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		c.Set("operationType", actionType)
-		c.Next()
-	}
+const (
+	LogQueueSize   = 2000
+	MaxBodyLogSize = 4 * 1024 // 仅记录前 4KB
+)
+
+// GlobalLogManager 全局日志管理器实例
+var GlobalLogManager *LogManager
+
+// LogManager 管理日志队列和消费者协程
+type LogManager struct {
+	logChan chan *entity.UserOperationLog
+	wg      sync.WaitGroup
 }
 
-// UserOperationLogs 操作日志中间件
-func UserOperationLogs(userLogService service.UserOperationLogService) gin.HandlerFunc {
+// NewLogManager 创建日志管理器
+func NewLogManager(userLogService service.UserOperationLogService) *LogManager {
+	lm := &LogManager{
+		logChan: make(chan *entity.UserOperationLog, LogQueueSize),
+	}
+
+	lm.wg.Add(1)
+	go func() {
+		defer lm.wg.Done()
+		for logEntry := range lm.logChan {
+			if err := userLogService.CreateLog(logEntry); err != nil {
+				logger.Errorf("用户操作日志保存失败,error:%v,path:%v", err, logEntry.Path)
+			}
+		}
+	}()
+
+	// 设置为全局实例
+	GlobalLogManager = lm
+
+	return lm
+}
+
+// Close 优雅关闭日志系统，等待剩余日志写入
+func (lm *LogManager) Close() {
+	close(lm.logChan)
+	lm.wg.Wait()
+	logger.Info("操作日志系统已关闭")
+}
+
+// UserOperationLogs 返回中间件函数
+func (lm *LogManager) UserOperationLogs() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 1. 捕获请求数据（按优先级获取）
-		// 优先级1: 获取 URL 查询参数（如 /api/users?id=1&name=test）
-		requestData := getDataFormUrl(c)
-
-		// 优先级2: 获取 URL 路径参数（如 /api/users/123 中的 123）
-
-		requestData = getDataFormPath(c, requestData)
-
-		// 优先级3: 获取请求体数据（POST/PUT 等请求）
-
-		requestData = getDataFormBody(c, requestData)
-
-		// 2. 记录请求开始时间
+		// 1. 记录开始时间
 		startTime := time.Now()
 
-		// 3. 包装响应写入器，捕获状态码
-		blw := &bodyLogWriter{body: bytes.NewBufferString(""), ResponseWriter: c.Writer}
+		// 2. 包装响应写入器
+		blw := &bodyLogWriter{
+			ResponseWriter: c.Writer,
+			body:           bytes.NewBuffer(make([]byte, 0, 512)),
+			maxBodySize:    MaxBodyLogSize,
+		}
 		c.Writer = blw
 
-		// 4. 处理请求
+		// 3. 处理请求
 		c.Next()
 
-		// 5. 获取用户信息
+		// 4. 获取用户信息
 		username := GetUsername(c)
 		if username == "" {
 			return
 		}
 
-		// 6. 构建操作日志
-		// 从上下文中获取操作类型（由装饰器设置）
+		// 5. 获取操作类型
 		actionType := ""
-		opType, exists := c.Get("operationType")
-		if !exists {
+		if opType, exists := c.Get("operationType"); exists {
+			if typeStr, ok := opType.(string); ok && typeStr != "" {
+				actionType = typeStr
+			}
+		} else {
 			return
 		}
-		if typeStr, ok := opType.(string); ok {
-			actionType = typeStr
-		}
-		// 获取业务状态码和响应消息（优先从响应体中提取）
-		status, errorMessage := getBusinessStatus(blw.Body())
 
-		// 如果没有提取到业务状态码，使用 HTTP 状态码
+		// 6. 构建请求数据快照 (安全，不破坏 Body)
+		requestData := buildRequestSnapshot(c)
+
+		// 7. 获取状态和错误
+		status, errorMessage := getBusinessStatus(blw.Body())
 		if status == 0 {
 			status = blw.Status()
 		}
-
-		// 如果响应体中没有错误消息，尝试从 c.Errors 中获取
 		if errorMessage == "" && len(c.Errors) > 0 {
 			errorMessage = c.Errors.String()
 		}
 
-		log := &entity.UserOperationLog{
+		// 8. 构建日志对象
+		logEntry := &entity.UserOperationLog{
 			Username:     username,
 			Method:       c.Request.Method,
 			Path:         c.Request.URL.Path,
@@ -85,28 +112,35 @@ func UserOperationLogs(userLogService service.UserOperationLogService) gin.Handl
 			Status:       status,
 			ErrorMessage: errorMessage,
 			CreatedAt:    startTime,
-			UpdatedAt:    time.Now(),
 		}
 
-		// 7. 异步保存日志
-		go func() {
-			if err := userLogService.CreateLog(log); err != nil {
-				// 日志保存失败时，输出到标准错误
-				logger.Info("用户操作日志保存失败")
-			}
-		}()
+		// 9. 发送到队列
+		select {
+		case lm.logChan <- logEntry:
+		default:
+			logger.Infof("操作日志队列已满，丢弃当前日志,path:%v", logEntry.Path)
+		}
 	}
 }
 
 // bodyLogWriter 包装 gin.ResponseWriter 以捕获响应状态码和响应体
 type bodyLogWriter struct {
 	gin.ResponseWriter
-	body       *bytes.Buffer
-	statusCode int
+	body        *bytes.Buffer
+	statusCode  int
+	maxBodySize int
 }
 
 func (w *bodyLogWriter) Write(b []byte) (int, error) {
-	w.body.Write(b)
+	if w.body.Len() < w.maxBodySize {
+		remaining := w.maxBodySize - w.body.Len()
+		if len(b) > remaining {
+			w.body.Write(b[:remaining])
+			w.body.WriteString("[truncated]")
+		} else {
+			w.body.Write(b)
+		}
+	}
 	return w.ResponseWriter.Write(b)
 }
 
@@ -117,7 +151,7 @@ func (w *bodyLogWriter) WriteHeader(code int) {
 
 func (w *bodyLogWriter) Status() int {
 	if w.statusCode == 0 {
-		return 200
+		return w.ResponseWriter.Status()
 	}
 	return w.statusCode
 }
@@ -126,12 +160,87 @@ func (w *bodyLogWriter) Body() []byte {
 	return w.body.Bytes()
 }
 
+// buildRequestSnapshot 安全构建请求参数字符串
+func buildRequestSnapshot(c *gin.Context) string {
+	var parts []string
+
+	// 1. Query Params
+	for k, v := range c.Request.URL.Query() {
+		for _, val := range v {
+			parts = append(parts, k+"="+val)
+		}
+	}
+
+	// 2. Path Params
+	for _, param := range c.Params {
+		parts = append(parts, param.Key+"="+param.Value)
+	}
+
+	// 3. Form / Body Data
+	contentType := c.Request.Header.Get("Content-Type")
+	var bodyContent string
+
+	// 表单或文件上传 (Gin 已解析到 PostForm/MultipartForm)
+	if strings.Contains(contentType, "application/x-www-form-urlencoded") ||
+		strings.Contains(contentType, "multipart/form-data") {
+
+		// 普通表单字段
+		for k, v := range c.Request.PostForm {
+			for _, val := range v {
+				parts = append(parts, k+"="+val)
+			}
+		}
+
+		// 文件字段 (只记录文件名)
+		if c.Request.MultipartForm != nil {
+			fileInfo := make(map[string]string)
+			for fieldName, files := range c.Request.MultipartForm.File {
+				if len(files) > 0 {
+					fileInfo[fieldName] = files[0].Filename
+				}
+			}
+			if len(fileInfo) > 0 {
+				if jsonBytes, err := json.Marshal(fileInfo); err == nil {
+					bodyContent = string(jsonBytes)
+				}
+			}
+		}
+	} else if strings.Contains(contentType, "application/json") {
+		// JSON 请求
+		if raw, exists := c.Get("raw_body"); exists {
+			if str, ok := raw.(string); ok {
+				if len(str) > MaxBodyLogSize {
+					bodyContent = str[:MaxBodyLogSize] + "...[truncated]"
+				} else {
+					bodyContent = str
+				}
+			}
+		}
+	} else if c.Request.ContentLength > 0 {
+		// 其他类型的请求体
+		bodyContent = "[Not logged: Content-Type=" + contentType + "]"
+	}
+
+	// 构建最终的请求数据字符串
+	result := strings.Join(parts, "&")
+
+	// 如果有 body 内容（JSON 或文件信息），直接追加到字符串后面
+	if bodyContent != "" {
+		if result != "" {
+			result += "&body=" + bodyContent
+		} else {
+			result = "body=" + bodyContent
+		}
+	}
+
+	return result
+}
+
 // getBusinessStatus 从响应体中提取业务状态码和响应消息
 func getBusinessStatus(body []byte) (int, string) {
 	if len(body) == 0 {
 		return 0, ""
 	}
-	// 尝试解析响应体为统一响应结构
 	var resp struct {
 		Code    int    `json:"code"`
 		Message string `json:"msg"`
@@ -142,124 +251,45 @@ func getBusinessStatus(body []byte) (int, string) {
 	return resp.Code, resp.Message
 }
 
-// 修改 getDataFormUrl 函数
-func getDataFormUrl(c *gin.Context) string {
-	query := c.Request.URL.Query()
-	if len(query) > 0 {
-		var requestData []string
-		for key, values := range query {
-			for _, value := range values {
-				requestData = append(requestData, key+"="+value)
-			}
-		}
-		return strings.Join(requestData, "&")
+// WithOperation 操作类型装饰器
+func WithOperation(actionType string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set("operationType", actionType)
+		c.Next()
 	}
-	return ""
 }
 
-func getDataFormPath(c *gin.Context, requestData string) string {
+// CaptureRawBody 捕获请求体并存入 Context
+func CaptureRawBody() gin.HandlerFunc {
+	return func(c *gin.Context) {
 
-	if len(c.Params) > 0 {
-		params := make(map[string]string)
-		for _, param := range c.Params {
-			// 对路径参数值进行 URL 解码
-			decodedValue, err := url.QueryUnescape(param.Value)
-			if err != nil {
-				decodedValue = param.Value
-			}
-			params[param.Key] = decodedValue
+		// 仅处理有 Body 的请求类型
+		contentType := c.Request.Header.Get("Content-Type")
+		if !strings.Contains(contentType, "application/json") {
+			c.Next()
+			return
 		}
-		// 如果已有查询参数，追加路径参数
-		if requestData != "" {
-			requestData += "&"
+
+		// 如果 Body 为空，跳过
+		if c.Request.Body == nil || c.Request.ContentLength == 0 {
+			c.Next()
+			return
 		}
-		// 将路径参数转换为查询字符串格式（进行URL编码）
-		for key, value := range params {
-			requestData += key + "=" + value + "&"
+
+		// 读取 Body (建议也加个大小限制，防止超大包攻击)
+		const maxCaptureSize = 64 * 1024 // 64KB
+		bodyBytes, err := io.ReadAll(io.LimitReader(c.Request.Body, maxCaptureSize))
+
+		if err == nil {
+			// 存入 Context
+			c.Set("raw_body", string(bodyBytes))
+
+			// 重置 Body，确保后续 Handler (如 c.ShouldBindJSON) 能正常读取
+			c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
+		} else {
+			// 读取失败，可选：记录一个标记
+			c.Set("raw_body_error", err.Error())
 		}
-		// 去除最后的 &
-		requestData = strings.TrimSuffix(requestData, "&")
+		c.Next()
 	}
-	return requestData
-
-}
-
-func getDataFormBody(c *gin.Context, requestData string) string {
-
-	// 检查是否是文件上传请求
-	contentType := c.Request.Header.Get("Content-Type")
-	isFileUpload := strings.Contains(contentType, "multipart/form-data")
-
-	if isFileUpload {
-		// 处理文件上传，只获取文件名
-		if err := c.Request.ParseMultipartForm(10 << 20); err == nil { // 10MB 限制
-			// 获取普通表单字段（包括目标路径等参数）
-			formData := make(map[string]string)
-			for key, values := range c.Request.PostForm {
-				if len(values) > 0 {
-					formData[key] = values[0]
-				}
-			}
-
-			// 获取文件字段
-			fileInfo := make(map[string]string)
-			for fieldName, files := range c.Request.MultipartForm.File {
-				if len(files) > 0 {
-					// 只记录文件名，不记录文件内容
-					fileInfo[fieldName] = files[0].Filename
-				}
-			}
-
-			// 构建请求数据
-			var dataParts []string
-
-			// 添加普通表单字段
-			for key, value := range formData {
-				dataParts = append(dataParts, key+"="+value)
-			}
-
-			// 添加文件信息
-			if len(fileInfo) > 0 {
-				fileInfoJSON, err := json.Marshal(fileInfo)
-				if err == nil {
-					dataParts = append(dataParts, "files="+string(fileInfoJSON))
-				}
-			}
-
-			// 合并所有数据
-			if len(dataParts) > 0 {
-				formDataStr := strings.Join(dataParts, "&")
-				// 如果已有请求数据，追加表单数据
-				if requestData != "" {
-					requestData += "&" + formDataStr
-				} else {
-					requestData = formDataStr
-				}
-			}
-		}
-	} else {
-		// 非文件上传请求，处理请求体
-		if c.Request.Body != nil && c.Request.ContentLength > 0 {
-			requestBody, err := io.ReadAll(c.Request.Body)
-			if err == nil {
-				// 如果已有请求数据，追加请求体
-				if requestData != "" {
-					requestData += "&body="
-				}
-				requestData += string(requestBody)
-				// 重置请求体，供后续处理使用
-				c.Request.Body = io.NopCloser(bytes.NewBuffer(requestBody))
-			}
-		}
-
-		// 如果请求体为空，尝试从表单获取
-		if requestData == "" {
-			if err := c.Request.ParseForm(); err == nil {
-				if len(c.Request.PostForm) > 0 {
-					requestData = c.Request.PostForm.Encode() // PostForm.Encode() 会自动进行URL编码
-				}
-			}
-		}
-	}
-	return requestData
 }

@@ -13,6 +13,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"cloudque/internal/api"
+	"cloudque/internal/middleware"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
@@ -37,6 +38,8 @@ type App struct {
 	scheduler      service.Scheduler
 	sessionManager *ssh.SessionManager
 	wsPool         *websocket.ConnectionPool
+	infoService    service.SystemInfoService
+	logManager     *middleware.LogManager
 }
 
 // NewApp 创建应用实例
@@ -149,7 +152,7 @@ func (a *App) initDatabase() error {
 	// 初始化 Redis
 	rs, err := database.InitRedis(&a.cfg.Database.Redis)
 	if err != nil {
-		logger.Warn("Redis 初始化失败，将不影响核心功能", zap.Error(err))
+		panic("初始化redis失败")
 	}
 	a.redis = rs
 
@@ -192,7 +195,7 @@ func (a *App) initDependencies() {
 	var sessionManager *ssh.SessionManager
 	var sshConfig *ssh.Config
 	if a.cfg.Server.Enabled {
-		logger.Info("初始化SSH会话管理器",
+		logger.Info("初始化 SSH 会话管理器",
 			zap.String("host", a.cfg.Server.Host),
 			zap.String("base_path", a.cfg.Server.BasePath),
 			zap.Duration("session_timeout", a.cfg.Server.SessionTimeout),
@@ -200,7 +203,7 @@ func (a *App) initDependencies() {
 		sshConfig = &ssh.Config{
 			ServerHost:           a.cfg.Server.Host,
 			RootUsername:         a.cfg.Server.RootUsername,
-			RootPassword:         a.cfg.Server.RootPassword,         // 添加Root密码
+			RootPassword:         a.cfg.Server.RootPassword,         // 添加 Root 密码
 			PrivateKeyPath:       a.cfg.Server.PrivateKeyPath,       // 从配置文件读取私钥路径
 			PrivateKeyPassphrase: a.cfg.Server.PrivateKeyPassphrase, // 从配置文件读取私钥密码
 			Timeout:              a.cfg.Server.Timeout,
@@ -214,7 +217,7 @@ func (a *App) initDependencies() {
 			go sessionManager.StartCleanupTimer()
 		}
 	} else {
-		logger.Info("SSH服务器未启用，文件和终端功能将受限")
+		logger.Info("SSH 服务器未启用，文件和终端功能将受限")
 		sessionManager = nil
 		sshConfig = nil
 		a.sessionManager = nil
@@ -236,6 +239,9 @@ func (a *App) initDependencies() {
 	menuSvc := service.NewMenuService(menuRepo)
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc, sessionRepo, sessionManager, sshConfig)
 
+	// 创建日志管理器
+	a.logManager = middleware.NewLogManager(userLogSvc)
+
 	if a.cfg.Server.Enabled {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
 		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
@@ -245,6 +251,9 @@ func (a *App) initDependencies() {
 
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
+
+	//创建系统信息管理器
+	a.infoService = infoService
 
 	// 创建 Router
 	a.router = api.NewRouter(
@@ -330,6 +339,16 @@ func (a *App) gracefulShutdown() {
 	// 停止任务调度器
 	if a.scheduler != nil {
 		a.scheduler.Stop()
+	}
+
+	// 停止系统信息服务
+	if a.infoService != nil {
+		a.infoService.Stop()
+	}
+
+	// 关闭日志管理器，等待剩余日志写入
+	if a.logManager != nil {
+		a.logManager.Close()
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

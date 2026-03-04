@@ -253,10 +253,16 @@ func (p *ConnectionPool) BroadcastToAdminsByType(sessionType string, data []byte
 }
 
 // GetAdminConnectionCount 获取管理员连接数
-func (p *ConnectionPool) GetAdminConnectionCount() int {
+func (p *ConnectionPool) GetAdminConnectionCount() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
-	return len(p.adminClients)
+
+	for client := range p.adminClients {
+		if client.Metadata.SessionType == "ws" {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseAll 关闭所有连接

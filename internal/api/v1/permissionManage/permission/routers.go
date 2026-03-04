@@ -10,7 +10,8 @@ func (ctrl *APIController) RegisterRoutes(r *gin.RouterGroup) {
 	apiGroup := r.Group("/permissionManage/API")
 	apiGroup.Use(middleware.Auth())
 	apiGroup.Use(middleware.RequirePermission(ctrl.authService))
-	apiGroup.Use(middleware.UserOperationLogs(ctrl.userLogService))
+	apiGroup.Use(middleware.CaptureRawBody())
+	apiGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		apiGroup.GET("/page", middleware.WithOperation("分页获取API列表"), ctrl.PageList)
 		apiGroup.GET("/:id", middleware.WithOperation("获取API信息"), ctrl.GetAPIByID)

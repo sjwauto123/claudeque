@@ -36,11 +36,6 @@ func (s *queueService) Enqueue(ctx context.Context, jobID int, priority int) err
 	}
 
 	// 优先级越高，base 越小，score 越小，排名越靠前
-	// 假设 priority: 1=Low, 2=High
-	// 为了让 High 排在 Low 前面，High 的 base 应该更小
-	// 我们可以用一个大数减去 priority * PriorityGap，或者取反
-	// 这里采用: base = (MaxPriority - priority) * PriorityGap
-	// 假设 MaxPriority = 10 (足够覆盖 1 和 2)
 	const MaxPriority = 10
 	base := (MaxPriority - priority) * PriorityGap
 
@@ -148,7 +143,7 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 			SubmittedAt: row.SubmittedAt,
 			WaitSeconds: waitSec,
 			Sug:         row.Sug,
-			FrontCount:  rank, // 对于正在执行的任务，rank 为 -1
+			FrontCount:  rank, // 对于正在执行的任务，rank 为 0
 		})
 	}
 
@@ -157,7 +152,7 @@ func (s *queueService) GetQueuePage(ctx context.Context, req request.QueueListRe
 
 // MoveBefore 更新排队
 func (s *queueService) MoveBefore(ctx context.Context, jobID int, beforeJobID int) error {
-	//  获取移动前的队首任务
+	// 获取移动前的队首任务
 	oldHeadID, _, err := s.queueRepo.Peek(ctx)
 	if err != nil {
 		return err

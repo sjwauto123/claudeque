@@ -79,6 +79,9 @@ func (s *userService) Register(req *request.RegisterRequest) error {
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
+	if err := utils.ValidatePassword(pwd); err != nil {
+		return err
+	}
 	log.Println(pwd)
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 	if err != nil {
@@ -215,6 +218,9 @@ func (s *userService) ChangePassword(id int, req *request.ChangePasswordRequest)
 
 	// 加密新密码
 	newPwd := utils.DecryptIfCryptoJS(req.NewPassword)
+	if err := utils.ValidatePassword(newPwd); err != nil {
+		return err
+	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err
@@ -326,6 +332,9 @@ func (s *userService) ResetPassword(req *request.ResetPasswordRequest) error {
 	}
 
 	newPwd := utils.DecryptIfCryptoJS(req.NewPassword)
+	if err := utils.ValidatePassword(newPwd); err != nil {
+		return err
+	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPwd), bcrypt.DefaultCost)
 	if err != nil {
 		return err

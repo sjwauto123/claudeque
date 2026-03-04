@@ -6,7 +6,6 @@ import (
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/utils"
-	"strings"
 
 	"go.uber.org/zap"
 	"golang.org/x/crypto/bcrypt"
@@ -30,8 +29,13 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	}
 
 	pwd := utils.DecryptIfCryptoJS(req.Password)
-	if strings.Contains(pwd, " ") {
-		return bizerrors.New(bizerrors.CodeInvalidParam, "密码不能包含空格")
+	confirmPwd := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+	if pwd != confirmPwd {
+		return bizerrors.New(bizerrors.CodeInvalidParam, "两次输入的密码不一致")
+	}
+
+	if err := utils.ValidatePassword(pwd); err != nil {
+		return bizerrors.New(bizerrors.CodeInvalidParam, err.Error())
 	}
 	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 	if err != nil {
@@ -47,9 +51,15 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	if err := s.userRepo.Create(user); err != nil {
 		return err
 	}
-	// 默认赋予普通用户角色
-	if err := s.userRepo.AssignRoleByName(user.ID, "user"); err != nil {
-		return err
+	// 根据传入的角色标识赋予角色；未传则默认赋予普通用户
+	if req.Roles != nil && len(*req.Roles) > 0 {
+		if err := s.userRepo.ReplaceRolesByNames(user.ID, *req.Roles); err != nil {
+			return err
+		}
+	} else {
+		if err := s.userRepo.AssignRoleByName(user.ID, "user"); err != nil {
+			return err
+		}
 	}
 
 	// 在VM中创建用户
@@ -72,6 +82,16 @@ func (s *userService) DeleteUser(id int) error {
 	if user == nil {
 		return bizerrors.ErrUserNotFound
 	}
+
+	// 同步删除虚拟机用户
+	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
+		if err := s.deleteVMUser(user.Username); err != nil {
+			logger.Error("VM用户删除失败", zap.String("username", user.Username), zap.Error(err))
+			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "删除虚拟机用户失败", err)
+		}
+		logger.Info("VM用户删除成功", zap.String("username", user.Username))
+	}
+
 	if err := s.userRepo.ClearRoles(id); err != nil {
 		return err
 	}
@@ -104,8 +124,13 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 
 	if req.Password != "" {
 		pwd := utils.DecryptIfCryptoJS(req.Password)
-		if strings.Contains(pwd, " ") {
-			return bizerrors.New(bizerrors.CodeInvalidParam, "密码不能包含空格")
+		confirmPwd := utils.DecryptIfCryptoJS(req.ConfirmPassword)
+		if pwd != confirmPwd {
+			return bizerrors.New(bizerrors.CodeInvalidParam, "两次输入的密码不一致")
+		}
+
+		if err := utils.ValidatePassword(pwd); err != nil {
+			return bizerrors.New(bizerrors.CodeInvalidParam, err.Error())
 		}
 		hashedPassword, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
 		if err != nil {

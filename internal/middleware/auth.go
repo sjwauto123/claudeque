@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -128,8 +129,40 @@ func GetUserID(c *gin.Context) int {
 
 // GetUsername 从上下文获取用户名
 func GetUsername(c *gin.Context) string {
+	// 1. 优先从上下文获取（已认证的情况）
 	if username, exists := c.Get(ContextUsername); exists {
 		return username.(string)
 	}
+
+	// 2. 如果没有认证，尝试从请求体中获取用户名（用于登录/注册接口）
+	username := extractUsernameFromBody(c)
+	if username != "" {
+		return username
+	}
+
+	return ""
+}
+
+// extractUsernameFromBody 从请求体中提取用户名（用于未认证接口）
+func extractUsernameFromBody(c *gin.Context) string {
+	// 仅处理 POST 请求
+	if c.Request.Method != "POST" {
+		return ""
+	}
+
+	// 从上下文中获取已捕获的 raw_body
+	if raw, exists := c.Get("raw_body"); exists {
+		if str, ok := raw.(string); ok && str != "" {
+			// 尝试解析 JSON 获取 username 或 email
+			var data map[string]interface{}
+			if err := json.Unmarshal([]byte(str), &data); err == nil {
+				// 获取 username 字段
+				if username, ok := data["username"].(string); ok && username != "" {
+					return username
+				}
+			}
+		}
+	}
+
 	return ""
 }

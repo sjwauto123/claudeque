@@ -10,7 +10,8 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	adminGroup := r.Group("/admin")
 	adminGroup.Use(middleware.Auth())
 	adminGroup.Use(middleware.RequirePermission(ctrl.authService))
-	adminGroup.Use(middleware.UserOperationLogs(ctrl.userOperationLogSer))
+	adminGroup.Use(middleware.CaptureRawBody())
+	adminGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		adminGroup.POST("/users", middleware.WithOperation("创建用户"), ctrl.CreateUser)
 		adminGroup.DELETE("/users/:id", middleware.WithOperation("删除用户"), ctrl.DeleteUser)

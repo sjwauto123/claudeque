@@ -10,7 +10,8 @@ func (ctrl *Controller) QueueRoutes(router *gin.RouterGroup) {
 	r := router.Group("/queue")
 	r.Use(middleware.Auth())
 	r.Use(middleware.RequirePermission(ctrl.authService))
-	r.Use(middleware.UserOperationLogs(ctrl.userOperationLogService))
+	r.Use(middleware.CaptureRawBody())
+	r.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		r.GET("", middleware.WithOperation("获取排队队列"), ctrl.GetQueue)
 		r.POST("", middleware.WithOperation("重新排序队列"), ctrl.ReorderQueue)
