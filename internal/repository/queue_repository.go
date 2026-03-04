@@ -33,7 +33,6 @@ func (r *queueRepository) Remove(ctx context.Context, jobID int) error {
 }
 
 func (r *queueRepository) Peek(ctx context.Context) (int, float64, error) {
-
 	items, err := r.redis.ZRangeWithScores(ctx, QueueKey, 0, 0).Result()
 	if err != nil {
 		return 0, 0, err

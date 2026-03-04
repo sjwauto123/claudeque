@@ -33,7 +33,7 @@ type scheduler struct {
 	isRunning bool
 	mu        sync.RWMutex
 
-	// 跟踪正在运行的任务进程 (键为 PID)
+	// 跟踪正在运行的任务进程
 	runningJobs map[int]*JobProcess
 	runningMu   sync.RWMutex
 }
@@ -85,7 +85,7 @@ func (s *scheduler) Start() {
 
 	s.isRunning = true
 
-	// 恢复之前运行的任务
+	// 同步恢复之前运行的任务
 	s.recoverRunningJobs()
 
 	s.wg.Add(1)
@@ -296,7 +296,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		gpuIndices[i] = strconv.Itoa(card.Index)
 	}
 	cmd.Env = append(os.Environ(),
-		//	"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
+		//"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
 		"JOB_ID="+strconv.Itoa(job.ID),
 		"PYTHONUNBUFFERED=1",
 	)
@@ -392,10 +392,7 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 
 		// 释放显卡
 		if err := s.gpuSvc.ReleaseCards(cleanupCtx, cardIDs); err != nil {
-			logger.Error("释放显卡失败",
-				zap.Error(err),
-				zap.Int("job_id", jobID),
-				zap.Ints("card_ids", cardIDs))
+			logger.Error("释放显卡失败", zap.Error(err), zap.Int("job_id", jobID), zap.Ints("card_ids", cardIDs))
 		}
 	}()
 
@@ -403,8 +400,6 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 	process, err := os.FindProcess(jp.pid)
 	if err != nil {
 		logger.Error("监控任务时查找进程失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
-		// 进程可能已经不存在，直接按失败处理
-		// 更新任务状态为失败
 		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
 			logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", jobID))
 		}
@@ -476,7 +471,7 @@ func (s *scheduler) recoverRunningJobs() {
 	for _, job := range runningJobsInDB {
 		logger.Info("发现数据库中运行中的任务", zap.Int("job_id", job.ID), zap.String("job_name", job.Name))
 
-		// 2. 查询该任务对应的活跃进程记录
+		// 查询该任务对应的活跃进程记录
 		processes, err := s.processRepo.FindActiveByJobID(job.ID)
 		if err != nil {
 			logger.Error("恢复任务时，查询任务活跃进程失败", zap.Error(err), zap.Int("job_id", job.ID))
@@ -493,7 +488,7 @@ func (s *scheduler) recoverRunningJobs() {
 		for _, processRecord := range processes {
 			pid := processRecord.PID
 
-			// 3. 检查进程是否存在
+			// 检查进程是否存在
 			if isProcessRunning(pid) {
 				logger.Info("进程仍在运行，重新接管任务", zap.Int("job_id", job.ID), zap.Int("pid", pid))
 

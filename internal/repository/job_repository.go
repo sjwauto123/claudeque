@@ -80,19 +80,8 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 	offset := (req.Page - 1) * req.PageSize
 
 	err := baseDB.
-		Select(`
-			j.id,
-			j.name,
-			j.description,
-			j.status,
-			j.created_at,
-			j.gpu_ids AS card,
-			0 AS count
-		`).
-		Order("j.created_at DESC").
-		Limit(req.PageSize).
-		Offset(offset).
-		Scan(&list).Error
+		Select(`j.id,j.name,j.description,j.status,j.created_at,j.gpu_ids AS card,0 AS count`).
+		Order("j.created_at DESC").Limit(req.PageSize).Offset(offset).Scan(&list).Error
 
 	if err != nil {
 		return []response.JobResponse{}, 0, req.Page, req.PageSize, err
@@ -182,17 +171,8 @@ func (r *jobRepository) GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJ
 	var rows []response.QueueJobDBRow
 
 	err := r.db.Table("jobs j").
-		Select(`
-			j.id AS job_id,
-			j.name AS job_name,
-			j.description,
-			j.status,
-			j.created_at AS submitted_at,
-			u.username AS user_name
-		`).
-		Joins("LEFT JOIN admin_users u ON u.id = j.user_id").
-		Where("j.id IN ?", jobIDs).
-		Scan(&rows).Error
+		Select(`j.id AS job_id,j.name AS job_name,j.description,j.status,j.created_at AS submitted_at,u.username AS user_name`).
+		Joins("LEFT JOIN admin_users u ON u.id = j.user_id").Where("j.id IN ?", jobIDs).Scan(&rows).Error
 
 	if err != nil {
 		return nil, err
@@ -259,7 +239,7 @@ func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
 	}
 	result.Queued = int(queued)
 
-	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusFailed, entity.JobStatusCancelled}).Count(&exception).Error; err != nil {
+	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusFailed).Count(&exception).Error; err != nil {
 		return nil, err
 	}
 	result.Exception = int(exception)
@@ -292,15 +272,7 @@ func (r *jobRepository) GetRunningJobs(req request.QueueListRequest, startTime, 
 // buildBaseQueueJobQuery 辅助方法：构建队列任务的基础查询
 func (r *jobRepository) buildBaseQueueJobQuery(req request.QueueListRequest, startTime, endTime time.Time) *gorm.DB {
 	baseDB := r.db.Table("jobs j").
-		Select(`
-			j.id AS job_id,
-			j.name AS job_name,
-			j.description,
-			j.status,
-			j.sug,
-			j.created_at AS submitted_at,
-			u.username AS user_name
-		`).
+		Select(`j.id AS job_id,j.name AS job_name,j.description,j.status,j.sug,j.created_at AS submitted_at,u.username AS user_name`).
 		Joins("LEFT JOIN admin_users u ON u.id = j.user_id")
 
 	if req.Id > 0 {
