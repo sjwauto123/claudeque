@@ -17,9 +17,9 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		//登录
 		authGroup.POST("/login", middleware.WithOperation("用户登录"), ctrl.Login)
 		//发送邮箱验证码
-		authGroup.POST("/email/code", middleware.WithOperation("发送邮箱验证码"), ctrl.SendEmailCode)
+		authGroup.POST("/email/code", ctrl.SendEmailCode)
 		//忘记密码
-		authGroup.POST("/password/reset", middleware.WithOperation("重置密码"), ctrl.ResetPassword)
+		authGroup.POST("/password/reset", ctrl.ResetPassword)
 		//刷新token
 		authGroup.POST("/refresh", ctrl.RefreshToken)
 		//图形验证码
