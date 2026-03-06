@@ -74,8 +74,8 @@ func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *Session
 		p.adminClients[client] = struct{}{}
 	} else if p.userClients[userID] == nil {
 		p.userClients[userID] = make(map[*Client]struct{})
+		p.userClients[userID][client] = struct{}{}
 	}
-	p.userClients[userID][client] = struct{}{}
 
 	p.mu.Unlock()
 
@@ -102,7 +102,7 @@ func (c *Client) Close() {
 					delete(c.Pool.userClients, userID)
 				}
 			}
-		} else {
+		} else if c.Metadata.Role == "admin" {
 			// 如果是管理员，从管理员客户端map中移除
 			delete(c.Pool.adminClients, c)
 		}
