@@ -218,43 +218,6 @@ func (p *ConnectionPool) CloseUserConnectionsByType(userID int, sessionType stri
 	}
 }
 
-// SendToUser 发送消息给指定用户的所有客户端
-func (p *ConnectionPool) SendToUser(userID int, data []byte) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	if clients, ok := p.userClients[userID]; ok {
-		for client := range clients {
-			select {
-			case client.Send <- data:
-			default:
-				// 如果发送缓冲区满了，主动关闭这个慢连接，防止阻塞整个系统
-				go client.Close()
-			}
-		}
-	}
-}
-
-// SendToUserByType 发送消息给指定用户且指定会话类型的客户端
-func (p *ConnectionPool) SendToUserByType(userID int, sessionType string, data []byte) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	if clients, ok := p.userClients[userID]; ok {
-		for client := range clients {
-			// 过滤 SessionType
-			if client.Metadata != nil && client.Metadata.SessionType == sessionType {
-				select {
-				case client.Send <- data:
-				default:
-					// 如果发送缓冲区满了，主动关闭这个慢连接
-					go client.Close()
-				}
-			}
-		}
-	}
-}
-
 // BroadcastToAdminsByType 广播消息给指定类型的管理员用户
 func (p *ConnectionPool) BroadcastToAdminsByType(sessionType string, data []byte) {
 	p.mu.RLock()

@@ -422,7 +422,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 			}
 			if data, err := json.Marshal(cacheData); err == nil {
 				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				_ = s.redisRepo.Set(ctx, listCacheKey, string(data), 60*time.Second)
+				_ = s.redisRepo.Set(ctx, listCacheKey, string(data), 5*time.Second)
 				cancel()
 			}
 		}
