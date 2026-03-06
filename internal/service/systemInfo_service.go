@@ -265,9 +265,11 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 	if len(jobNames) == 0 || len(processes) == 0 || len(jobNames) != len(processes) {
 		return []response.ProcessInfoResponse{}, nil
 	}
-
 	// 获取 Redis 中进程与 GPU 的映射
 	gpuMap := getGPUMap(processes)
+	if len(gpuMap) == 0 {
+		return []response.ProcessInfoResponse{}, nil
+	}
 
 	var processInfos []response.ProcessInfoResponse
 	for i, p := range processes {
