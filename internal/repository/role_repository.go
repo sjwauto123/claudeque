@@ -306,6 +306,7 @@ func (r *roleRepository) CheckUserPermission(userID int, method string, path str
 		Where("admin_users.id = ?", userID).
 		Where("p.http_method = ?", method).
 		Where("p.http_path = ?", path).
+		Where("p.status = ?", 1).
 		Count(&count).Error
 	if err != nil {
 		return false, err
