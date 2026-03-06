@@ -94,26 +94,21 @@ func (c *Client) Close() {
 		c.Pool.mu.Lock()
 		defer c.Pool.mu.Unlock()
 
-		if c.Metadata.Role == "user" {
-			userID := c.Metadata.UserID
-			//关闭该userID的一个客户端连接
-			if clients, ok := c.Pool.userClients[userID]; ok {
-				delete(clients, c)
-				if len(clients) == 0 {
-					delete(c.Pool.userClients, userID)
-				}
+		userID := c.Metadata.UserID
+		//关闭该userID的一个客户端连接
+		if clients, ok := c.Pool.userClients[userID]; ok {
+			delete(clients, c)
+			if len(clients) == 0 {
+				delete(c.Pool.userClients, userID)
 			}
-		} else {
-			// 如果是管理员，从管理员客户端map中移除
-			delete(c.Pool.adminClients, c)
 		}
+
+		// 如果是管理员，从管理员客户端map中移除
+		delete(c.Pool.adminClients, c)
+
 		close(c.Done)
 		close(c.Send)
-		err := c.Conn.Close()
-		if err != nil {
-			logger.Errorf("用户id为%v的客户端关闭失败%v", c.Metadata.UserID, err)
-			return
-		}
+		_ = c.Conn.Close()
 	})
 }
 
@@ -125,7 +120,6 @@ func (c *Client) ReadPump() {
 
 	c.Conn.SetReadLimit(1024) // 设置最大读取消息大小，防止恶意大包
 	if err := c.Conn.SetReadDeadline(time.Now().Add(PongWait)); err != nil {
-		logger.Errorf("设置超时时间出错%v", err)
 		return
 	}
 	c.Conn.SetPongHandler(func(string) error {
@@ -142,15 +136,11 @@ func (c *Client) ReadPump() {
 		}
 
 		// 刷新读取超时
-		err = c.Conn.SetReadDeadline(time.Now().Add(PongWait))
-		if err != nil {
-			logger.Errorf("刷新读取超时导致出错%v", err)
-			break
-		}
+		_ = c.Conn.SetReadDeadline(time.Now().Add(PongWait))
 
 		// 如果定义了消息处理回调，则调用它
 		if c.MessageHandler != nil {
-			if err = c.MessageHandler(c, messageType, data); err != nil {
+			if err := c.MessageHandler(c, messageType, data); err != nil {
 				break
 			}
 		}
@@ -173,21 +163,16 @@ func (c *Client) WritePump() {
 			}
 			if !ok {
 				// 通道已关闭
-				err := c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
-				if err != nil {
-					logger.Errorf("写入失败%v", err)
-				}
+				_ = c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				return
 			}
 
 			w, err := c.Conn.NextWriter(websocket.TextMessage)
 			if err != nil {
-				logger.Errorf("写入失败%v", err)
 				return
 			}
 			_, err = w.Write(message)
 			if err != nil {
-				logger.Errorf("写入失败%v", err)
 				return
 			}
 
@@ -196,13 +181,11 @@ func (c *Client) WritePump() {
 			for i := 0; i < n; i++ {
 				_, err3 := w.Write(<-c.Send)
 				if err3 != nil {
-					logger.Errorf("写入失败%v", err3)
 					return
 				}
 			}
 
-			if err = w.Close(); err != nil {
-				logger.Errorf("关闭写入失败%v", err)
+			if err := w.Close(); err != nil {
 				return
 			}
 
@@ -217,21 +200,23 @@ func (c *Client) WritePump() {
 	}
 }
 
-// CloseUserConnectionsByType 关闭指定用户且指定会话类型的连接
-func (p *ConnectionPool) CloseUserConnectionsByType(userID int, sessionType string) {
-	p.mu.Lock()
-	var clientsToClose []*Client
+// SendToUserByType 发送消息给指定用户且指定会话类型的客户端
+func (p *ConnectionPool) SendToUserByType(userID int, sessionType string, data []byte) {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
 	if clients, ok := p.userClients[userID]; ok {
 		for client := range clients {
+			// 过滤 SessionType
 			if client.Metadata != nil && client.Metadata.SessionType == sessionType {
-				clientsToClose = append(clientsToClose, client)
+				select {
+				case client.Send <- data:
+				default:
+					// 如果发送缓冲区满了，主动关闭这个慢连接
+					go client.Close()
+				}
 			}
 		}
-	}
-	p.mu.Unlock()
-
-	for _, client := range clientsToClose {
-		client.Close()
 	}
 }
 

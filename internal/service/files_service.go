@@ -268,8 +268,8 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 		return nil, err
 	}
 
-	var dirs []*dto.DirectoryItem = []*dto.DirectoryItem{}
-	var files []*dto.FileItem = []*dto.FileItem{}
+	var dirs []*dto.DirectoryItem
+	var files []*dto.FileItem
 	var realPath string
 	var cacheHit bool
 
@@ -677,16 +677,30 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 	// 将 multipart 文件写入临时文件
 	_, err = io.Copy(tempFile, file)
 	if err != nil {
-		tempFile.Close()
-		os.Remove(tempPath)
+		err := tempFile.Close()
+		if err != nil {
+			return nil, err
+		}
+		err = os.Remove(tempPath)
+		if err != nil {
+			return nil, err
+		}
 		logger.Errorf("写入临时文件失败: %v", err)
 		return nil, errors.New(errors.CodeInternalError, "写入临时文件失败")
 	}
-	tempFile.Close()
+	err = tempFile.Close()
+	if err != nil {
+		return nil, err
+	}
 
 	// 启动异步上传任务
 	go func() {
-		defer os.Remove(tempPath)
+		defer func(name string) {
+			err := os.Remove(name)
+			if err != nil {
+
+			}
+		}(tempPath)
 		defer func() {
 			// 释放锁
 			if s.redisRepo != nil {
@@ -702,7 +716,12 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 			report(0, "failed", "读取临时文件失败")
 			return
 		}
-		defer localFile.Close()
+		defer func(localFile *os.File) {
+			err := localFile.Close()
+			if err != nil {
+				logger.Errorf("临时文件关闭失败%v", err)
+			}
+		}(localFile)
 
 		// 重新获取 SFTP 客户端 (避免闭包捕获的 client 失效)
 		asyncClient, err := s.getSftpClient(userID, isRootMode)
@@ -716,7 +735,12 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 			report(0, "failed", fmt.Sprintf("创建远程文件失败: %v", err))
 			return
 		}
-		defer asyncDst.Close()
+		defer func(asyncDst *sftp.File) {
+			err := asyncDst.Close()
+			if err != nil {
+				logger.Errorf("远程文件关闭失败%v", err)
+			}
+		}(asyncDst)
 
 		// 开始传输
 		buf := make([]byte, 128*1024)
