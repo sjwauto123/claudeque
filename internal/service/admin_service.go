@@ -66,6 +66,9 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	if s.sshConfig != nil && s.sshConfig.ServerHost != "" && s.sshConfig.PrivateKeyPath != "" {
 		if err := s.createVMUser(req.Username, pwd); err != nil {
 			logger.Error("VM用户创建失败", zap.String("username", req.Username), zap.Error(err))
+			if delErr := s.userRepo.Delete(user.ID); delErr != nil {
+				logger.Error("回滚用户失败", zap.Int("id", user.ID), zap.Error(delErr))
+			}
 			return bizerrors.NewWithErr(bizerrors.CodeInternalError, "创建虚拟机用户失败", err)
 		}
 		logger.Info("VM用户创建成功", zap.String("username", req.Username))
