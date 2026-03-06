@@ -18,7 +18,7 @@ import (
 // sshSessionWrapper 保存活动的 SSH 会话及其标准输入管道。
 type sshSessionWrapper struct {
 	ID          string
-	Session     *server.TerminalSession
+	Session     *server.TerminalSession //终端会话
 	stdinWriter io.WriteCloser
 	LastActive  time.Time
 	mu          sync.Mutex
@@ -151,137 +151,6 @@ func (w *PrivateTerminalWriter) Write(p []byte) (int, error) {
 	}
 
 	return len(p), nil
-}
-
-// TerminalWriter 捕获输出并将其广播给用户的 websocket 客户端。
-type TerminalWriter struct {
-	userID      int
-	sessionType string
-	pool        *websocket.ConnectionPool
-	mu          sync.Mutex
-	buffer      []byte // 缓存未完成的 UTF-8 字节序列
-}
-
-func (w *TerminalWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-
-	// 1. 将新数据追加到缓存
-	data := append(w.buffer, p...)
-	w.buffer = nil
-
-	// 2. 寻找最后一次有效的 UTF-8 边界
-	n := len(data)
-	cut := n
-
-	// UTF-8 最大长度为 4 字节
-	// 从末尾倒序扫描，最多检查 3 个字节
-	for i := 0; i < 3 && i < n; i++ {
-		b := data[n-1-i]
-
-		// 如果是 ASCII (0xxxxxxx)，则是安全的分割点
-		if b&0x80 == 0 {
-			break
-		}
-
-		// 如果是多字节序列的开始字节 (11xxxxxx)
-		if b&0xC0 == 0xC0 {
-			req := 0
-			if b&0xE0 == 0xC0 { // 2字节 110xxxxx
-				req = 2
-			} else if b&0xF0 == 0xE0 { // 3字节 1110xxxx
-				req = 3
-			} else if b&0xF8 == 0xF0 { // 4字节 11110xxx
-				req = 4
-			}
-
-			// 如果剩余字节数不足 req
-			if i+1 < req {
-				cut = n - 1 - i
-			}
-			break
-		}
-	}
-
-	// 3. 分割数据
-	toSend := data[:cut]
-	w.buffer = data[cut:]
-
-	// 如果没有数据要发送，直接返回
-	if len(toSend) == 0 {
-		return len(p), nil
-	}
-
-	// 4. 构造 JSON 消息
-	msg := struct {
-		Type string `json:"type"`
-		Data string `json:"data"`
-	}{
-		Type: "output",
-		Data: string(toSend),
-	}
-
-	jsonBytes, err := json.Marshal(msg)
-	if err != nil {
-		return 0, err
-	}
-
-	// 广播数据给该用户的所有 websocket 客户端（仅限 terminal 类型）。
-	w.pool.SendToUserByType(w.userID, "terminal", jsonBytes)
-
-	return len(p), nil
-}
-
-// getOrCreateSshSession 获取或创建用户的 SSH 会话。
-func (s *terminalService) getOrCreateSshSession(userID int, isRoot bool, cols, rows int) (*sshSessionWrapper, error) {
-	key := fmt.Sprintf("%d:%v", userID, isRoot)
-
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	// 1. 如果会话未关闭，则返回现有会话。
-	if sw, exists := s.sessions[key]; exists {
-		sw.mu.Lock()
-		defer sw.mu.Unlock()
-		if !sw.closed {
-			sw.LastActive = time.Now()
-			if sw.Session != nil {
-				_ = sw.Session.Resize(cols, rows)
-			}
-			return sw, nil
-		}
-	}
-
-	// 2. 创建新的 SSH 会话。
-	sshClient, err := s.getSSHClient(userID, isRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	sw := &sshSessionWrapper{
-		ID:         key,
-		LastActive: time.Now(),
-	}
-
-	writer := &TerminalWriter{userID: userID, pool: s.wsPool}
-
-	// 不再使用 pipe，直接使用 SSH 会话的 Stdin
-	session, err := sshClient.NewTerminalSession(writer, writer, cols, rows)
-	if err != nil {
-		return nil, err
-	}
-
-	sw.Session = session
-	sw.stdinWriter = session.Stdin
-	s.sessions[key] = sw
-
-	// 监控会话退出以清理资源。
-	go func() {
-		_ = session.Session.Wait()
-		s.closeSshSession(userID, isRoot)
-	}()
-
-	return sw, nil
 }
 
 // HandleTerminalConnection 处理新的 websocket 连接，并将其绑定到对应的 SSH PTY 会话。
