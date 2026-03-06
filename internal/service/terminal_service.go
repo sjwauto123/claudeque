@@ -352,10 +352,7 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 	}
 
 	// 为 websocket 客户端创建元数据。
-	metadata := &websocket.SessionMetadata{UserID: userID, SessionType: "terminal"}
-	if isRoot {
-		metadata.Role = "admin"
-	}
+	metadata := &websocket.SessionMetadata{UserID: userID, SessionType: "terminal", Role: "user"}
 
 	// 1. 先将客户端添加到池中。
 	wsClient := s.wsPool.Add(userID, conn, metadata, messageHandler)

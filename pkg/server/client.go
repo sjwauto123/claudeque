@@ -24,16 +24,15 @@ type Config struct {
 	Timeout              time.Duration // 连接超时
 }
 
-// Client SSH/SFTP客户端
+// Client SSH/SFTP客户端（文件管理）
 type Client struct {
 	sshClient  *ssh.Client
 	sftpClient *sftp.Client
 	config     *Config
-
-	mu sync.Mutex
+	mu         sync.Mutex
 }
 
-// TerminalSession 独立的终端会话
+// TerminalSession 独立的终端会话（终端实现）
 type TerminalSession struct {
 	Session *ssh.Session
 	Stdin   io.WriteCloser
