@@ -69,15 +69,14 @@ func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *Session
 	}
 
 	p.mu.Lock()
-	if p.userClients[userID] == nil {
+	// 如果是管理员，添加到管理员客户端map
+	if metadata != nil && metadata.Role == "admin" {
+		p.adminClients[client] = struct{}{}
+	} else if p.userClients[userID] == nil {
 		p.userClients[userID] = make(map[*Client]struct{})
 	}
 	p.userClients[userID][client] = struct{}{}
 
-	// 如果是管理员，添加到管理员客户端map
-	if metadata != nil && metadata.Role == "admin" {
-		p.adminClients[client] = struct{}{}
-	}
 	p.mu.Unlock()
 
 	// 启动写协程
@@ -175,7 +174,7 @@ func (c *Client) WritePump() {
 				// 通道已关闭
 				err := c.Conn.WriteMessage(websocket.CloseMessage, []byte{})
 				if err != nil {
-					logger.Errorf("写入失败%v", err)
+					logger.Errorf("写入失败，连接已断开%v", err)
 				}
 				return
 			}
@@ -235,23 +234,6 @@ func (p *ConnectionPool) CloseUserConnectionsByType(userID int, sessionType stri
 	}
 }
 
-// SendToUser 发送消息给指定用户的所有客户端
-func (p *ConnectionPool) SendToUser(userID int, data []byte) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	if clients, ok := p.userClients[userID]; ok {
-		for client := range clients {
-			select {
-			case client.Send <- data:
-			default:
-				// 如果发送缓冲区满了，主动关闭这个慢连接，防止阻塞整个系统
-				go client.Close()
-			}
-		}
-	}
-}
-
 // SendToUserByType 发送消息给指定用户且指定会话类型的客户端
 func (p *ConnectionPool) SendToUserByType(userID int, sessionType string, data []byte) {
 	p.mu.RLock()
@@ -288,8 +270,8 @@ func (p *ConnectionPool) BroadcastToAdminsByType(sessionType string, data []byte
 	}
 }
 
-// GetAdminConnectionCount 获取管理员连接数
-func (p *ConnectionPool) GetAdminConnectionCount() bool {
+// IsHavingSystemInfoConnection 判断是否有获取系统消息ws连接
+func (p *ConnectionPool) IsHavingSystemInfoConnection() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
 
@@ -311,12 +293,19 @@ func (p *ConnectionPool) CloseAll() {
 			allClients = append(allClients, client)
 		}
 	}
+	// 同时收集 adminClients
+	var allAdminClients []*Client
+	for client := range p.adminClients {
+		allAdminClients = append(allAdminClients, client)
+	}
 	p.mu.RUnlock()
 
+	// 关闭所有用户连接
 	for _, client := range allClients {
 		client.Close()
 	}
-	for client := range p.adminClients {
+	// 关闭所有管理员连接
+	for _, client := range allAdminClients {
 		client.Close()
 	}
 }

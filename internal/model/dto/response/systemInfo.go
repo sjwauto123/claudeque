@@ -3,6 +3,7 @@ package response
 type ProcessInfoResponse struct {
 	Username  string `json:"username"`
 	PID       string `json:"pid"`
+	JobName   string `json:"job_name"`
 	GPUname   string `json:"gpu_name"`
 	StartTime string `json:"start_time"`
 	IsNormal  int    `json:"is_normal"`

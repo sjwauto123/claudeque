@@ -275,14 +275,6 @@ func (a *App) initDependencies() {
 	)
 }
 
-// Shutdown 关闭应用
-func (a *App) Shutdown() {
-	// 关闭 ConnectionPool
-	if a.wsPool != nil {
-		a.wsPool.CloseAll()
-	}
-}
-
 // initRouter 初始化路由
 func (a *App) initRouter() {
 	// 设置 Gin 模式
@@ -335,6 +327,11 @@ func (a *App) gracefulShutdown() {
 	<-quit
 
 	logger.Info("正在关闭服务器...")
+
+	// 关闭websocket连接池
+	if a.wsPool != nil {
+		a.wsPool.CloseAll()
+	}
 
 	// 停止任务调度器
 	if a.scheduler != nil {

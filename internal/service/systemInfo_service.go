@@ -7,6 +7,7 @@ import (
 	"cloudque/pkg/websocket"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strconv"
@@ -57,7 +58,7 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 	// 创建会话元数据，设置角色为管理员
 	metadata := &websocket.SessionMetadata{
 		UserID:      userID,
-		SessionType: "ws",
+		SessionType: "systemInfo",
 		Role:        "admin", // 系统信息连接默认为管理员
 		CreatedAt:   time.Now().Unix(),
 	}
@@ -105,7 +106,7 @@ func (rc *ResourceCollector) Start() {
 					return
 				case <-ticker.C:
 					// 检查是否有ws连接连接
-					connectionCount := rc.Pool.GetAdminConnectionCount()
+					connectionCount := rc.Pool.IsHavingSystemInfoConnection()
 					if connectionCount {
 						// 收集系统信息
 						info := rc.collectSystemInfo()
@@ -210,8 +211,9 @@ func GetNvidiaGPUInfo() ([]response.GPUInfoResponse, error) {
 	output, err := cmd.Output()
 	if err != nil {
 		// 如果命令不存在（无 NVIDIA 驱动），返回空列表
-		if _, ok := err.(*exec.Error); ok {
-			return []response.GPUInfoResponse{}, nil // 无 GPU 设备
+		var err1 *exec.Error
+		if errors.As(err, &err1) {
+			return []response.GPUInfoResponse{}, nil
 		}
 		return nil, err
 	}
@@ -250,25 +252,29 @@ func GetNvidiaGPUInfo() ([]response.GPUInfoResponse, error) {
 
 // collectProcessInfo 收集进程信息
 func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoResponse, error) {
-	// 创建带超时的上下文，防止Redis操作超时
+	//创建带超时的上下文，防止Redis操作超时
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
 	//从redis获取进程信息
-	_, processes, err := rc.ProcRepo.GetAllPid(ctx)
+	jobNames, processes, err := rc.ProcRepo.GetAllPid(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("查询进程信息失败: %w", err)
 	}
 
-	// 获取所有进程与GPU的映射
-	gpuMap := getGPUMap()
+	if len(jobNames) == 0 || len(processes) == 0 || len(jobNames) != len(processes) {
+		return []response.ProcessInfoResponse{}, nil
+	}
+
+	// 获取 Redis 中进程与 GPU 的映射
+	gpuMap := getGPUMap(processes)
 
 	var processInfos []response.ProcessInfoResponse
-	for _, p := range processes {
+	for i, p := range processes {
 		// 通过本地命令获取进程的详细信息
-		info, err := getProcessDetails(p, gpuMap)
+		info, err := getProcessDetails(p, gpuMap, jobNames[i])
 		if err != nil {
-			logger.Infof("获取进程id为%v详细信息失败:%v", p, err)
+			logger.Infof("获取进程 id 为%v 详细信息失败:%v", p, err)
 		}
 		processInfos = append(processInfos, info)
 	}
@@ -276,24 +282,34 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 	return processInfos, nil
 }
 
-// getGPUMap 获取所有进程与GPU的映射
-func getGPUMap() map[string]string {
+// getGPUMap 获取指定进程与 GPU 的映射
+func getGPUMap(processes []int) map[string]string {
 	gpuMap := make(map[string]string)
 
-	// 使用nvidia-smi命令获取所有进程所在的GPU信息
+	// 使用 nvidia-smi 命令获取所有进程所在的 GPU 信息
 	cmd := exec.Command("nvidia-smi", "--query-compute-apps=pid,gpu_name", "--format=csv,noheader")
 	output, err := cmd.Output()
 	if err != nil {
 		return gpuMap
 	}
 
+	// 构建需要查询的 PID 集合，用于快速查找
+	pidSet := make(map[string]bool)
+	for _, pid := range processes {
+		pidSet[strconv.Itoa(pid)] = true
+	}
+
+	// 只保留我们关心的进程
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, line := range lines {
 		parts := strings.Split(strings.TrimSpace(line), ", ")
 		if len(parts) == 2 {
 			pidStr := parts[0]
-			gpuName := parts[1]
-			gpuMap[pidStr] = gpuName
+			// 只保留 Redis 中存在的进程
+			if pidSet[pidStr] {
+				gpuName := parts[1]
+				gpuMap[pidStr] = gpuName
+			}
 		}
 	}
 
@@ -301,7 +317,7 @@ func getGPUMap() map[string]string {
 }
 
 // getProcessDetails 获取进程的详细信息
-func getProcessDetails(pid int, gpuMap map[string]string) (response.ProcessInfoResponse, error) {
+func getProcessDetails(pid int, gpuMap map[string]string, jobName string) (response.ProcessInfoResponse, error) {
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
 		return response.ProcessInfoResponse{}, err
@@ -318,7 +334,7 @@ func getProcessDetails(pid int, gpuMap map[string]string) (response.ProcessInfoR
 	}
 	cmdline, err := p.Cmdline()
 	if err != nil {
-		logger.Infof("无法获取进程命令行: %v", err)
+		logger.Infof("无法获取进程命令行：%v", err)
 	}
 
 	// 计算运行时间
@@ -326,15 +342,25 @@ func getProcessDetails(pid int, gpuMap map[string]string) (response.ProcessInfoR
 	duration := time.Since(time.Unix(createTime/1000, 0))
 	r := formatDuration(duration)
 
-	// 从映射中获取GPU信息
+	// 从映射中获取 GPU 信息
 	gpuName := gpuMap[strconv.Itoa(pid)]
+	if gpuName == "" {
+		gpuName = "未获取到显卡信息"
+	}
+
+	isNormal := 1
+	// 如果进程已经退出，IsRunning() 会返回 false
+	if running, err := p.IsRunning(); err != nil || !running {
+		isNormal = 0
+	}
 
 	return response.ProcessInfoResponse{
 		Username:  username,
 		PID:       strconv.Itoa(pid),
+		JobName:   jobName,
 		GPUname:   gpuName,
 		StartTime: startTime,
-		IsNormal:  1,
+		IsNormal:  isNormal,
 		Runtime:   r,
 		Command:   cmdline,
 	}, nil
