@@ -281,7 +281,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
-		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
+		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, "任务脚本路径为空"); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return fmt.Errorf("任务脚本路径为空")
@@ -298,7 +298,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
-		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
+		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("获取显卡详情失败: %v", err)); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return fmt.Errorf("获取显卡详情失败: %w", err)
@@ -320,7 +320,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
-		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
+		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("启动训练脚本失败: %v", err)); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return fmt.Errorf("启动训练脚本失败: %w", err)
