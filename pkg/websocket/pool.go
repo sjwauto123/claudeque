@@ -192,16 +192,6 @@ func (c *Client) WritePump() {
 				return
 			}
 
-			// 将队列中剩余的消息合并发送
-			n := len(c.Send)
-			for i := 0; i < n; i++ {
-				_, err3 := w.Write(<-c.Send)
-				if err3 != nil {
-					logger.Errorf("写入失败%v", err3)
-					return
-				}
-			}
-
 			if err = w.Close(); err != nil {
 				logger.Errorf("关闭写入失败%v", err)
 				return
