@@ -240,7 +240,15 @@ func (s *scheduler) processQueue() {
 	// 显卡可用，执行任务
 	if err := s.executeJob(job, cardIDs); err != nil {
 		logger.Error("启动任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-		// 如果启动失败，状态在 executeJob 内部已经处理
+
+		// 检查任务状态，如果已经标记为失败，则从队列移除
+		if currentJob, err := s.jobRepo.GetByID(job.ID); err == nil && currentJob != nil {
+			if currentJob.Status == entity.JobStatusFailed {
+				if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
+					logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
+				}
+			}
+		}
 		return
 	}
 
@@ -287,6 +295,12 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
 	if err != nil {
 		logger.Error("获取显卡详情失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
+		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
+			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
+		}
+		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
+			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
+		}
 		return fmt.Errorf("获取显卡详情失败: %w", err)
 	}
 
