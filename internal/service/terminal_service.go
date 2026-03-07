@@ -2,6 +2,7 @@ package service
 
 import (
 	pkgerrors "cloudque/pkg/errors"
+	"cloudque/pkg/logger"
 	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
 	"cloudque/pkg/websocket"
@@ -17,7 +18,7 @@ import (
 
 // sshSessionWrapper 保存活动的 SSH 会话及其标准输入管道。
 type sshSessionWrapper struct {
-	ID          string
+	ID          string                  //会话ID
 	Session     *server.TerminalSession //终端会话
 	stdinWriter io.WriteCloser
 	LastActive  time.Time
@@ -30,7 +31,7 @@ type terminalService struct {
 	sessionManager *ssh.SessionManager
 	authService    AuthService
 	wsPool         *websocket.ConnectionPool     // 使用通用 websocket 连接池
-	sessions       map[string]*sshSessionWrapper // 管理底层的 SSH PTY 会话
+	sessions       map[string]*sshSessionWrapper // 底层的 SSH PTY 会话管理
 	mu             sync.RWMutex
 }
 
@@ -47,42 +48,15 @@ func NewTerminalService(sessionManager *ssh.SessionManager, authService AuthServ
 	return ts
 }
 
-// getSSHClient 获取用户的SSH客户端
-func (s *terminalService) getSSHClient(userID int, isRoot bool) (*server.Client, error) {
-	if s.sessionManager == nil {
-		return nil, pkgerrors.New(pkgerrors.CodeInternalError, "SSH会话管理器未初始化")
-	}
-
-	session, err := s.sessionManager.GetSession(userID, isRoot)
-
-	// 检查连接是否存活
-	if err == nil && session != nil && session.Client != nil {
-		if _, err := session.Client.ExecuteCommand("echo 1"); err == nil {
-			return session.Client, nil
-		}
-	}
-
-	// 尝试恢复
-	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
-		return nil, pkgerrors.NewWithErr(pkgerrors.CodeInternalError, "恢复SSH会话失败", err)
-	}
-
-	// 重新获取
-	session, err = s.sessionManager.GetSession(userID, isRoot)
-	if err != nil {
-		return nil, pkgerrors.NewWithErr(pkgerrors.CodeInternalError, "获取SSH会话失败", err)
-	}
-
-	return session.Client, nil
-}
-
-// PrivateTerminalWriter 将输出直接发送给特定的 websocket 客户端
+// PrivateTerminalWriter 用于将输出直接发送给特定的 websocket 客户端的私有终端写入器
 type PrivateTerminalWriter struct {
 	client *websocket.Client
 	mu     sync.Mutex
 	buffer []byte
 }
 
+// Write 将数据写入私有终端写入器
+// 它会尝试将数据分割为有效的 UTF-8 序列，避免发送不完整的字符。
 func (w *PrivateTerminalWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
@@ -147,10 +121,39 @@ func (w *PrivateTerminalWriter) Write(p []byte) (int, error) {
 	select {
 	case w.client.Send <- jsonBytes:
 	default:
-		// 如果发送缓冲区满了，不做处理或记录日志
+		logger.Errorf("PrivateTerminalWriter.Write: %s发送缓冲区满，无法发送数据", w.client)
 	}
 
 	return len(p), nil
+}
+
+// getSSHClient 获取用户的SSH客户端
+func (s *terminalService) getSSHClient(userID int, isRoot bool) (*server.Client, error) {
+	if s.sessionManager == nil {
+		return nil, pkgerrors.New(pkgerrors.CodeInternalError, "SSH会话管理器未初始化")
+	}
+
+	session, err := s.sessionManager.GetSession(userID, isRoot)
+
+	// 检查连接是否存活
+	if err == nil && session != nil && session.Client != nil {
+		if _, err := session.Client.ExecuteCommand("echo 1"); err == nil {
+			return session.Client, nil
+		}
+	}
+
+	// 尝试恢复
+	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
+		return nil, pkgerrors.NewWithErr(pkgerrors.CodeInternalError, "恢复SSH会话失败", err)
+	}
+
+	// 重新获取
+	session, err = s.sessionManager.GetSession(userID, isRoot)
+	if err != nil {
+		return nil, pkgerrors.NewWithErr(pkgerrors.CodeInternalError, "获取SSH会话失败", err)
+	}
+
+	return session.Client, nil
 }
 
 // HandleTerminalConnection 处理新的 websocket 连接，并将其绑定到对应的 SSH PTY 会话。
@@ -165,7 +168,8 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 	// 所以消息处理程序在开始时可能访问不到 sw。
 	var sw *sshSessionWrapper
 	var swMu sync.RWMutex
-	var pendingInput []byte // 缓冲初始化期间的输入
+	var pendingInput []byte                     // 缓冲初始化期间的输入
+	var pendingResize *struct{ cols, rows int } // 缓冲初始化期间的 resize 事件
 
 	// 定义此 websocket 连接的消息处理程序。
 	messageHandler := func(client *websocket.Client, messageType int, data []byte) error {
@@ -185,6 +189,9 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 					swMu.Lock()
 					if sw != nil && !sw.closed && sw.Session != nil {
 						_ = sw.Session.Resize(msg.Cols, msg.Rows)
+					} else {
+						// 会话尚未准备好，记录最新的 resize 请求
+						pendingResize = &struct{ cols, rows int }{cols: msg.Cols, rows: msg.Rows}
 					}
 					swMu.Unlock()
 				}
@@ -263,6 +270,11 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 		}
 		sw.mu.Unlock()
 		pendingInput = nil
+	}
+	// 应用缓冲的 resize 请求
+	if pendingResize != nil {
+		_ = sw.Session.Resize(pendingResize.cols, pendingResize.rows)
+		pendingResize = nil
 	}
 	swMu.Unlock()
 
