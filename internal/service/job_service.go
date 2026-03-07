@@ -100,6 +100,11 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		return nil, fmt.Errorf("创建任务失败: %w", err)
 	}
 
+	// 更新任务状态为排队中
+	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
+		return nil, fmt.Errorf("更新任务状态失败: %w", err)
+	}
+
 	// 将任务加入排队队列
 	if err := s.queueSvc.Enqueue(ctx, job.ID, priority); err != nil {
 		// 如果入队失败，更新任务状态为失败
@@ -109,10 +114,6 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		return nil, fmt.Errorf("加入排队队列失败: %w", err)
 	}
 
-	// 更新任务状态为排队中
-	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
-		return nil, fmt.Errorf("更新任务状态失败: %w", err)
-	}
 	return job, nil
 }
 

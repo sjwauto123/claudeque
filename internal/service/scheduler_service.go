@@ -241,6 +241,11 @@ func (s *scheduler) processQueue() {
 	if err := s.executeJob(job, cardIDs); err != nil {
 		logger.Error("启动任务失败", zap.Error(err), zap.Int("job_id", job.ID))
 		// 如果启动失败，状态在 executeJob 内部已经处理
+		if latestJob, err2 := s.jobRepo.GetByID(job.ID); err2 == nil && latestJob != nil {
+			if latestJob.Status == entity.JobStatusFailed {
+				s.queueSvc.Remove(s.ctx, item.JobID)
+			}
+		}
 		return
 	}
 
