@@ -53,12 +53,12 @@ func (r *processRepository) FindAll() ([]entity.Process, error) {
 	return processes, err
 }
 
-func (p *processCacheRepository) CreatePid(ctx context.Context, PID int, jobID int) error {
-	return p.redis.HSet(ctx, KEY, strconv.Itoa(jobID), PID).Err()
+func (p *processCacheRepository) CreatePid(ctx context.Context, PID int, jobName string) error {
+	return p.redis.HSet(ctx, KEY, jobName, PID).Err()
 }
 
-func (p *processCacheRepository) DelPid(ctx context.Context, jobID int) error {
-	return p.redis.HDel(ctx, KEY, strconv.Itoa(jobID)).Err()
+func (p *processCacheRepository) DelPid(ctx context.Context, jobName string) error {
+	return p.redis.HDel(ctx, KEY, jobName).Err()
 }
 
 func (p *processCacheRepository) GetAllPid(ctx context.Context) ([]string, []int, error) {

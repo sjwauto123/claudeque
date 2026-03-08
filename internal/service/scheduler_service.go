@@ -240,15 +240,7 @@ func (s *scheduler) processQueue() {
 	// 显卡可用，执行任务
 	if err := s.executeJob(job, cardIDs); err != nil {
 		logger.Error("启动任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-
-		// 检查任务状态，如果已经标记为失败，则从队列移除
-		if currentJob, err := s.jobRepo.GetByID(job.ID); err == nil && currentJob != nil {
-			if currentJob.Status == entity.JobStatusFailed {
-				if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
-					logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
-				}
-			}
-		}
+		// 如果启动失败，状态在 executeJob 内部已经处理
 		return
 	}
 
@@ -281,7 +273,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, "任务脚本路径为空"); err != nil {
+		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return fmt.Errorf("任务脚本路径为空")
@@ -295,12 +287,6 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
 	if err != nil {
 		logger.Error("获取显卡详情失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
-		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
-			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
-		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("获取显卡详情失败: %v", err)); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
 		return fmt.Errorf("获取显卡详情失败: %w", err)
 	}
 
@@ -320,7 +306,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("启动训练脚本失败: %v", err)); err != nil {
+		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return fmt.Errorf("启动训练脚本失败: %w", err)
@@ -352,8 +338,8 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	}
 
 	// 写入进程缓存
-	if err := s.procCache.CreatePid(s.ctx, pid, job.ID); err != nil {
-		logger.Warn("写入进程缓存失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Int("pid", pid))
+	if err := s.procCache.CreatePid(s.ctx, pid, job.Name); err != nil {
+		logger.Warn("写入进程缓存失败", zap.Error(err), zap.String("job_name", job.Name), zap.Int("pid", pid))
 	}
 
 	// 监控进程
@@ -372,6 +358,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 func (s *scheduler) monitorJob(jp *JobProcess) {
 	jobID := jp.jobID
 	cardIDs := jp.cardIDs
+	jobName := jp.jobName
 
 	defer s.wg.Done()
 	defer close(jp.done)
@@ -385,8 +372,8 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		cleanupCtx := context.Background()
 
 		// 删除进程缓存
-		if err := s.procCache.DelPid(cleanupCtx, jobID); err != nil {
-			logger.Warn("删除进程缓存失败", zap.Error(err), zap.Int("job_id", jobID))
+		if err := s.procCache.DelPid(cleanupCtx, jobName); err != nil {
+			logger.Warn("删除进程缓存失败", zap.Error(err), zap.String("job_Name", jobName))
 		}
 
 		// 更新进程表，记录结束时间
@@ -524,8 +511,8 @@ func (s *scheduler) recoverRunningJobs() {
 				go s.monitorJob(jp)
 
 				// 确保进程缓存存在
-				if err := s.procCache.CreatePid(ctx, pid, job.ID); err != nil {
-					logger.Warn("恢复时写入进程缓存失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Int("pid", pid))
+				if err := s.procCache.CreatePid(ctx, pid, job.Name); err != nil {
+					logger.Warn("恢复时写入进程缓存失败", zap.Error(err), zap.String("job_name", job.Name), zap.Int("pid", pid))
 				}
 
 			} else {
@@ -634,8 +621,8 @@ func handleMissingProcess(s *scheduler, ctx context.Context, job *entity.Job, pr
 	}
 
 	// 清理 procCache 缓存
-	if err := s.procCache.DelPid(ctx, job.ID); err != nil {
-		logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.Int("job_id", job.ID))
+	if err := s.procCache.DelPid(ctx, job.Name); err != nil {
+		logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.String("job_name", job.Name))
 	}
 
 	// 释放显卡
