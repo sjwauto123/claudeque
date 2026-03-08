@@ -45,6 +45,7 @@ type JobProcess struct {
 	jobName string
 	cardIDs []int
 	done    chan struct{}
+	logFile *os.File // 日志文件句柄
 }
 
 // 用于接收 process.Wait 结果
@@ -189,7 +190,7 @@ func (s *scheduler) processQueue() {
 	}
 
 	// 检查任务状态
-	if job.Status != entity.JobStatusQueued && job.Status != entity.JobStatusWaitingGpu {
+	if job.Status != entity.JobStatusQueued && job.Status != entity.JobStatusWaitingGpu && job.Status != entity.JobStatusPending {
 		// 任务状态异常，从队列移除
 		logger.Warn("任务状态异常，从队列移除", zap.Int("job_id", job.ID), zap.Int("status", job.Status))
 		if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
@@ -283,9 +284,26 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	cmd := exec.Command("python3", "-u", scriptPath)
 	cmd.Dir = filepath.Dir(scriptPath)
 
+	// 创建任务日志文件
+	logDir := "logs/jobs"
+	if err := os.MkdirAll(logDir, 0755); err != nil {
+		logger.Error("创建日志目录失败", zap.Error(err))
+	}
+	logPath := filepath.Join(logDir, fmt.Sprintf("job_%d_%d.log", job.ID, time.Now().Unix()))
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		logger.Error("创建任务日志文件失败", zap.Error(err), zap.Int("job_id", job.ID))
+	} else {
+		cmd.Stdout = logFile
+		cmd.Stderr = logFile
+	}
+
 	// 获取显存中的显卡信息以获取其当前的系统索引
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
 	if err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		logger.Error("获取显卡详情失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
 		return fmt.Errorf("获取显卡详情失败: %w", err)
 	}
@@ -303,6 +321,9 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	// 启动任务
 	if err := cmd.Start(); err != nil {
+		if logFile != nil {
+			logFile.Close()
+		}
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
@@ -319,6 +340,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		jobName: job.Name,
 		cardIDs: cardIDs,
 		done:    make(chan struct{}),
+		logFile: logFile,
 	}
 	s.runningMu.Lock()
 	s.runningJobs[jp.pid] = jp // 使用 jp.pid 作为键
@@ -363,6 +385,13 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 	defer s.wg.Done()
 	defer close(jp.done)
 	defer func() {
+		// 关闭日志文件
+		if jp.logFile != nil {
+			if err := jp.logFile.Close(); err != nil {
+				logger.Warn("关闭任务日志文件失败", zap.Error(err), zap.Int("job_id", jobID))
+			}
+		}
+
 		// 从运行列表中移除
 		s.runningMu.Lock()
 		delete(s.runningJobs, jp.pid) // 使用 jp.pid 作为键
