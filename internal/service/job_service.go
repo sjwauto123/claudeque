@@ -68,7 +68,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		}
 		return nil, fmt.Errorf("检查任务文件失败: %w", err)
 	}
-
+	logger.Info("任务路径", zap.String("file_path", req.FilePath))
 	// 获取用户优先级
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
