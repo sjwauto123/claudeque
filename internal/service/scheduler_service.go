@@ -86,7 +86,7 @@ func (s *scheduler) Start() {
 	s.isRunning = true
 
 	// 同步恢复之前运行的任务
-	s.recoverRunningJobs()
+	//s.recoverRunningJobs()
 
 	s.wg.Add(1)
 	go s.run()
@@ -287,7 +287,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	// 构建命令
 	cmd := exec.Command("python3", "-u", scriptPath)
 	//cmd.Dir = filepath.Dir(scriptPath)
-	logger.Info("任务路径", zap.String("file_path", scriptPath))
+	logger.Info("任务路径", zap.String("job_file_path", job.FilePath))
 	// 获取显存中的显卡信息以获取其当前的系统索引
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
 	if err != nil {
