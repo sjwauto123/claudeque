@@ -162,6 +162,36 @@ func (r *jobRepository) UpdateStatus(id int, status int) error {
 	return r.db.Model(&entity.Job{}).Where("id = ?", id).Updates(updates).Error
 }
 
+// UpdateStatusAndDesc 更新任务状态和描述（追加错误信息）
+func (r *jobRepository) UpdateStatusAndDesc(id int, status int, desc string) error {
+	var job entity.Job
+	if err := r.db.First(&job, id).Error; err != nil {
+		return err
+	}
+
+	newDesc := job.Description
+	if newDesc != "" {
+		newDesc += "\n"
+	}
+	newDesc += "System Error: " + desc
+
+	now := time.Now()
+	updates := map[string]interface{}{
+		"status":      status,
+		"description": newDesc,
+	}
+
+	// 根据状态设置相应的时间字段
+	switch status {
+	case entity.JobStatusRunning:
+		updates["started_at"] = &now
+	case entity.JobStatusCompleted, entity.JobStatusFailed, entity.JobStatusCancelled:
+		updates["finished_at"] = &now
+	}
+
+	return r.db.Model(&entity.Job{}).Where("id = ?", id).Updates(updates).Error
+}
+
 // GetQueueJobsByIDs 通过任务id获取任务信息
 func (r *jobRepository) GetQueueJobsByIDs(jobIDs []int) (map[int]response.QueueJobDBRow, error) {
 	if len(jobIDs) == 0 {
@@ -198,53 +228,28 @@ func (r *jobRepository) GetQueueJobListFiltered(orderedJobIDs []int, req request
 
 	var total int64
 	if err := baseDB.Count(&total).Error; err != nil {
-		return nil, 0, err
+		return []response.QueueJobDBRow{}, 0, err
 	}
 
-	ids := make([]string, len(orderedJobIDs))
+	// 按队列中的顺序排序
+	// MySQL FIND_IN_SET 或者 CASE WHEN，这里使用 CASE WHEN
+	orderSQL := "CASE j.id"
 	for i, id := range orderedJobIDs {
-		ids[i] = strconv.Itoa(id)
+		orderSQL += fmt.Sprintf(" WHEN %d THEN %d", id, i)
 	}
+	orderSQL += " END"
 
-	orderSQL := "FIELD(j.id, " + strings.Join(ids, ",") + ")"
 	var rows []response.QueueJobDBRow
+	offset := (req.Page - 1) * req.PageSize
 	err := baseDB.
 		Order(orderSQL).
-		Scan(&rows).Error
+		Limit(req.PageSize).Offset(offset).Scan(&rows).Error
 
 	if err != nil {
 		return nil, 0, err
 	}
 
 	return rows, int(total), nil
-}
-
-// GetStats 获取任务统计
-func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
-	var result response.JobStatsResponse
-	var total, running, queued, exception int64
-
-	if err := r.db.Model(&entity.Job{}).Count(&total).Error; err != nil {
-		return nil, err
-	}
-	result.Total = int(total)
-
-	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusRunning).Count(&running).Error; err != nil {
-		return nil, err
-	}
-	result.Running = int(running)
-
-	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu}).Count(&queued).Error; err != nil {
-		return nil, err
-	}
-	result.Queued = int(queued)
-
-	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusFailed).Count(&exception).Error; err != nil {
-		return nil, err
-	}
-	result.Exception = int(exception)
-
-	return &result, nil
 }
 
 // GetRunningJobs 获取正在执行中的任务列表
@@ -304,4 +309,22 @@ func (r *jobRepository) GetRunningJobsWithoutPagination(ctx context.Context) ([]
 func (r *jobRepository) UpdateSug(jobId int) error {
 	err := r.db.Table("jobs").Where("id = ?", jobId).Update("sug", 1).Error
 	return err
+}
+
+func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
+	var stats response.JobStatsResponse
+	err := r.db.Model(&entity.Job{}).
+		Select("COUNT(CASE WHEN status = ? THEN 1 END) as pending, "+
+			"COUNT(CASE WHEN status = ? THEN 1 END) as queued, "+
+			"COUNT(CASE WHEN status = ? THEN 1 END) as running, "+
+			"COUNT(CASE WHEN status = ? THEN 1 END) as completed, "+
+			"COUNT(CASE WHEN status = ? THEN 1 END) as failed, "+
+			"COUNT(CASE WHEN status = ? THEN 1 END) as cancelled",
+			entity.JobStatusPending, entity.JobStatusQueued, entity.JobStatusRunning,
+			entity.JobStatusCompleted, entity.JobStatusFailed, entity.JobStatusCancelled).
+		Scan(&stats).Error
+	if err != nil {
+		return nil, err
+	}
+	return &stats, nil
 }

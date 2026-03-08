@@ -62,6 +62,7 @@ func (s *jobService) GetWaitJobList(req request.JobListRequest, startTime time.T
 func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error) {
 	// 检查文件路径是否存在
 	if _, err := os.Stat(req.FilePath); err != nil {
+		logger.Info("任务路径", zap.Error(err))
 		if os.IsNotExist(err) {
 			return nil, errors.New(errors.CodeFileNotFound, "任务文件不存在")
 		}
@@ -100,19 +101,22 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		return nil, fmt.Errorf("创建任务失败: %w", err)
 	}
 
+	// 更新任务状态为排队中
+	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
+		return nil, fmt.Errorf("更新任务状态失败: %w", err)
+	}
+
 	// 将任务加入排队队列
 	if err := s.queueSvc.Enqueue(ctx, job.ID, priority); err != nil {
 		// 如果入队失败，更新任务状态为失败
+		logger.Info("任务状态变更为失败：加入排队队列失败", zap.Int("job_id", job.ID), zap.Error(err))
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		return nil, fmt.Errorf("加入排队队列失败: %w", err)
 	}
-
-	// 更新任务状态为排队中
-	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
-		return nil, fmt.Errorf("更新任务状态失败: %w", err)
-	}
+	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID), zap.Error(err))
+	logger.Info("任务状态为", zap.Int("status", job.Status), zap.Error(err))
 	return job, nil
 }
 
