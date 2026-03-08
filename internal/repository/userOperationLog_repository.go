@@ -65,6 +65,5 @@ func (u *userOperationLogRepository) FindUserLogs(offset int, size int, username
 
 // CreateLog 创建操作日志
 func (u *userOperationLogRepository) CreateLog(log *entity.UserOperationLog) error {
-
 	return u.db.Create(log).Error
 }

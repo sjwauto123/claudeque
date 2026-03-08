@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.uber.org/zap"
 	"strconv"
 	"strings"
 
@@ -159,7 +160,7 @@ func (r *jobRepository) UpdateStatus(id int, status int) error {
 	case entity.JobStatusCompleted, entity.JobStatusFailed, entity.JobStatusCancelled:
 		updates["finished_at"] = &now
 	}
-	logger.Debugf("<------>job_id:%d,更新状态：%d", id, status)
+	logger.Info("<------>", zap.Int("job_id", id), zap.Int("status", status))
 	return r.db.Model(&entity.Job{}).Where("id = ?", id).Updates(updates).Error
 }
 

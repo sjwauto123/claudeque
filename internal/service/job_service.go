@@ -107,16 +107,18 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 	}
 
 	// 将任务加入排队队列
-	if err := s.queueSvc.Enqueue(ctx, job.ID, priority); err != nil {
+	enqueueErr := s.queueSvc.Enqueue(ctx, job.ID, priority)
+	if enqueueErr != nil {
 		// 如果入队失败，更新任务状态为失败
-		logger.Info("任务状态变更为失败：加入排队队列失败", zap.Int("job_id", job.ID), zap.Error(err))
+		logger.Error("任务状态变更为失败：加入排队队列失败", zap.Int("job_id", job.ID), zap.Error(enqueueErr)) // 明确打印 enqueueErr
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
-		return nil, fmt.Errorf("加入排队队列失败: %w", err)
+		return nil, fmt.Errorf("加入排队队列失败: %w", enqueueErr)
 	}
-	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID), zap.Error(err))
-	logger.Info("任务状态为", zap.Int("status", job.Status), zap.Error(err))
+	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID)) // 这里不再打印 err，因为我们知道它是 nil
+	j, _ := s.jobRepo.GetByID(job.ID)
+	logger.Info("任务状态为", zap.Int("status", j.Status)) // 这里不再打印 err
 	return job, nil
 }
 
