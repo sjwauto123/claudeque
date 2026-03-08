@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
+
 	"strconv"
 	"strings"
 	"sync"
@@ -286,7 +286,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	// 构建命令
 	cmd := exec.Command("python3", "-u", scriptPath)
-	cmd.Dir = filepath.Dir(scriptPath)
+	//cmd.Dir = filepath.Dir(scriptPath)
 	logger.Info("任务路径", zap.String("file_path", scriptPath))
 	// 获取显存中的显卡信息以获取其当前的系统索引
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
