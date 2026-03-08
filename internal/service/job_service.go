@@ -116,6 +116,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		return nil, fmt.Errorf("加入排队队列失败: %w", err)
 	}
 	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID), zap.Error(err))
+	logger.Info("任务状态为", zap.Int("status", job.Status), zap.Error(err))
 	return job, nil
 }
 
