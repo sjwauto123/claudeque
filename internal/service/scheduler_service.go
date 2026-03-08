@@ -278,6 +278,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
+		logger.Info("任务状态变更为失败：任务脚本路径为空", zap.Int("job_id", job.ID))
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
@@ -311,6 +312,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
+		logger.Info("任务状态变更为失败：启动训练脚本失败", zap.Int("job_id", job.ID), zap.Error(err))
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
@@ -405,6 +407,7 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 	process, err := os.FindProcess(jp.pid)
 	if err != nil {
 		logger.Error("监控任务时查找进程失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+		logger.Info("任务状态变更为失败：查找进程失败", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
 			logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", jobID))
 		}
@@ -612,6 +615,7 @@ func parseGpuIDs(gpuIDsStr string) []int {
 // handleMissingProcess 处理进程不存在的情况
 func handleMissingProcess(s *scheduler, ctx context.Context, job *entity.Job, processRecord *entity.Process) {
 	// 更新任务状态为失败
+	logger.Info("任务状态变更为失败：未找到活跃进程记录（清理逻辑）", zap.Int("job_id", job.ID))
 	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 		logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", job.ID))
 	}
