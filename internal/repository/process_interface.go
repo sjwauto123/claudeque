@@ -19,9 +19,9 @@ type ProcessRepository interface {
 // ProcessCacheRepository GPU缓存接口
 type ProcessCacheRepository interface {
 	// CreatePid 创建PID
-	CreatePid(ctx context.Context, PID int, jobName string) error
+	CreatePid(ctx context.Context, PID int, jobID int) error
 	// DelPid 删除PID
-	DelPid(ctx context.Context, jobName string) error
+	DelPid(ctx context.Context, jobID int) error
 	// GetAllPid 获取全部PID
 	GetAllPid(ctx context.Context) ([]string, []int, error)
 }
