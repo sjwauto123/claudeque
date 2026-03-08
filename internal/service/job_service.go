@@ -68,7 +68,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		}
 		return nil, fmt.Errorf("检查任务文件失败: %w", err)
 	}
-	logger.Info("任务路径", zap.String("file_path", req.FilePath))
+
 	// 获取用户优先级
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
@@ -105,9 +105,6 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
 		return nil, fmt.Errorf("更新任务状态失败: %w", err)
 	}
-	j, err := s.jobRepo.GetByID(job.ID)
-	logger.Info("任务状态更新为：排队中", zap.Int("status", j.Status))
-	logger.Info("任务状态更新为：排队中", zap.Int("job_id", job.ID))
 
 	// 将任务加入排队队列
 	if err := s.queueSvc.Enqueue(ctx, job.ID, priority); err != nil {
@@ -118,10 +115,8 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		}
 		return nil, fmt.Errorf("加入排队队列失败: %w", err)
 	}
-
 	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID), zap.Error(err))
-	j, err = s.jobRepo.GetByID(job.ID)
-	logger.Info("任务状态更新为：排队中", zap.Int("status", j.Status))
+	logger.Info("任务状态为", zap.Int("status", job.Status), zap.Error(err))
 	return job, nil
 }
 
@@ -152,7 +147,6 @@ func (s *jobService) CancelJob(ctx context.Context, jobID int, userID int) error
 	if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusCancelled); err != nil {
 		return fmt.Errorf("更新任务状态失败: %w", err)
 	}
-	logger.Info("任务状态更新为：已取消", zap.Int("job_id", jobID))
 
 	return nil
 }

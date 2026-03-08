@@ -10,10 +10,8 @@ import (
 	"cloudque/internal/model/dto/response"
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
-	"cloudque/pkg/logger"
 
 	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
 )
 
 const (
@@ -211,7 +209,6 @@ func (s *queueService) fixJobStatusIfMovedFromHead(ctx context.Context, jobID in
 			if err != nil {
 				return
 			}
-			logger.Info("任务状态更新为：排队中 (重置)", zap.Int("job_id", jobID))
 		}
 	}
 }

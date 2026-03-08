@@ -5,12 +5,10 @@ import (
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/internal/service"
-	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"cloudque/pkg/utils"
 
 	"github.com/gin-gonic/gin"
-	"go.uber.org/zap"
 )
 
 // Controller 队列控制器
@@ -130,7 +128,6 @@ func (ctrl *Controller) RemoveJob(c *gin.Context) {
 			response.InternalError(c, err.Error())
 			return
 		}
-		logger.Info("任务状态更新为：已取消 (移除队列)", zap.Int("job_id", jobID))
 	}
 
 	response.Success(c, nil)
