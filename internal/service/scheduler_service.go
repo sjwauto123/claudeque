@@ -232,6 +232,8 @@ func (s *scheduler) processQueue() {
 		if job.Status != entity.JobStatusWaitingGpu {
 			if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusWaitingGpu); err != nil {
 				logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
+			} else {
+				logger.Info("任务状态更新为：等待显卡", zap.Int("job_id", job.ID))
 			}
 		}
 		return
@@ -266,6 +268,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		}
 		return fmt.Errorf("更新任务状态失败: %w", err)
 	}
+	logger.Info("任务状态更新为：执行中", zap.Int("job_id", job.ID))
 
 	// 构建训练脚本路径
 	scriptPath := job.FilePath
@@ -275,6 +278,8 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		}
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
+		} else {
+			logger.Info("任务状态更新为：失败 (脚本路径为空)", zap.Int("job_id", job.ID))
 		}
 		return fmt.Errorf("任务脚本路径为空")
 	}
@@ -308,6 +313,8 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		}
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
+		} else {
+			logger.Info("任务状态更新为：失败 (启动脚本失败)", zap.Int("job_id", job.ID))
 		}
 		return fmt.Errorf("启动训练脚本失败: %w", err)
 	}
@@ -338,7 +345,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	}
 
 	// 写入进程缓存
-	if err := s.procCache.CreatePid(s.ctx, pid, job.Name); err != nil {
+	if err := s.procCache.CreatePid(s.ctx, job.ID, pid, job.Name); err != nil {
 		logger.Warn("写入进程缓存失败", zap.Error(err), zap.String("job_name", job.Name), zap.Int("pid", pid))
 	}
 
@@ -372,7 +379,7 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		cleanupCtx := context.Background()
 
 		// 删除进程缓存
-		if err := s.procCache.DelPid(cleanupCtx, jobName); err != nil {
+		if err := s.procCache.DelPid(cleanupCtx, jobID); err != nil {
 			logger.Warn("删除进程缓存失败", zap.Error(err), zap.String("job_Name", jobName))
 		}
 
@@ -402,6 +409,8 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		logger.Error("监控任务时查找进程失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
 			logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", jobID))
+		} else {
+			logger.Info("任务状态更新为：失败 (监控时进程丢失)", zap.Int("job_id", jobID))
 		}
 		return
 	}
@@ -452,6 +461,8 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 
 		if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
 			logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+		} else {
+			logger.Info("任务状态更新成功", zap.Int("job_id", jobID), zap.Int("status", status))
 		}
 	}
 }
@@ -511,7 +522,7 @@ func (s *scheduler) recoverRunningJobs() {
 				go s.monitorJob(jp)
 
 				// 确保进程缓存存在
-				if err := s.procCache.CreatePid(ctx, pid, job.Name); err != nil {
+				if err := s.procCache.CreatePid(ctx, job.ID, pid, job.Name); err != nil {
 					logger.Warn("恢复时写入进程缓存失败", zap.Error(err), zap.String("job_name", job.Name), zap.Int("pid", pid))
 				}
 
@@ -609,6 +620,8 @@ func handleMissingProcess(s *scheduler, ctx context.Context, job *entity.Job, pr
 	// 更新任务状态为失败
 	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 		logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", job.ID))
+	} else {
+		logger.Info("任务状态更新为：失败 (进程丢失)", zap.Int("job_id", job.ID))
 	}
 
 	// 清理 processRepo 记录
@@ -621,7 +634,7 @@ func handleMissingProcess(s *scheduler, ctx context.Context, job *entity.Job, pr
 	}
 
 	// 清理 procCache 缓存
-	if err := s.procCache.DelPid(ctx, job.Name); err != nil {
+	if err := s.procCache.DelPid(ctx, job.ID); err != nil {
 		logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.String("job_name", job.Name))
 	}
 

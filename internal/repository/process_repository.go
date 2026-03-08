@@ -3,9 +3,10 @@ package repository
 import (
 	"cloudque/internal/model/entity"
 	"context"
-	"fmt"
-	"github.com/redis/go-redis/v9"
+	"encoding/json"
 	"strconv"
+
+	"github.com/redis/go-redis/v9"
 
 	"gorm.io/gorm"
 )
@@ -53,29 +54,48 @@ func (r *processRepository) FindAll() ([]entity.Process, error) {
 	return processes, err
 }
 
-func (p *processCacheRepository) CreatePid(ctx context.Context, PID int, jobName string) error {
-	return p.redis.HSet(ctx, KEY, jobName, PID).Err()
+type CachedProcessInfo struct {
+	PID  int    `json:"pid"`
+	Name string `json:"name"`
 }
 
-func (p *processCacheRepository) DelPid(ctx context.Context, jobName string) error {
-	return p.redis.HDel(ctx, KEY, jobName).Err()
+func (p *processCacheRepository) CreatePid(ctx context.Context, jobID int, PID int, jobName string) error {
+	info := CachedProcessInfo{
+		PID:  PID,
+		Name: jobName,
+	}
+	data, err := json.Marshal(info)
+	if err != nil {
+		return err
+	}
+	return p.redis.HSet(ctx, KEY, strconv.Itoa(jobID), data).Err()
+}
+
+func (p *processCacheRepository) DelPid(ctx context.Context, jobID int) error {
+	return p.redis.HDel(ctx, KEY, strconv.Itoa(jobID)).Err()
 }
 
 func (p *processCacheRepository) GetAllPid(ctx context.Context) ([]string, []int, error) {
-	data, err := p.redis.HVals(ctx, KEY).Result()
+	data, err := p.redis.HGetAll(ctx, KEY).Result()
 	if err != nil {
 		return nil, nil, err
 	}
-	keys, err := p.redis.HKeys(ctx, KEY).Result()
-	if err != nil {
-		return nil, nil, err
-	}
-	result := make([]int, len(data))
-	for i, v := range data {
-		result[i], err = strconv.Atoi(v)
-		if err != nil {
-			return nil, nil, fmt.Errorf("PID不合规：%w", err)
+
+	names := make([]string, 0, len(data))
+	pids := make([]int, 0, len(data))
+
+	for k, v := range data {
+		var info CachedProcessInfo
+		if err := json.Unmarshal([]byte(v), &info); err == nil {
+			names = append(names, info.Name)
+			pids = append(pids, info.PID)
+		} else {
+			// 兼容旧数据: key是name, value是pid
+			if pid, err := strconv.Atoi(v); err == nil {
+				names = append(names, k)
+				pids = append(pids, pid)
+			}
 		}
 	}
-	return keys, result, nil
+	return names, pids, nil
 }
