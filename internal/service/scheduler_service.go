@@ -187,8 +187,7 @@ func (s *scheduler) processQueue() {
 		}
 		return
 	}
-
-	// 检查任务状态
+	logger.Info("任务状态为", zap.Int("status", job.Status))
 	if job.Status != entity.JobStatusQueued && job.Status != entity.JobStatusWaitingGpu {
 		// 任务状态异常，从队列移除
 		logger.Warn("任务状态异常，从队列移除", zap.Int("job_id", job.ID), zap.Int("status", job.Status))
@@ -242,7 +241,10 @@ func (s *scheduler) processQueue() {
 	// 显卡可用，执行任务
 	if err := s.executeJob(job, cardIDs); err != nil {
 		logger.Error("启动任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-		// 如果启动失败，状态在 executeJob 内部已经处理
+		// 如果启动失败，状态在 executeJob 内部已经处理，但需要从队列移除
+		if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
+			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
+		}
 		return
 	}
 
