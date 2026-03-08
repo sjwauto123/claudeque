@@ -105,6 +105,8 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
 		return nil, fmt.Errorf("更新任务状态失败: %w", err)
 	}
+	j, err := s.jobRepo.GetByID(job.ID)
+	logger.Info("任务状态更新为：排队中", zap.Int("status", j.Status))
 	logger.Info("任务状态更新为：排队中", zap.Int("job_id", job.ID))
 
 	// 将任务加入排队队列
@@ -116,7 +118,10 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		}
 		return nil, fmt.Errorf("加入排队队列失败: %w", err)
 	}
+
 	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID), zap.Error(err))
+	j, err = s.jobRepo.GetByID(job.ID)
+	logger.Info("任务状态更新为：排队中", zap.Int("status", j.Status))
 	return job, nil
 }
 
