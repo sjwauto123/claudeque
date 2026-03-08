@@ -2,17 +2,14 @@ package terminal
 
 import (
 	"cloudque/internal/middleware"
-	"cloudque/internal/model/entity"
 	"cloudque/internal/service"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"cloudque/pkg/websocket"
-	"net/http"
-	"time"
-
 	"github.com/gin-gonic/gin"
 	gwebsocket "github.com/gorilla/websocket"
 	"go.uber.org/zap"
+	"net/http"
 )
 
 // Controller 终端控制器
@@ -73,22 +70,4 @@ func (ctrl *Controller) WebSocketTerminal(c *gin.Context) {
 		_ = conn.Close() // 尝试清理。
 	}
 
-	// 记录成功的连接建立。
-	username := middleware.GetUsername(c)
-	log := &entity.UserOperationLog{
-		Username:   username,
-		Method:     c.Request.Method,
-		Path:       c.Request.URL.Path,
-		ActionType: "连接Web终端",
-		Status:     1,
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-	}
-
-	// 异步保存日志
-	go func() {
-		if err := ctrl.userLogService.CreateLog(log); err != nil {
-			logger.Warn("创建用户日志失败", zap.Error(err))
-		}
-	}()
 }

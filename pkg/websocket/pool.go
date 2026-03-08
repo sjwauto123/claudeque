@@ -72,8 +72,10 @@ func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *Session
 	// 如果是管理员，添加到管理员客户端map
 	if metadata != nil && metadata.Role == "admin" {
 		p.adminClients[client] = struct{}{}
-	} else if p.userClients[userID] == nil {
-		p.userClients[userID] = make(map[*Client]struct{})
+	} else {
+		if p.userClients[userID] == nil {
+			p.userClients[userID] = make(map[*Client]struct{})
+		}
 		p.userClients[userID][client] = struct{}{}
 	}
 
@@ -190,16 +192,6 @@ func (c *Client) WritePump() {
 				return
 			}
 
-			// 将队列中剩余的消息合并发送
-			n := len(c.Send)
-			for i := 0; i < n; i++ {
-				_, err3 := w.Write(<-c.Send)
-				if err3 != nil {
-					logger.Errorf("写入失败%v", err3)
-					return
-				}
-			}
-
 			if err = w.Close(); err != nil {
 				logger.Errorf("关闭写入失败%v", err)
 				return
@@ -211,44 +203,6 @@ func (c *Client) WritePump() {
 			}
 			if err := c.Conn.WriteMessage(websocket.PingMessage, nil); err != nil {
 				return
-			}
-		}
-	}
-}
-
-// CloseUserConnectionsByType 关闭指定用户且指定会话类型的连接
-func (p *ConnectionPool) CloseUserConnectionsByType(userID int, sessionType string) {
-	p.mu.Lock()
-	var clientsToClose []*Client
-	if clients, ok := p.userClients[userID]; ok {
-		for client := range clients {
-			if client.Metadata != nil && client.Metadata.SessionType == sessionType {
-				clientsToClose = append(clientsToClose, client)
-			}
-		}
-	}
-	p.mu.Unlock()
-
-	for _, client := range clientsToClose {
-		client.Close()
-	}
-}
-
-// SendToUserByType 发送消息给指定用户且指定会话类型的客户端
-func (p *ConnectionPool) SendToUserByType(userID int, sessionType string, data []byte) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	if clients, ok := p.userClients[userID]; ok {
-		for client := range clients {
-			// 过滤 SessionType
-			if client.Metadata != nil && client.Metadata.SessionType == sessionType {
-				select {
-				case client.Send <- data:
-				default:
-					// 如果发送缓冲区满了，主动关闭这个慢连接
-					go client.Close()
-				}
 			}
 		}
 	}

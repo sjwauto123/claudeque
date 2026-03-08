@@ -30,6 +30,7 @@ type JobRepository interface {
 	GetRunningJobsWithoutPagination(ctx context.Context) ([]*entity.Job, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
+	UpdateStatusAndDesc(id int, status int, desc string) error
 	// UpdateSug 更改标识
 	UpdateSug(jobId int) error
 }
