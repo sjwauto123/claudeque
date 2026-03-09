@@ -239,14 +239,9 @@ func (s *scheduler) processQueue() {
 	// 显卡可用，执行任务
 	if err := s.executeJob(job, cardIDs); err != nil {
 		logger.Error("启动任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-
-		// 检查任务状态，如果已经标记为失败，则从队列移除
-		if currentJob, err := s.jobRepo.GetByID(job.ID); err == nil && currentJob != nil {
-			if currentJob.Status == entity.JobStatusFailed {
-				if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
-					logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
-				}
-			}
+		// 如果启动失败，状态在 executeJob 内部已经处理，但需要从队列移除
+		if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
+			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
 		}
 		return
 	}
