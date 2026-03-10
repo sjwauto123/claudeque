@@ -13,7 +13,6 @@ import (
 	"time"
 
 	gwebsocket "github.com/gorilla/websocket"
-	"go.uber.org/zap"
 )
 
 // sshSessionWrapper 保存活动的 SSH 会话及其标准输入管道。
@@ -130,6 +129,7 @@ func (w *PrivateTerminalWriter) Write(p []byte) (int, error) {
 // getSSHClient 获取用户的SSH客户端
 func (s *terminalService) getSSHClient(userID int, isRoot bool) (*server.Client, error) {
 	if s.sessionManager == nil {
+		logger.Error("SSH会话管理器未初始化")
 		return nil, pkgerrors.New(pkgerrors.CodeInternalError, "SSH会话管理器未初始化")
 	}
 
@@ -144,13 +144,20 @@ func (s *terminalService) getSSHClient(userID int, isRoot bool) (*server.Client,
 
 	// 尝试恢复
 	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
+		logger.Errorf("恢复SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		return nil, pkgerrors.NewWithErr(pkgerrors.CodeInternalError, "恢复SSH会话失败", err)
 	}
 
 	// 重新获取
 	session, err = s.sessionManager.GetSession(userID, isRoot)
 	if err != nil {
+		logger.Errorf("恢复后获取SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		return nil, pkgerrors.NewWithErr(pkgerrors.CodeInternalError, "获取SSH会话失败", err)
+	}
+
+	if session == nil || session.Client == nil {
+		logger.Errorf("SSH会话获取成功但客户端为空: userID=%d, isRoot=%t", userID, isRoot)
+		return nil, pkgerrors.New(pkgerrors.CodeInternalError, "SSH客户端不可用")
 	}
 
 	return session.Client, nil
@@ -188,7 +195,9 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 				if msg.Cols > 0 && msg.Rows > 0 {
 					swMu.Lock()
 					if sw != nil && !sw.closed && sw.Session != nil {
-						_ = sw.Session.Resize(msg.Cols, msg.Rows)
+						if err := sw.Session.Resize(msg.Cols, msg.Rows); err != nil {
+							logger.Errorf("调整终端大小失败: userID=%d, cols=%d, rows=%d, err=%v", userID, msg.Cols, msg.Rows, err)
+						}
 					} else {
 						// 会话尚未准备好，记录最新的 resize 请求
 						pendingResize = &struct{ cols, rows int }{cols: msg.Cols, rows: msg.Rows}
@@ -220,6 +229,7 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 		defer sw.mu.Unlock()
 		if !sw.closed && sw.stdinWriter != nil {
 			if _, err := sw.stdinWriter.Write(data); err != nil {
+				logger.Errorf("写入SSH标准输入失败: userID=%d, err=%v", userID, err)
 				return err // 传播错误以关闭连接。
 			}
 			sw.LastActive = time.Now()
@@ -236,6 +246,7 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 	// 2. 创建新的 SSH 会话（一对一绑定）。
 	sshClient, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
+		logger.Errorf("获取SSH客户端失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		// 这里我们无法直接关闭 conn，因为 wsPool 已经接管了
 		// 但 wsPool.Add 会启动读写 pump，如果 wsClient 被关闭，conn 也会被关闭
 		wsClient.Close()
@@ -248,6 +259,7 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 	// 创建新的终端会话
 	session, err := sshClient.NewTerminalSession(writer, writer, cols, rows)
 	if err != nil {
+		logger.Errorf("创建终端会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
 		wsClient.Close()
 		return err
 	}
@@ -266,14 +278,18 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 	if len(pendingInput) > 0 {
 		sw.mu.Lock()
 		if !sw.closed && sw.stdinWriter != nil {
-			_, _ = sw.stdinWriter.Write(pendingInput)
+			if _, err := sw.stdinWriter.Write(pendingInput); err != nil {
+				logger.Errorf("写入缓冲输入到SSH失败: userID=%d, err=%v", userID, err)
+			}
 		}
 		sw.mu.Unlock()
 		pendingInput = nil
 	}
 	// 应用缓冲的 resize 请求
 	if pendingResize != nil {
-		_ = sw.Session.Resize(pendingResize.cols, pendingResize.rows)
+		if err := sw.Session.Resize(pendingResize.cols, pendingResize.rows); err != nil {
+			logger.Errorf("应用缓冲resize请求失败: userID=%d, cols=%d, rows=%d, err=%v", userID, pendingResize.cols, pendingResize.rows, err)
+		}
 		pendingResize = nil
 	}
 	swMu.Unlock()
@@ -303,6 +319,7 @@ func (s *terminalService) ResizeTerminal(userID int, isRoot bool, cols, rows int
 	s.mu.RUnlock()
 
 	if !exists {
+		logger.Warnf("终端会话不存在，无法调整大小: userID=%d, isRoot=%t", userID, isRoot)
 		return pkgerrors.New(pkgerrors.CodeNotFound, "终端会话不存在")
 	}
 
@@ -311,7 +328,11 @@ func (s *terminalService) ResizeTerminal(userID int, isRoot bool, cols, rows int
 	sw.LastActive = time.Now()
 
 	if sw.Session != nil {
-		return sw.Session.Resize(cols, rows)
+		if err := sw.Session.Resize(cols, rows); err != nil {
+			logger.Errorf("调整终端大小失败: userID=%d, cols=%d, rows=%d, err=%v", userID, cols, rows, err)
+			return err
+		}
+		return nil
 	}
 	return nil
 }
@@ -358,7 +379,7 @@ func (s *terminalService) cleanupIdleSessions() {
 			if exists {
 				delete(s.sessions, key)
 				sw.close() // 使用集中式关闭方法
-				zap.L().Info("清理空闲的 SSH 会话", zap.String("id", key))
+				logger.Infof("清理空闲的 SSH 会话: id=%s", key)
 			}
 			s.mu.Unlock()
 		}
@@ -373,11 +394,15 @@ func (sw *sshSessionWrapper) close() {
 	if !sw.closed {
 		sw.closed = true
 		if sw.Session != nil {
-			_ = sw.Session.Close()
+			if err := sw.Session.Close(); err != nil {
+				logger.Errorf("关闭SSH终端会话失败: id=%s, err=%v", sw.ID, err)
+			}
 		}
 		if sw.stdinWriter != nil {
-			_ = sw.stdinWriter.Close()
+			if err := sw.stdinWriter.Close(); err != nil {
+				logger.Errorf("关闭SSH标准输入失败: id=%s, err=%v", sw.ID, err)
+			}
 		}
-		zap.L().Info("已关闭 SSH 会话", zap.String("id", sw.ID))
+		logger.Infof("已关闭 SSH 会话: id=%s", sw.ID)
 	}
 }

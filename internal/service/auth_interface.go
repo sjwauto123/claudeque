@@ -41,4 +41,6 @@ type AuthService interface {
 	HasSystemAccess(userID int, accessType SystemAccessType) (bool, error)
 	// GetUserMenuPermission 获取用户菜单和权限
 	GetUserMenuPermission(userID int) (*dto.UserMenuPermissionResponse, error)
+	// Logout 用户登出，关闭其所有SSH会话
+	Logout(userID int) error
 }

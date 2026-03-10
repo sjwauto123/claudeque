@@ -1,6 +1,7 @@
 package auth
 
 import (
+	"cloudque/internal/middleware"
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
 	"cloudque/pkg/captcha"
@@ -96,6 +97,29 @@ func (ctrl *Controller) Login(c *gin.Context) {
 	}
 
 	response.Success(c, resp)
+}
+
+// Logout 用户登出
+// @Summary 用户登出
+// @Description 用户登出，关闭其所有SSH连接
+// @Tags 认证
+// @Accept json
+// @Produce json
+// @Success 200 {object} response.Response
+// @Router /api/v1/auth/logout [post]
+func (ctrl *Controller) Logout(c *gin.Context) {
+	userID := middleware.GetUserID(c) // Assuming GetUserID extracts user ID from token
+	if userID == 0 {
+		response.Unauthorized(c, "未登录或Token无效")
+		return
+	}
+
+	if err := ctrl.authService.Logout(userID); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, "登出成功")
 }
 
 // ResetPassword 重置密码

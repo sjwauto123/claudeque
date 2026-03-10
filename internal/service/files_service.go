@@ -89,7 +89,7 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 
 	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
 		logger.Errorf("恢复SSH会话失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
-		return nil, err
+		return nil, errors.NewWithErr(errors.CodeInternalError, "恢复SSH会话失败", err)
 	}
 
 	// 4. 重新获取会话
@@ -112,7 +112,8 @@ func (s *fileService) getOrReconnectSession(userID int, isRoot bool) (*ssh.UserS
 func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, error) {
 	session, err := s.getOrReconnectSession(userID, isRoot)
 	if err != nil {
-		return nil, err
+		logger.Errorf("获取SFTP客户端失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, "获取SFTP客户端失败", err)
 	}
 	return session.Client.GetSFTPClient(), nil
 }
@@ -121,7 +122,8 @@ func (s *fileService) getSftpClient(userID int, isRoot bool) (*sftp.Client, erro
 func (s *fileService) getSSHClient(userID int, isRoot bool) (*server.Client, error) {
 	session, err := s.getOrReconnectSession(userID, isRoot)
 	if err != nil {
-		return nil, err
+		logger.Errorf("获取SSH客户端失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, "获取SSH客户端失败", err)
 	}
 	return session.Client, nil
 }
@@ -131,7 +133,7 @@ func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (st
 	client, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		logger.Errorf("获取SSH客户端失败: userID=%d, isRoot=%t, err=%v", userID, isRoot, err)
-		return "", err
+		return "", errors.NewWithErr(errors.CodeInternalError, "获取SSH客户端失败", err)
 	}
 
 	output, err := client.ExecuteCommand(cmd)
@@ -148,7 +150,7 @@ func (s *fileService) resolvePath(userID int, p string, isRootMode bool) (string
 	session, err := s.getOrReconnectSession(userID, isRootMode)
 	if err != nil {
 		logger.Errorf("获取SSH会话失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
-		return "", err
+		return "", errors.NewWithErr(errors.CodeInternalError, "获取SSH会话失败", err)
 	}
 	//
 	//管理员模式:只需要处理为空的情况，不需要验证路径直接返回
@@ -265,11 +267,11 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 	resolvedPath, err := s.resolvePath(opUserID, req.Path, isRootMode)
 	if err != nil {
 		logger.Errorf("解析路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", opUserID, req.Path, isRootMode, err)
-		return nil, err
+		return nil, errors.NewWithErr(errors.CodeInternalError, "解析路径失败", err)
 	}
 
-	var dirs []*dto.DirectoryItem
-	var files []*dto.FileItem
+	var dirs []*dto.DirectoryItem = []*dto.DirectoryItem{}
+	var files []*dto.FileItem = []*dto.FileItem{}
 	var realPath string
 	var cacheHit bool
 
@@ -303,7 +305,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 		client, err := s.getSftpClient(opUserID, isRootMode)
 		if err != nil {
 			logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", opUserID, isRootMode, err)
-			return nil, err
+			return nil, errors.NewWithErr(errors.CodeInternalError, "获取SFTP客户端失败", err)
 		}
 
 		//传化为真实可用的路径
@@ -540,289 +542,238 @@ func (s *fileService) invalidateFileListCache(userID int, isRootMode bool, path 
 
 // UploadFile 上传文件
 func (s *fileService) UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error) {
-	targetPath = strings.TrimSpace(targetPath)
-	client, err := s.getSftpClient(userID, isRootMode)
-	if err != nil {
-		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
-		return nil, err
+	// 确保临时上传目录存在
+	tempDir := "uploads/temp"
+	if err := os.MkdirAll(tempDir, 0755); err != nil {
+		logger.Errorf("创建临时上传目录失败: %v", err)
+		return nil, errors.New(errors.CodeInternalError, "创建临时目录失败")
 	}
 
-	resolvedPath, err := s.resolvePath(userID, targetPath, isRootMode)
-	if err != nil {
-		logger.Errorf("解析目标路径失败: userID=%d, targetPath=%s, isRootMode=%t, err=%v", userID, targetPath, isRootMode, err)
-		return nil, err
-	}
-
-	// Ensure target directory exists
-	if err := client.MkdirAll(resolvedPath); err != nil {
-		logger.Errorf("创建目录失败: userID=%d, resolvedPath=%s, err=%v", userID, resolvedPath, err)
-		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("创建目录失败: %s", resolvedPath), err)
-	}
-
-	// 简单的文件名清理，防止路径遍历
-	safeFilename := path.Base(header.Filename)
-
-	// 统一路径格式，确保以 / 结尾，保证 Redis Key 一致性
-	// 用户期望统一为 /home/admin/ 这种格式
-	keyPath := resolvedPath
-	if !strings.HasSuffix(keyPath, "/") {
-		keyPath += "/"
-	}
-
-	// 检查是否有正在进行的上传任务 (简单的锁机制)
-	lockKey := fmt.Sprintf("upload:lock:%d", userID)
-	if s.redisRepo != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		// 尝试获取锁，如果存在则说明有任务在运行
-		val, err := s.redisRepo.Get(ctx, lockKey)
-		cancel()
-		if err == nil && val != "" && val != safeFilename {
-			return nil, errors.New(errors.CodeInvalidParam, fmt.Sprintf("当前有正在进行的上传任务: %s，请等待完成后再试", val))
-		}
-		// 设置锁，有效期 1 小时 (防止死锁)
-		ctx2, cancel2 := context.WithTimeout(context.Background(), 2*time.Second)
-		_ = s.redisRepo.Set(ctx2, lockKey, safeFilename, 1*time.Hour)
-		cancel2()
-	}
-
-	remotePath := path.Join(resolvedPath, safeFilename)
-	// 因为改为异步，这里不再创建 dst，而是在 goroutine 里创建
-	// dst, err := client.Create(remotePath)
-	// if err != nil {
-	// 	logger.Errorf("创建远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
-	// 	return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("创建远程文件失败: %s", remotePath), err)
-	// }
-	// defer func(dst *sftp.File) {
-	// 	err := dst.Close()
-	// 	if err != nil {
-	// 		logger.Errorf("关闭远程文件失败: userID=%d, remotePath=%s, err=%v", userID, remotePath, err)
-	// 	}
-	// }(dst)
-
-	// 进度上报
-	var total int64 = header.Size
-	// 使用 filename + targetPath 作为唯一标识，防止不同目录下同名文件进度冲突
-	progressKey := fmt.Sprintf("upload:progress:%d:%s:%s", userID, safeFilename, keyPath)
-
-	// Debug Log
-	logger.Infof("UploadFile: progressKey=%s, userID=%d, filename=%s, targetPath=%s, resolvedPath=%s, keyPath=%s, isRootMode=%v",
-		progressKey, userID, header.Filename, targetPath, resolvedPath, keyPath, isRootMode)
-
-	startTime := time.Now()
-
-	report := func(sent int64, status string, errMsg string) {
-		if s.redisRepo == nil {
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-
-		var percent float64
-		if total > 0 {
-			percent = float64(sent) / float64(total) * 100
-			if percent > 100 {
-				percent = 100
-			}
-		}
-
-		// 计算速度和剩余时间
-		duration := time.Since(startTime).Seconds()
-		var speed string
-		var remaining string
-		if duration > 0 && sent > 0 {
-			bytesPerSec := float64(sent) / duration
-			speed = formatUploadSpeed(bytesPerSec)
-			if total > sent {
-				remBytes := float64(total - sent)
-				remSec := remBytes / bytesPerSec
-				remaining = formatUploadDuration(time.Duration(remSec) * time.Second)
-			}
-		} else if status == "uploading" {
-			// 初始化状态，速度和时间为 0，防止只有名字和大小
-			speed = "0 B/s"
-			remaining = "计算中..."
-		}
-
-		data := &dto.UploadProgressData{
-			Filename:  safeFilename,
-			Status:    status,
-			Progress:  percent,
-			Uploaded:  sent,
-			Total:     total,
-			Speed:     speed,
-			Remaining: remaining,
-			Error:     errMsg,
-		}
-
-		if b, e := json.Marshal(data); e == nil {
-			_ = s.redisRepo.Set(ctx, progressKey, string(b), 30*time.Minute)
-		}
-	}
-	// 初始状态上报
-	report(0, "uploading", "")
-
-	// 优化 buffer 大小：128KB 较适合 SFTP 的包对齐
-
-	// 使用协程异步处理大文件上传，避免阻塞 HTTP 响应
-	// 方案 B：先存临时文件，再异步上传
-
-	// 创建临时文件
-	tempFile, err := os.CreateTemp("", fmt.Sprintf("upload_%d_%s_*", userID, safeFilename))
+	// 创建一个唯一的临时文件
+	tempFile, err := os.CreateTemp(tempDir, fmt.Sprintf("upload-%d-%s-", userID, header.Filename))
 	if err != nil {
 		logger.Errorf("创建临时文件失败: %v", err)
 		return nil, errors.New(errors.CodeInternalError, "创建临时文件失败")
 	}
-	tempPath := tempFile.Name()
-
-	// 将 multipart 文件写入临时文件
-	_, err = io.Copy(tempFile, file)
-	if err != nil {
+	defer func(tempFile *os.File) {
 		err := tempFile.Close()
 		if err != nil {
-			return nil, err
+			logger.Errorf("临时文件关闭失败")
 		}
-		err = os.Remove(tempPath)
-		if err != nil {
-			return nil, err
-		}
-		logger.Errorf("写入临时文件失败: %v", err)
-		return nil, errors.New(errors.CodeInternalError, "写入临时文件失败")
-	}
-	err = tempFile.Close()
+	}(tempFile)
+
+	// 将上传的文件内容保存到临时文件
+	_, err = io.Copy(tempFile, file)
 	if err != nil {
-		return nil, err
+		logger.Errorf("保存临时文件失败: %v", err)
+		_ = os.Remove(tempFile.Name()) // 清理失败的临时文件
+		return nil, errors.New(errors.CodeInternalError, "保存上传文件失败")
 	}
 
-	// 启动异步上传任务
-	go func() {
-		defer func(name string) {
-			err := os.Remove(name)
-			if err != nil {
+	// 获取临时文件的完整路径
+	tempFilePath := tempFile.Name()
 
-			}
-		}(tempPath)
-		defer func() {
-			// 释放锁
-			if s.redisRepo != nil {
-				ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				_ = s.redisRepo.Del(ctx, lockKey)
-				cancel()
-			}
-		}()
+	// 启动后台 goroutine 执行真正的上传
+	go s.asyncUploadToSFTP(userID, tempFilePath, header.Filename, targetPath, isRootMode, header.Size)
 
-		// 重新打开临时文件
-		localFile, err := os.Open(tempPath)
-		if err != nil {
-			report(0, "failed", "读取临时文件失败")
-			return
-		}
-		defer func(localFile *os.File) {
-			err := localFile.Close()
-			if err != nil {
-				logger.Errorf("临时文件关闭失败%v", err)
-			}
-		}(localFile)
-
-		// 重新获取 SFTP 客户端 (避免闭包捕获的 client 失效)
-		asyncClient, err := s.getSftpClient(userID, isRootMode)
-		if err != nil {
-			report(0, "failed", "SFTP连接失败")
-			return
-		}
-
-		asyncDst, err := asyncClient.Create(remotePath)
-		if err != nil {
-			report(0, "failed", fmt.Sprintf("创建远程文件失败: %v", err))
-			return
-		}
-		defer func(asyncDst *sftp.File) {
-			err := asyncDst.Close()
-			if err != nil {
-				logger.Errorf("远程文件关闭失败%v", err)
-			}
-		}(asyncDst)
-
-		// 开始传输
-		buf := make([]byte, 128*1024)
-		var sent int64 = 0
-		lastReportTime := time.Now()
-		lastReportSent := int64(0)
-
-		for {
-			nr, rerr := localFile.Read(buf)
-			if nr > 0 {
-				nw, werr := asyncDst.Write(buf[:nr])
-				if werr != nil {
-					report(sent, "failed", werr.Error())
-					return
-				}
-				sent += int64(nw)
-
-				// 频率控制
-				if time.Since(lastReportTime) > 500*time.Millisecond || (sent-lastReportSent) > 2*1024*1024 {
-					report(sent, "uploading", "")
-					lastReportTime = time.Now()
-					lastReportSent = sent
-				}
-			}
-			if rerr == io.EOF {
-				break
-			}
-			if rerr != nil {
-				report(sent, "failed", rerr.Error())
-				return
-			}
-		}
-
-		report(sent, "done", "")
-		s.invalidateFileListCache(userID, isRootMode, resolvedPath)
-	}()
-
-	// 主线程不再执行上传循环，直接返回成功
-	// 注意：因为改为异步，主线程不应该释放锁（锁在 goroutine 里释放）
-	// 但是上面的代码里 lockKey 的 defer delete 是在 if s.redisRepo != nil 代码块里定义的吗？
-	// 检查代码发现：defer func() { ... s.redisRepo.Del(ctx, lockKey) ... }() 是在 if 块里定义的。
-	// 这意味着主线程退出时会执行这个 defer，导致锁被释放。
-	// 我们需要修改锁的逻辑：不使用 defer 释放锁，而是手动释放。
-
-	// 由于 SearchReplace 只能替换局部，我们先还原上面的代码结构，再做修改。
-	// 这是一个较大的逻辑变更，我将分两步操作：
-	// 1. 先用 Read 读取完整的 UploadFile 函数。
-	// 2. 用 Write 重写整个 UploadFile 函数。
-
+	// 立即返回成功响应
 	return &dto.FileUploadData{
 		Filename: header.Filename,
 	}, nil
 }
 
-// DownloadFile 下载文件
-func (s *fileService) DownloadFile(userID int, p string, isRootMode bool) (io.ReadCloser, string, int64, error) {
+// asyncUploadToSFTP 是一个在后台运行的函数，负责将临时文件上传到 SFTP
+func (s *fileService) asyncUploadToSFTP(userID int, tempFilePath, originalFilename, targetPath string, isRootMode bool, totalSize int64) {
+	// 函数结束时删除临时文件
+	defer func(name string) {
+		err := os.Remove(name)
+		if err != nil {
+			logger.Errorf("删除对应文件失败")
+		}
+	}(tempFilePath)
+
+	// 准备进度上报
+	progressKey := s.getUploadProgressKey(userID, originalFilename, targetPath, isRootMode)
+	reportProgress := func(status string, uploaded int64, speed, remaining, errMsg string) {
+		if status == "failed" && errMsg != "" {
+			logger.Errorf("文件上传失败: userID=%d, filename=%s, targetPath=%s, error=%s", userID, originalFilename, targetPath, errMsg)
+		}
+		if s.redisRepo == nil {
+			return
+		}
+		progress := 0.0
+		if totalSize > 0 {
+			progress = float64(uploaded) / float64(totalSize) * 100
+		}
+		data := &dto.UploadProgressData{
+			Filename:  originalFilename,
+			Status:    status,
+			Progress:  progress,
+			Uploaded:  uploaded,
+			Total:     totalSize,
+			Speed:     speed,
+			Remaining: remaining,
+			Error:     errMsg,
+		}
+		jsonData, _ := json.Marshal(data)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = s.redisRepo.Set(ctx, progressKey, string(jsonData), 1*time.Hour) // 进度信息保留1小时
+	}
+
+	// 1. 获取 SFTP 客户端
+	client, err := s.getSftpClient(userID, isRootMode)
+	if err != nil {
+		reportProgress("failed", 0, "", "", "获取SFTP客户端失败: "+err.Error())
+		return
+	}
+
+	// 2. 解析最终目标路径
+	resolvedPath, err := s.resolvePath(userID, targetPath, isRootMode)
+	if err != nil {
+		reportProgress("failed", 0, "", "", "解析目标路径失败: "+err.Error())
+		return
+	}
+
+	// 3. 确保目标目录存在
+	if err := client.MkdirAll(resolvedPath); err != nil {
+		reportProgress("failed", 0, "", "", "创建SFTP目录失败: "+err.Error())
+		return
+	}
+
+	// 4. 创建远程文件
+	dstPath := path.Join(resolvedPath, originalFilename)
+	dstFile, err := client.Create(dstPath)
+	if err != nil {
+		reportProgress("failed", 0, "", "", "创建远程文件失败: "+err.Error())
+		return
+	}
+	defer func(dstFile *sftp.File) {
+		err := dstFile.Close()
+		if err != nil {
+			logger.Errorf("远程文件关闭失败")
+		}
+	}(dstFile)
+
+	// 5. 打开本地临时文件准备读取
+	localFile, err := os.Open(tempFilePath)
+	if err != nil {
+		reportProgress("failed", 0, "", "", "打开临时文件失败: "+err.Error())
+		return
+	}
+	defer func(localFile *os.File) {
+		err := localFile.Close()
+		if err != nil {
+			logger.Errorf("本地文件删除失败")
+		}
+	}(localFile)
+
+	// 6. 创建带进度跟踪的 Reader
+	progressReader := &ProgressReader{
+		Reader: localFile,
+		Total:  totalSize,
+		ReportFunc: func(uploaded int64, speed, remaining string) {
+			reportProgress("uploading", uploaded, speed, remaining, "")
+		},
+	}
+
+	// 7. 开始流式上传
+	buf := make([]byte, 64*1024) // 64KB buffer
+	_, err = io.CopyBuffer(dstFile, progressReader, buf)
+	if err != nil {
+		_ = client.Remove(dstPath) // 清理不完整的文件
+		reportProgress("failed", progressReader.Uploaded, "", "", "上传失败: "+err.Error())
+		return
+	}
+
+	// 8. 上传完成
+	reportProgress("completed", totalSize, "", "", "")
+
+	// 9. 清理文件列表缓存
+	s.invalidateFileListCache(userID, isRootMode, resolvedPath)
+}
+
+// getUploadProgressKey 生成用于 Redis 的进度键
+func (s *fileService) getUploadProgressKey(userID int, filename, targetPath string, isRootMode bool) string {
+	// 为了保证键的唯一性，我们需要一个稳定的、能代表这次上传任务的字符串。
+	// 这里的实现依赖于 `resolvePath` 来获取确定性的目标路径。
+	// 注意：这是一个简化实现，如果 resolvePath 逻辑很重，可能会影响性能。
+	// 在高并发场景下，可能需要更轻量的键生成策略。
+	resolvedPath, err := s.resolvePath(userID, targetPath, isRootMode)
+	if err != nil {
+		// 如果解析失败，使用原始路径，但这可能导致键不一致
+		resolvedPath = targetPath
+	}
+	return fmt.Sprintf("upload:progress:%d:%s:%s", userID, filename, resolvedPath)
+}
+
+// ProgressReader 是一个包装器，用于在读取时报告进度
+type ProgressReader struct {
+	Reader     io.Reader
+	Total      int64
+	Uploaded   int64
+	ReportFunc func(uploaded int64, speed, remaining string)
+	lastReport time.Time
+	startTime  time.Time
+}
+
+func (r *ProgressReader) Read(p []byte) (n int, err error) {
+	if r.startTime.IsZero() {
+		r.startTime = time.Now()
+		r.lastReport = time.Now()
+	}
+
+	n, err = r.Reader.Read(p)
+	r.Uploaded += int64(n)
+
+	// 每秒上报一次进度
+	if time.Since(r.lastReport) > time.Second || (err == io.EOF && n > 0) {
+		duration := time.Since(r.startTime).Seconds()
+		var speedStr, remainingStr string
+		if duration > 0 {
+			bytesPerSec := float64(r.Uploaded) / duration
+			speedStr = formatUploadSpeed(bytesPerSec)
+			if r.Total > r.Uploaded {
+				remBytes := float64(r.Total - r.Uploaded)
+				remSeconds := remBytes / bytesPerSec
+				remainingStr = formatUploadDuration(time.Duration(remSeconds) * time.Second)
+			}
+		}
+		if r.ReportFunc != nil {
+			r.ReportFunc(r.Uploaded, speedStr, remainingStr)
+		}
+		r.lastReport = time.Now()
+	}
+
+	return n, err
+}
+func (s *fileService) DownloadFile(userID int, p string, isRootMode bool) (io.ReadCloser, string, int64, time.Time, error) {
 	client, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
 		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
-		return nil, "", 0, err
+		return nil, "", 0, time.Time{}, err
 	}
 
 	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
 		logger.Errorf("解析下载路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, p, isRootMode, err)
-		return nil, "", 0, err
+		return nil, "", 0, time.Time{}, err
 	}
 
 	f, err := client.Open(resolvedPath)
 	if err != nil {
 		logger.Errorf("打开文件失败: userID=%d, resolvedPath=%s, err=%v", userID, resolvedPath, err)
-		return nil, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("打开文件失败: %s", resolvedPath), err)
+		return nil, "", 0, time.Time{}, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("打开文件失败: %s", resolvedPath), err)
 	}
 
 	stat, err := f.Stat()
 	if err != nil {
 		_ = f.Close()
 		logger.Errorf("获取文件状态失败: userID=%d, resolvedPath=%s, err=%v", userID, resolvedPath, err)
-		return nil, "", 0, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("获取文件状态失败: %s", resolvedPath), err)
+		return nil, "", 0, time.Time{}, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("获取文件状态失败: %s", resolvedPath), err)
 	}
 
-	return f, path.Base(resolvedPath), stat.Size(), nil
+	return f, path.Base(resolvedPath), stat.Size(), stat.ModTime(), nil
 }
 
 // DeleteFile 删除文件或目录
@@ -836,13 +787,16 @@ func (s *fileService) DeleteFile(userID int, p string, isRootMode bool) error {
 	// 1. 检查文件是否存在
 	sftpClient, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
+		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
 		return err
 	}
 	_, err = sftpClient.Stat(resolvedPath)
 	if err != nil {
 		if os.IsNotExist(err) {
+			logger.Warnf("文件或目录不存在: userID=%d, path=%s", userID, resolvedPath)
 			return errors.New(errors.CodeInvalidParam, "文件或目录不存在")
 		}
+		logger.Errorf("获取文件状态失败: userID=%d, path=%s, err=%v", userID, resolvedPath, err)
 		return errors.NewWithErr(errors.CodeInternalError, "获取文件状态失败", err)
 	}
 
@@ -858,8 +812,10 @@ func (s *fileService) DeleteFile(userID int, p string, isRootMode bool) error {
 
 	// 3. 再次检查文件是否存在，确认删除成功
 	if _, err := sftpClient.Stat(resolvedPath); err == nil {
+		logger.Errorf("删除验证失败（文件仍存在）: userID=%d, path=%s", userID, resolvedPath)
 		return errors.New(errors.CodeInternalError, "删除失败，可能权限不足")
 	} else if !os.IsNotExist(err) {
+		logger.Errorf("验证删除结果失败: userID=%d, path=%s, err=%v", userID, resolvedPath, err)
 		return errors.NewWithErr(errors.CodeInternalError, "验证删除结果失败", err)
 	}
 
@@ -886,6 +842,7 @@ func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMod
 	// 1. 检查目标文件/目录是否已存在，防止覆盖
 	client, err := s.getSftpClient(userID, isRootMode)
 	if err != nil {
+		logger.Errorf("获取SFTP客户端失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
 		return err
 	}
 
@@ -900,9 +857,11 @@ func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMod
 	// 检查 potentialPath 是否存在
 	if _, err := client.Stat(finalTargetDir); err == nil {
 		// 文件或目录已存在
+		logger.Warnf("解压目标路径已存在: userID=%d, target=%s", userID, finalTargetDir)
 		return errors.New(errors.CodeFileExists, fmt.Sprintf("目标路径已存在文件或目录: %s", expectedDirName))
 	} else if !os.IsNotExist(err) {
 		// 其他错误
+		logger.Errorf("检查解压目标状态失败: userID=%d, target=%s, err=%v", userID, finalTargetDir, err)
 		return errors.NewWithErr(errors.CodeInternalError, "检查文件状态失败", err)
 	}
 
@@ -1296,6 +1255,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 	// 启动对应的ftpclient，以root模式获取，因为要访问 /home
 	client, err := s.getSftpClient(opUserID, true) // isRootMode = true
 	if err != nil {
+		logger.Errorf("获取SFTP客户端失败: userID=%d, err=%v", opUserID, err)
 		return nil, err
 	}
 
@@ -1321,6 +1281,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 
 		// 确保路径没有越权
 		if !strings.HasPrefix(cleanPath, basePath) {
+			logger.Errorf("越权访问被拒绝: userID=%d, path=%s, basePath=%s", opUserID, req.Path, basePath)
 			return nil, errors.New(errors.CodeForbidden, fmt.Sprintf("越权访问被拒绝: %s", req.Path))
 		}
 		currentPath = cleanPath
@@ -1328,9 +1289,10 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 
 	realPath := currentPath
 
-	// 读取目标目录下的所有文件和目录
+	// 读取目标目录下的所有文件 and 目录
 	entries, err := client.ReadDir(realPath)
 	if err != nil {
+		logger.Errorf("读取目录失败: userID=%d, realPath=%s, err=%v", opUserID, realPath, err)
 		return nil, errors.NewWithErr(errors.CodeInternalError, fmt.Sprintf("读取目录失败: %s", realPath), err)
 	}
 
@@ -1351,6 +1313,8 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 				}
 			}
 		}
+	} else {
+		logger.Warnf("获取用户列表失败(非致命): userID=%d, err=%v", opUserID, err)
 	}
 
 	for _, entry := range entries {
@@ -1424,6 +1388,7 @@ func (s *fileService) GetHomeDirectoriesList(userID int, req *request.FileListRe
 // GetUploadProgress 获取上传进度
 func (s *fileService) GetUploadProgress(userID int, filename string, targetPath string) (*dto.UploadProgressData, error) {
 	if s.redisRepo == nil {
+		logger.Error("未配置进度存储 (Redis 未初始化)")
 		return nil, errors.New(errors.CodeInternalError, "未配置进度存储")
 	}
 
@@ -1433,43 +1398,31 @@ func (s *fileService) GetUploadProgress(userID int, filename string, targetPath 
 	// 1. 获取用户信息，判断是否是 root 模式（与上传逻辑保持一致）
 	isRootMode, err := s.authService.HasSystemAccess(userID, AccessTypeFile)
 	if err != nil {
+		logger.Errorf("获取权限状态失败: userID=%d, err=%v", userID, err)
 		return nil, err
 	}
 
-	// 2. 解析路径以获取 resolvedPath，确保与上传时生成的 Key 一致
-	resolvedPath, err := s.resolvePath(userID, targetPath, isRootMode)
-	if err != nil {
-		return nil, err
-	}
+	// 2. 获取进度键
+	progressKey := s.getUploadProgressKey(userID, filename, targetPath, isRootMode)
 
-	// 统一处理文件名，移除可能的路径前缀
-	safeFilename := path.Base(filename)
-
-	// 统一路径格式，确保以 / 结尾，保证 Redis Key 一致性
-	keyPath := resolvedPath
-	if !strings.HasSuffix(keyPath, "/") {
-		keyPath += "/"
-	}
-
-	key := fmt.Sprintf("upload:progress:%d:%s:%s", userID, safeFilename, keyPath)
-
-	// Debug Log
-	logger.Infof("GetUploadProgress: key=%s, userID=%d, filename=%s, targetPath=%s, resolvedPath=%s, keyPath=%s, isRootMode=%v",
-		key, userID, filename, targetPath, resolvedPath, keyPath, isRootMode)
-
+	// 3. 从 Redis 获取进度信息
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	val, err := s.redisRepo.Get(ctx, key)
+	val, err := s.redisRepo.Get(ctx, progressKey)
 	if err != nil || val == "" {
+		// 如果键不存在，可能任务已完成或从未开始
 		return &dto.UploadProgressData{
-			Filename: safeFilename,
+			Filename: filename,
 			Status:   "unknown",
 		}, nil
 	}
+
 	var out dto.UploadProgressData
 	if err := json.Unmarshal([]byte(val), &out); err != nil {
-		return nil, errors.NewWithErr(errors.CodeInternalError, "解析进度失败", err)
+		logger.Errorf("解析进度数据失败: userID=%d, progressKey=%s, err=%v", userID, progressKey, err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, "解析进度数据失败", err)
 	}
+
 	return &out, nil
 }
 

@@ -309,6 +309,30 @@ func (sm *SessionManager) DeleteSession(userID int, isRoot bool) error {
 	return nil
 }
 
+// CloseAllSessionsForUser 关闭某个用户的所有SSH会话
+func (sm *SessionManager) CloseAllSessionsForUser(userID int) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	var keysToDelete []string
+	for key, session := range sm.sessions {
+		if session.UserID == userID {
+			keysToDelete = append(keysToDelete, key)
+			if err := session.Close(); err != nil {
+				sm.logger.Warn("关闭用户所有SSH会话失败", zap.Int("user_id", userID), zap.String("key", key), zap.Error(err))
+			}
+		}
+	}
+
+	for _, key := range keysToDelete {
+		delete(sm.sessions, key)
+	}
+
+	if len(keysToDelete) > 0 {
+		sm.logger.Info("已关闭用户所有SSH会话", zap.Int("user_id", userID), zap.Int("closed_sessions", len(keysToDelete)))
+	}
+}
+
 // HasSession 检查会话是否存在
 func (sm *SessionManager) HasSession(userID int, isRoot bool) bool {
 	sm.mu.RLock()

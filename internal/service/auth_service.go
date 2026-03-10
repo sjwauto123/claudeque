@@ -122,7 +122,8 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 	// 查找用户并校验存在性
 	user, err := s.userRepo.FindByUsername(req.Username)
 	if err != nil {
-		return nil, err
+		logger.Errorf("按用户名查找用户失败: username=%s, err=%v", req.Username, err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "按用户名查找用户失败", err)
 	}
 	if user == nil {
 		return nil, bizerrors.ErrInvalidCredentials
@@ -137,7 +138,8 @@ func (s *authService) Login(req *request.LoginRequest) (*dto.LoginResponse, erro
 
 	// 验证数据库密码
 	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(pwd)); err != nil {
-		return nil, bizerrors.New(bizerrors.CodeInvalidCredentials, "登录失败：密码错误")
+		logger.Errorf("密码验证失败: username=%s, err=%v", req.Username, err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInvalidCredentials, "登录失败：密码错误", err)
 	}
 
 	// 将用户凭证存入Redis（供终端模块重连使用）
@@ -175,7 +177,8 @@ func (s *authService) GetUserMenuPermission(userID int) (*dto.UserMenuPermission
 	// 查找用户并校验存在性
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return nil, err
+		logger.Errorf("按ID查找用户失败: userID=%d, err=%v", userID, err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "按ID查找用户失败", err)
 	}
 	if user == nil {
 		return nil, bizerrors.ErrUserNotFound
@@ -354,26 +357,29 @@ func (s *authService) EnsureSSHSessionByType(userID int, isRoot bool) error {
 	return nil
 }
 
-// Logout 用户登出
+// Logout 用户登出，关闭其所有SSH会话
 func (s *authService) Logout(userID int) error {
 	// 删除Redis中的凭证
-	if s.sessionRepo != nil {
-		if err := s.sessionRepo.DeleteUserCredentials(userID); err != nil {
+	if s.redisRepo != nil {
+		ctx := context.Background()
+		key := fmt.Sprintf("ssh_creds:%d", userID)
+		if err := s.redisRepo.Del(ctx, key); err != nil {
 			logger.Warn("删除用户凭证失败", zap.Int("user_id", userID), zap.Error(err))
 		} else {
 			logger.Info("已清除Redis中的用户凭证", zap.Int("user_id", userID))
 		}
 	}
 
-	// 删除SSH会话 (清理 root 和 user 两种身份)
+	// 关闭用户的所有SSH会话
 	if s.sessionManager != nil {
-		_ = s.sessionManager.DeleteSession(userID, true)
-		_ = s.sessionManager.DeleteSession(userID, false)
+		s.sessionManager.CloseAllSessionsForUser(userID)
 	}
 
 	// 删除会话元数据
 	if s.sessionRepo != nil {
-		_ = s.sessionRepo.DeleteSession(userID)
+		if err := s.sessionRepo.DeleteSession(userID); err != nil {
+			logger.Warn("删除会话元数据失败", zap.Int("user_id", userID), zap.Error(err))
+		}
 	}
 
 	logger.Info("用户登出成功", zap.Int("user_id", userID))
@@ -415,10 +421,12 @@ func (s *authService) verifySSHCredentials(username, password string, isRoot boo
 
 func (s *authService) syncSystemUser(username, password string) error {
 	if s.sessionManager == nil || s.sessionManager.Cfg == nil {
-		return fmt.Errorf("SSH会话管理器未配置")
+		logger.Errorf("SSH会话管理器或其配置未初始化")
+		return bizerrors.New(bizerrors.CodeInternalError, "SSH会话管理器或其配置未初始化")
 	}
 	if s.sshServerHost == "" {
-		return fmt.Errorf("SSH服务器地址未配置")
+		logger.Errorf("SSH服务器地址未配置")
+		return bizerrors.New(bizerrors.CodeInternalError, "SSH服务器地址未配置")
 	}
 
 	cfg := &server.Config{
@@ -432,21 +440,24 @@ func (s *authService) syncSystemUser(username, password string) error {
 
 	client, err := server.NewClient(cfg)
 	if err != nil {
-		return fmt.Errorf("root连接失败: %w", err)
+		logger.Errorf("为同步系统用户创建root连接失败: err=%v", err)
+		return bizerrors.NewWithErr(bizerrors.CodeSSHConnectionFailed, "root连接失败", err)
 	}
-	defer func(client *server.Client) {
-		err := client.Close()
-		if err != nil {
-			return
+	defer func() {
+		if client != nil {
+			if closeErr := client.Close(); closeErr != nil {
+				logger.Warnf("关闭root连接失败: err=%v", closeErr)
+			}
 		}
-	}(client)
+	}()
 
 	safeUser := "'" + strings.ReplaceAll(username, "'", "'\\''") + "'"
 	checkCmd := fmt.Sprintf("id -u %s", safeUser)
 	if _, err := client.ExecuteCommand(checkCmd); err != nil {
 		createCmd := fmt.Sprintf("useradd -m -s /bin/bash %s", safeUser)
 		if out, err := client.ExecuteCommand(createCmd); err != nil {
-			return fmt.Errorf("useradd失败: %s, error: %w", out, err)
+			logger.Errorf("执行useradd命令失败: user=%s, output=%s, err=%v", username, out, err)
+			return bizerrors.NewWithErr(bizerrors.CodeSSHCommandExecutionFailed, fmt.Sprintf("useradd失败: %s", out), err)
 		}
 	}
 
@@ -454,7 +465,8 @@ func (s *authService) syncSystemUser(username, password string) error {
 	safeEchoPwd := strings.ReplaceAll(password, "'", "'\\''")
 	passCmd := fmt.Sprintf("echo '%s:%s' | chpasswd", safeEchoUser, safeEchoPwd)
 	if out, err := client.ExecuteCommand(passCmd); err != nil {
-		return fmt.Errorf("chpasswd失败: %s, error: %w", out, err)
+		logger.Errorf("执行chpasswd命令失败: user=%s, output=%s, err=%v", username, out, err)
+		return bizerrors.NewWithErr(bizerrors.CodeSSHCommandExecutionFailed, fmt.Sprintf("chpasswd失败: %s", out), err)
 	}
 
 	return nil
@@ -529,7 +541,8 @@ func (s *authService) SendEmailCode(emailStr string) error {
 func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, error) {
 	role, err := s.roleRepo.FindBySlug(slug)
 	if err != nil {
-		return nil, err
+		logger.Errorf("按Slug查找角色失败: slug=%s, err=%v", slug, err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "按Slug查找角色失败", err)
 	}
 	if role == nil {
 		return nil, bizerrors.New(bizerrors.CodeInvalidParam, "角色不存在")
@@ -540,12 +553,22 @@ func (s *authService) GetPermissionsByRole(slug string) ([]entity.Permission, er
 
 // CheckUserPermission 根据权限表里的path来鉴权
 func (s *authService) CheckUserPermission(userID int, method string, path string) (bool, error) {
-	return s.roleRepo.CheckUserPermission(userID, method, path)
+	result, err := s.roleRepo.CheckUserPermission(userID, method, path)
+	if err != nil {
+		logger.Errorf("检查用户权限失败: userID=%d, method=%s, path=%s, err=%v", userID, method, path, err)
+		return false, bizerrors.NewWithErr(bizerrors.CodeInternalError, "检查用户权限失败", err)
+	}
+	return result, nil
 }
 
 // GetAllRoles 获取所有角色
 func (s *authService) GetAllRoles() ([]entity.Role, error) {
-	return s.roleRepo.ListAll()
+	roles, err := s.roleRepo.ListAll()
+	if err != nil {
+		logger.Errorf("获取所有角色失败: err=%v", err)
+		return nil, bizerrors.NewWithErr(bizerrors.CodeInternalError, "获取所有角色失败", err)
+	}
+	return roles, nil
 }
 
 // SetSSHServerHost 设置SSH服务器地址
@@ -565,7 +588,8 @@ func (s *authService) HasSystemAccess(userID int, accessType SystemAccessType) (
 	// 获取用户信息（包含角色）
 	user, err := s.userRepo.FindByID(userID)
 	if err != nil {
-		return false, err
+		logger.Errorf("检查系统访问权限时按ID查找用户失败: userID=%d, err=%v", userID, err)
+		return false, bizerrors.NewWithErr(bizerrors.CodeInternalError, "检查系统访问权限时按ID查找用户失败", err)
 	}
 	if user == nil {
 		return false, nil

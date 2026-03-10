@@ -29,6 +29,7 @@ const (
 	CodeInvalidCaptcha         = 1007
 	CodeSSHCredentialsNotFound = 1008
 	CodeSSHLoginFailed         = 1009
+	CodeSSHConnectionFailed    = 1010
 
 	// 参数错误 2xxx
 	CodeInvalidParam     = 2001
@@ -74,6 +75,7 @@ var codeMessages = map[int]string{
 	CodeInvalidCaptcha:            "验证码无效",
 	CodeSSHCredentialsNotFound:    "SSH凭证未找到或已过期",
 	CodeSSHLoginFailed:            "SSH登录失败（密码错误或服务不可用）",
+	CodeSSHConnectionFailed:       "SSH连接失败",
 	CodeInvalidParam:              "参数错误",
 	CodeMissingParam:              "缺少必要参数",
 	CodeParamFormatError:          "参数格式错误",
