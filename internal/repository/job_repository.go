@@ -1,9 +1,11 @@
 package repository
 
 import (
+	"cloudque/pkg/logger"
 	"context"
 	"errors"
 	"fmt"
+	"go.uber.org/zap"
 	"strconv"
 	"strings"
 
@@ -158,37 +160,7 @@ func (r *jobRepository) UpdateStatus(id int, status int) error {
 	case entity.JobStatusCompleted, entity.JobStatusFailed, entity.JobStatusCancelled:
 		updates["finished_at"] = &now
 	}
-
-	return r.db.Model(&entity.Job{}).Where("id = ?", id).Updates(updates).Error
-}
-
-// UpdateStatusAndDesc 更新任务状态和描述（追加错误信息）
-func (r *jobRepository) UpdateStatusAndDesc(id int, status int, desc string) error {
-	var job entity.Job
-	if err := r.db.First(&job, id).Error; err != nil {
-		return err
-	}
-
-	newDesc := job.Description
-	if newDesc != "" {
-		newDesc += "\n"
-	}
-	newDesc += "System Error: " + desc
-
-	now := time.Now()
-	updates := map[string]interface{}{
-		"status":      status,
-		"description": newDesc,
-	}
-
-	// 根据状态设置相应的时间字段
-	switch status {
-	case entity.JobStatusRunning:
-		updates["started_at"] = &now
-	case entity.JobStatusCompleted, entity.JobStatusFailed, entity.JobStatusCancelled:
-		updates["finished_at"] = &now
-	}
-
+	logger.Info("<------>", zap.Int("job_id", id), zap.Int("status", status))
 	return r.db.Model(&entity.Job{}).Where("id = ?", id).Updates(updates).Error
 }
 
@@ -311,20 +283,30 @@ func (r *jobRepository) UpdateSug(jobId int) error {
 	return err
 }
 
+// GetStats 获取任务统计
 func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
-	var stats response.JobStatsResponse
-	err := r.db.Model(&entity.Job{}).
-		Select("COUNT(CASE WHEN status = ? THEN 1 END) as pending, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as queued, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as running, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as completed, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as failed, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as cancelled",
-			entity.JobStatusPending, entity.JobStatusQueued, entity.JobStatusRunning,
-			entity.JobStatusCompleted, entity.JobStatusFailed, entity.JobStatusCancelled).
-		Scan(&stats).Error
-	if err != nil {
+	var result response.JobStatsResponse
+	var total, running, queued, exception int64
+
+	if err := r.db.Model(&entity.Job{}).Count(&total).Error; err != nil {
 		return nil, err
 	}
-	return &stats, nil
+	result.Total = int(total)
+
+	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusRunning).Count(&running).Error; err != nil {
+		return nil, err
+	}
+	result.Running = int(running)
+
+	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu}).Count(&queued).Error; err != nil {
+		return nil, err
+	}
+	result.Queued = int(queued)
+
+	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusFailed}).Count(&exception).Error; err != nil {
+		return nil, err
+	}
+	result.Exception = int(exception)
+
+	return &result, nil
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -45,7 +44,6 @@ type JobProcess struct {
 	jobName string
 	cardIDs []int
 	done    chan struct{}
-	logFile *os.File // 日志文件句柄
 }
 
 // 用于接收 process.Wait 结果
@@ -103,7 +101,7 @@ func (s *scheduler) Start() {
 func (s *scheduler) startAuditor() {
 	defer s.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(60 * time.Minute)
 	defer ticker.Stop()
 
 	for {
@@ -190,7 +188,7 @@ func (s *scheduler) processQueue() {
 	}
 	logger.Warn("任务id为和状态为", zap.Int("job_id", job.ID), zap.Int("status", job.Status))
 	// 检查任务状态
-	if job.Status != entity.JobStatusQueued && job.Status != entity.JobStatusWaitingGpu && job.Status != entity.JobStatusPending {
+	if job.Status != entity.JobStatusQueued && job.Status != entity.JobStatusWaitingGpu {
 		// 任务状态异常，从队列移除
 		logger.Warn("任务状态异常，从队列移除", zap.Int("job_id", job.ID), zap.Int("status", job.Status))
 		if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
@@ -241,14 +239,9 @@ func (s *scheduler) processQueue() {
 	// 显卡可用，执行任务
 	if err := s.executeJob(job, cardIDs); err != nil {
 		logger.Error("启动任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-
-		// 检查任务状态，如果已经标记为失败，则从队列移除
-		if currentJob, err := s.jobRepo.GetByID(job.ID); err == nil && currentJob != nil {
-			if currentJob.Status == entity.JobStatusFailed {
-				if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
-					logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
-				}
-			}
+		// 如果启动失败，状态在 executeJob 内部已经处理，但需要从队列移除
+		if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
+			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
 		}
 		return
 	}
@@ -282,7 +275,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, "任务脚本路径为空"); err != nil {
+		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		// 移除队列
@@ -292,74 +285,14 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		return fmt.Errorf("任务脚本路径为空")
 	}
 
-	// 检查 python3 是否存在
-	if _, err := exec.LookPath("python3"); err != nil {
-		logger.Error("未找到 python3 命令", zap.Error(err))
-		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
-			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
-		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("未找到 python3 命令: %v", err)); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
-		// 移除队列
-		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
-			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
-		return fmt.Errorf("未找到 python3 命令: %w", err)
-	}
-
-	// 检查工作目录是否存在
-	workDir := filepath.Dir(scriptPath)
-	if _, err := os.Stat(workDir); err != nil {
-		logger.Error("工作目录不存在", zap.String("dir", workDir), zap.Error(err))
-		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
-			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
-		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("工作目录不存在: %v", err)); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
-		// 移除队列
-		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
-			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
-		return fmt.Errorf("工作目录不存在: %w", err)
-	}
-
 	// 构建命令
 	cmd := exec.Command("python3", "-u", scriptPath)
-	cmd.Dir = workDir
-
-	// 创建任务日志文件
-	logDir := "logs/jobs"
-	if err := os.MkdirAll(logDir, 0755); err != nil {
-		logger.Error("创建日志目录失败", zap.Error(err))
-	}
-	logPath := filepath.Join(logDir, fmt.Sprintf("job_%d_%d.log", job.ID, time.Now().Unix()))
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-	if err != nil {
-		logger.Error("创建任务日志文件失败", zap.Error(err), zap.Int("job_id", job.ID))
-	} else {
-		cmd.Stdout = logFile
-		cmd.Stderr = logFile
-	}
-
+	//cmd.Dir = filepath.Dir(scriptPath)
+	logger.Info("任务路径", zap.String("job_file_path", job.FilePath))
 	// 获取显存中的显卡信息以获取其当前的系统索引
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
 	if err != nil {
-		if logFile != nil {
-			logFile.Close()
-		}
 		logger.Error("获取显卡详情失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
-		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
-			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
-		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("获取显卡详情失败: %v", err)); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
-		// 移除队列
-		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
-			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
-		}
 		return fmt.Errorf("获取显卡详情失败: %w", err)
 	}
 
@@ -376,13 +309,10 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	// 启动任务
 	if err := cmd.Start(); err != nil {
-		if logFile != nil {
-			logFile.Close()
-		}
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
-		if err := s.jobRepo.UpdateStatusAndDesc(job.ID, entity.JobStatusFailed, fmt.Sprintf("启动训练脚本失败: %v", err)); err != nil {
+		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		// 移除队列
@@ -399,7 +329,6 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		jobName: job.Name,
 		cardIDs: cardIDs,
 		done:    make(chan struct{}),
-		logFile: logFile,
 	}
 	s.runningMu.Lock()
 	s.runningJobs[jp.pid] = jp // 使用 jp.pid 作为键
@@ -415,12 +344,14 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		}
 		if err := s.processRepo.Create(process); err != nil {
 			logger.Warn("写入进程表失败", zap.Error(err), zap.Int("pid", pid), zap.Int("card_id", cardID))
+			return err
 		}
 	}
 
 	// 写入进程缓存
 	if err := s.procCache.CreatePid(s.ctx, pid, job.Name); err != nil {
 		logger.Warn("写入进程缓存失败", zap.Error(err), zap.String("job_name", job.Name), zap.Int("pid", pid))
+		return err
 	}
 
 	// 监控进程
@@ -444,13 +375,6 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 	defer s.wg.Done()
 	defer close(jp.done)
 	defer func() {
-		// 关闭日志文件
-		if jp.logFile != nil {
-			if err := jp.logFile.Close(); err != nil {
-				logger.Warn("关闭任务日志文件失败", zap.Error(err), zap.Int("job_id", jobID))
-			}
-		}
-
 		// 从运行列表中移除
 		s.runningMu.Lock()
 		delete(s.runningJobs, jp.pid) // 使用 jp.pid 作为键
@@ -460,8 +384,8 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		cleanupCtx := context.Background()
 
 		// 删除进程缓存
-		if err := s.procCache.DelPid(cleanupCtx, jobName); err != nil {
-			logger.Warn("删除进程缓存失败", zap.Error(err), zap.String("job_Name", jobName))
+		if err := s.procCache.DelPid(cleanupCtx, jp.pid); err != nil {
+			logger.Warn("删除进程缓存失败", zap.Error(err), zap.Int("pid", jp.pid), zap.String("job_Name", jobName))
 		}
 
 		// 更新进程表，记录结束时间
@@ -708,9 +632,11 @@ func handleMissingProcess(s *scheduler, ctx context.Context, job *entity.Job, pr
 		}
 	}
 
-	// 清理 procCache 缓存
-	if err := s.procCache.DelPid(ctx, job.Name); err != nil {
-		logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.String("job_name", job.Name))
+	// 清理 procCache 缓存（有进程记录时使用 PID 删除）
+	if processRecord != nil {
+		if err := s.procCache.DelPid(ctx, processRecord.PID); err != nil {
+			logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.Int("pid", processRecord.PID), zap.String("job_name", job.Name))
+		}
 	}
 
 	// 释放显卡
