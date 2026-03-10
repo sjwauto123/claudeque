@@ -4,8 +4,9 @@ import (
 	"cloudque/internal/model/entity"
 	"context"
 	"fmt"
-	"github.com/redis/go-redis/v9"
 	"strconv"
+
+	"github.com/redis/go-redis/v9"
 
 	"gorm.io/gorm"
 )
@@ -54,28 +55,30 @@ func (r *processRepository) FindAll() ([]entity.Process, error) {
 }
 
 func (p *processCacheRepository) CreatePid(ctx context.Context, PID int, jobName string) error {
-	return p.redis.HSet(ctx, KEY, jobName, PID).Err()
+	field := strconv.Itoa(PID)
+	return p.redis.HSet(ctx, KEY, field, jobName).Err()
 }
 
-func (p *processCacheRepository) DelPid(ctx context.Context, jobName string) error {
-	return p.redis.HDel(ctx, KEY, jobName).Err()
+func (p *processCacheRepository) DelPid(ctx context.Context, PID int) error {
+	field := strconv.Itoa(PID)
+	return p.redis.HDel(ctx, KEY, field).Err()
 }
 
 func (p *processCacheRepository) GetAllPid(ctx context.Context) ([]string, []int, error) {
-	data, err := p.redis.HVals(ctx, KEY).Result()
+	// 使用 HGetAll 保证键值配对，避免 HVals/HKeys 顺序不一致
+	all, err := p.redis.HGetAll(ctx, KEY).Result()
 	if err != nil {
 		return nil, nil, err
 	}
-	keys, err := p.redis.HKeys(ctx, KEY).Result()
-	if err != nil {
-		return nil, nil, err
-	}
-	result := make([]int, len(data))
-	for i, v := range data {
-		result[i], err = strconv.Atoi(v)
+	jobNames := make([]string, 0, len(all))
+	pids := make([]int, 0, len(all))
+	for k, v := range all {
+		pid, err := strconv.Atoi(k)
 		if err != nil {
 			return nil, nil, fmt.Errorf("PID不合规：%w", err)
 		}
+		jobNames = append(jobNames, v)
+		pids = append(pids, pid)
 	}
-	return keys, result, nil
+	return jobNames, pids, nil
 }

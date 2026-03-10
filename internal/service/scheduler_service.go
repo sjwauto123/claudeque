@@ -384,8 +384,8 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		cleanupCtx := context.Background()
 
 		// 删除进程缓存
-		if err := s.procCache.DelPid(cleanupCtx, jobName); err != nil {
-			logger.Warn("删除进程缓存失败", zap.Error(err), zap.String("job_Name", jobName))
+		if err := s.procCache.DelPid(cleanupCtx, jp.pid); err != nil {
+			logger.Warn("删除进程缓存失败", zap.Error(err), zap.Int("pid", jp.pid), zap.String("job_Name", jobName))
 		}
 
 		// 更新进程表，记录结束时间
@@ -632,9 +632,11 @@ func handleMissingProcess(s *scheduler, ctx context.Context, job *entity.Job, pr
 		}
 	}
 
-	// 清理 procCache 缓存
-	if err := s.procCache.DelPid(ctx, job.Name); err != nil {
-		logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.String("job_name", job.Name))
+	// 清理 procCache 缓存（有进程记录时使用 PID 删除）
+	if processRecord != nil {
+		if err := s.procCache.DelPid(ctx, processRecord.PID); err != nil {
+			logger.Warn("恢复时删除进程缓存失败", zap.Error(err), zap.Int("pid", processRecord.PID), zap.String("job_name", job.Name))
+		}
 	}
 
 	// 释放显卡
