@@ -116,8 +116,8 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		return nil, fmt.Errorf("更新任务状态失败: %w", err)
 	}
 	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID)) // 这里不再打印 err，因为我们知道它是 nil
-	j, _ := s.jobRepo.GetByID(job.ID)
-	logger.Info("任务状态为", zap.Int("status", j.Status)) // 这里不再打印 err
+	//j, _ := s.jobRepo.GetByID(job.ID)
+	//logger.Info("任务状态为", zap.Int("status", j.Status)) // 这里不再打印 err
 	return job, nil
 }
 
