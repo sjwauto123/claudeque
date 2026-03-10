@@ -17,7 +17,6 @@ type Job struct {
 
 // JobStatus 任务状态常量
 const (
-	JobStatusPending    = 0 // 待执行
 	JobStatusQueued     = 1 // 排队中
 	JobStatusRunning    = 2 // 执行中
 	JobStatusCompleted  = 3 // 已完成

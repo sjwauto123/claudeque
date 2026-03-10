@@ -136,6 +136,11 @@ func (r *jobRepository) Create(job *entity.Job) error {
 	return nil
 }
 
+// Delete 删除任务
+func (r *jobRepository) Delete(jobId int) error {
+	return r.db.Delete(&entity.Job{}, jobId).Error
+}
+
 // GetByID 根据ID获取任务
 func (r *jobRepository) GetByID(id int) (*entity.Job, error) {
 	var job entity.Job
