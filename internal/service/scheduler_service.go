@@ -101,7 +101,7 @@ func (s *scheduler) Start() {
 func (s *scheduler) startAuditor() {
 	defer s.wg.Done()
 
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(60 * time.Minute)
 	defer ticker.Stop()
 
 	for {

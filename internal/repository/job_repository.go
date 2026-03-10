@@ -283,20 +283,30 @@ func (r *jobRepository) UpdateSug(jobId int) error {
 	return err
 }
 
+// GetStats 获取任务统计
 func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
-	var stats response.JobStatsResponse
-	err := r.db.Model(&entity.Job{}).
-		Select("COUNT(CASE WHEN status = ? THEN 1 END) as pending, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as queued, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as running, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as completed, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as failed, "+
-			"COUNT(CASE WHEN status = ? THEN 1 END) as cancelled",
-			entity.JobStatusPending, entity.JobStatusQueued, entity.JobStatusRunning,
-			entity.JobStatusCompleted, entity.JobStatusFailed, entity.JobStatusCancelled).
-		Scan(&stats).Error
-	if err != nil {
+	var result response.JobStatsResponse
+	var total, running, queued, exception int64
+
+	if err := r.db.Model(&entity.Job{}).Count(&total).Error; err != nil {
 		return nil, err
 	}
-	return &stats, nil
+	result.Total = int(total)
+
+	if err := r.db.Model(&entity.Job{}).Where("status = ?", entity.JobStatusRunning).Count(&running).Error; err != nil {
+		return nil, err
+	}
+	result.Running = int(running)
+
+	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusQueued, entity.JobStatusWaitingGpu}).Count(&queued).Error; err != nil {
+		return nil, err
+	}
+	result.Queued = int(queued)
+
+	if err := r.db.Model(&entity.Job{}).Where("status IN ?", []int{entity.JobStatusFailed}).Count(&exception).Error; err != nil {
+		return nil, err
+	}
+	result.Exception = int(exception)
+
+	return &result, nil
 }
