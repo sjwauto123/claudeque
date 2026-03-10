@@ -555,7 +555,12 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 		logger.Errorf("创建临时文件失败: %v", err)
 		return nil, errors.New(errors.CodeInternalError, "创建临时文件失败")
 	}
-	defer tempFile.Close()
+	defer func(tempFile *os.File) {
+		err := tempFile.Close()
+		if err != nil {
+			logger.Errorf("临时文件关闭失败")
+		}
+	}(tempFile)
 
 	// 将上传的文件内容保存到临时文件
 	_, err = io.Copy(tempFile, file)
@@ -580,7 +585,12 @@ func (s *fileService) UploadFile(userID int, file multipart.File, header *multip
 // asyncUploadToSFTP 是一个在后台运行的函数，负责将临时文件上传到 SFTP
 func (s *fileService) asyncUploadToSFTP(userID int, tempFilePath, originalFilename, targetPath string, isRootMode bool, totalSize int64) {
 	// 函数结束时删除临时文件
-	defer os.Remove(tempFilePath)
+	defer func(name string) {
+		err := os.Remove(name)
+		if err != nil {
+			logger.Errorf("删除对应文件失败")
+		}
+	}(tempFilePath)
 
 	// 准备进度上报
 	progressKey := s.getUploadProgressKey(userID, originalFilename, targetPath, isRootMode)
@@ -638,7 +648,12 @@ func (s *fileService) asyncUploadToSFTP(userID int, tempFilePath, originalFilena
 		reportProgress("failed", 0, "", "", "创建远程文件失败: "+err.Error())
 		return
 	}
-	defer dstFile.Close()
+	defer func(dstFile *sftp.File) {
+		err := dstFile.Close()
+		if err != nil {
+			logger.Errorf("远程文件关闭失败")
+		}
+	}(dstFile)
 
 	// 5. 打开本地临时文件准备读取
 	localFile, err := os.Open(tempFilePath)
@@ -646,7 +661,12 @@ func (s *fileService) asyncUploadToSFTP(userID int, tempFilePath, originalFilena
 		reportProgress("failed", 0, "", "", "打开临时文件失败: "+err.Error())
 		return
 	}
-	defer localFile.Close()
+	defer func(localFile *os.File) {
+		err := localFile.Close()
+		if err != nil {
+			logger.Errorf("本地文件删除失败")
+		}
+	}(localFile)
 
 	// 6. 创建带进度跟踪的 Reader
 	progressReader := &ProgressReader{
