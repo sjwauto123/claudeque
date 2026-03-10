@@ -1,9 +1,7 @@
 package repository
 
 import (
-	"cloudque/pkg/logger"
 	"context"
-	"go.uber.org/zap"
 	"strconv"
 
 	"github.com/redis/go-redis/v9"
@@ -28,7 +26,7 @@ func (r *queueRepository) Add(ctx context.Context, jobID int, score float64) err
 		Score:  score,
 		Member: strconv.Itoa(jobID),
 	}).Err()
-	logger.Debugf("《--------》入队了，err:%d", err)
+	//logger.Debugf("《--------》入队了，err:%d", err)
 	return err
 }
 
@@ -53,7 +51,7 @@ func (r *queueRepository) Peek(ctx context.Context) (int, float64, error) {
 
 func (r *queueRepository) NextSeq(ctx context.Context) (int, error) {
 	val, err := r.redis.Incr(ctx, SeqKey).Result()
-	logger.Info("seq:", zap.Int("seq", int(val)))
+	//logger.Info("seq:", zap.Int("seq", int(val)))
 	return int(val), err
 }
 

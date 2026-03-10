@@ -1,10 +1,8 @@
 package service
 
 import (
-	"cloudque/pkg/logger"
 	"context"
 	"errors"
-	"go.uber.org/zap"
 	"strconv"
 	"time"
 
@@ -42,7 +40,7 @@ func (s *queueService) Enqueue(ctx context.Context, jobID int, priority int) err
 	base := (MaxPriority - priority) * PriorityGap
 
 	score := float64(base + seq)
-	logger.Info("即将入队:", zap.Int("job_id", jobID))
+	//logger.Info("即将入队:", zap.Int("job_id", jobID))
 	return s.queueRepo.Add(ctx, jobID, score)
 }
 
