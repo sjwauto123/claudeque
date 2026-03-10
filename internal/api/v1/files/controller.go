@@ -4,6 +4,7 @@ import (
 	"cloudque/internal/middleware"
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
+	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"fmt"
 	"io"
@@ -37,6 +38,7 @@ func NewController(fileService service.FileService, authService service.AuthServ
 func (ctrl *Controller) GetFileList(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
+		logger.Warn("GetFileList: 用户未登录")
 		response.Unauthorized(c, "用户未登录")
 		return
 	}
@@ -44,6 +46,7 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 	var req request.FileListRequest
 	// 1. 尝试从 Query 参数获取 (标准 GET 请求)
 	if err := c.ShouldBindQuery(&req); err != nil {
+		logger.Errorf("GetFileList: 参数绑定失败: %v", err)
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -69,12 +72,14 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 
 	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
+		logger.Errorf("GetFileList: 检查系统访问权限失败: userID=%d, err=%v", userID, err)
 		response.BizError(c, err)
 		return
 	}
 
 	data, err := ctrl.fileService.GetFileList(userID, &req, isRootMode)
 	if err != nil {
+		logger.Errorf("GetFileList: 获取文件列表失败: userID=%d, path=%s, err=%v", userID, req.Path, err)
 		response.BizError(c, err)
 		return
 	}
@@ -95,6 +100,7 @@ func (ctrl *Controller) GetFileList(c *gin.Context) {
 func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
+		logger.Warn("GetDiskUsage: 用户未登录")
 		response.Unauthorized(c, "用户未登录")
 		return
 	}
@@ -104,6 +110,7 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 	if err := c.ShouldBindQuery(&req); err != nil {
 		// 如果 Query 绑定失败，尝试从 JSON Body 获取
 		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			logger.Errorf("GetDiskUsage: 参数绑定失败: %v", err)
 			response.BadRequest(c, err.Error())
 			return
 		}
@@ -114,18 +121,21 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 	}
 
 	if req.Path == "" {
+		logger.Warn("GetDiskUsage: 缺少 path 参数")
 		response.BadRequest(c, "缺少 path 参数")
 		return
 	}
 
 	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
+		logger.Errorf("GetDiskUsage: 检查系统访问权限失败: userID=%d, err=%v", userID, err)
 		response.BizError(c, err)
 		return
 	}
 
 	data, err := ctrl.fileService.GetDiskUsage(userID, req.Path, isRootMode)
 	if err != nil {
+		logger.Errorf("GetDiskUsage: 获取磁盘使用情况失败: userID=%d, path=%s, err=%v", userID, req.Path, err)
 		response.BizError(c, err)
 		return
 	}
@@ -137,6 +147,7 @@ func (ctrl *Controller) GetDiskUsage(c *gin.Context) {
 func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	if userID == 0 {
+		logger.Warn("ListHomeDirectories: 用户未登录")
 		response.Unauthorized(c, "用户未登录")
 		return
 	}
@@ -144,6 +155,7 @@ func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 	var req request.FileListRequest
 	// 1. 尝试从 Query 参数获取 (标准 GET 请求)
 	if err := c.ShouldBindQuery(&req); err != nil {
+		logger.Errorf("ListHomeDirectories: 参数绑定失败: %v", err)
 		response.BadRequest(c, err.Error())
 		return
 	}
@@ -168,6 +180,7 @@ func (ctrl *Controller) ListHomeDirectories(c *gin.Context) {
 
 	data, err := ctrl.fileService.GetHomeDirectoriesList(userID, &req, true)
 	if err != nil {
+		logger.Errorf("ListHomeDirectories: 获取家目录列表失败: userID=%d, path=%s, err=%v", userID, req.Path, err)
 		response.BizError(c, err)
 		return
 	}
@@ -183,6 +196,7 @@ func (ctrl *Controller) CalculateSize(c *gin.Context) {
 	if err := c.ShouldBindQuery(&req); err != nil {
 		// 如果 Query 绑定失败，尝试从 JSON Body 获取
 		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			logger.Errorf("CalculateSize: 参数绑定失败: %v", err)
 			response.BadRequest(c, err.Error())
 			return
 		}
@@ -194,12 +208,14 @@ func (ctrl *Controller) CalculateSize(c *gin.Context) {
 
 	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
+		logger.Errorf("CalculateSize: 检查系统访问权限失败: userID=%d, err=%v", userID, err)
 		response.BizError(c, err)
 		return
 	}
 
 	size, sizeStr, usage, err := ctrl.fileService.CalculateSize(userID, req.Path, isRootMode)
 	if err != nil {
+		logger.Errorf("CalculateSize: 计算大小失败: userID=%d, path=%s, err=%v", userID, req.Path, err)
 		response.BizError(c, err)
 		return
 	}
@@ -216,18 +232,21 @@ func (ctrl *Controller) DeleteFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.DeleteFileRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Errorf("DeleteFile: 参数绑定失败: %v", err)
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
+		logger.Errorf("DeleteFile: 检查系统访问权限失败: userID=%d, err=%v", userID, err)
 		response.BizError(c, err)
 		return
 	}
 
 	err = ctrl.fileService.DeleteFile(userID, req.Path, isRootMode)
 	if err != nil {
+		logger.Errorf("DeleteFile: 删除文件失败: userID=%d, path=%s, err=%v", userID, req.Path, err)
 		response.BizError(c, err)
 		return
 	}
@@ -240,18 +259,21 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UploadFileRequest
 	if err := c.ShouldBind(&req); err != nil {
+		logger.Errorf("UploadFile: 参数绑定失败: %v", err)
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	file, err := req.File.Open()
 	if err != nil {
+		logger.Errorf("UploadFile: 文件打开失败: %v", err)
 		response.BadRequest(c, "文件打开失败: "+err.Error())
 		return
 	}
 	defer func(file multipart.File) {
 		err := file.Close()
 		if err != nil {
+			logger.Errorf("UploadFile: 关闭上传文件失败: %v", err)
 			return
 		}
 	}(file)
@@ -259,6 +281,7 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 	// 判断是系统模式还是用户模式
 	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
+		logger.Errorf("UploadFile: 检查系统访问权限失败: userID=%d, err=%v", userID, err)
 		response.BizError(c, err)
 		return
 	}
@@ -267,10 +290,12 @@ func (ctrl *Controller) UploadFile(c *gin.Context) {
 	if err != nil {
 		// 如果是上传锁冲突，返回特定状态码给前端
 		if strings.Contains(err.Error(), "当前有正在进行的上传任务") {
+			logger.Warnf("UploadFile: 上传锁冲突: userID=%d, path=%s", userID, req.TargetPath)
 			// 429 Too Many Requests 或者 409 Conflict
 			response.Error(c, 409, err.Error())
 			return
 		}
+		logger.Errorf("UploadFile: 上传文件失败: userID=%d, path=%s, err=%v", userID, req.TargetPath, err)
 		response.BizError(c, err)
 		return
 	}
@@ -283,12 +308,14 @@ func (ctrl *Controller) GetUploadProgress(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UploadProgressRequest
 	if err := c.ShouldBindQuery(&req); err != nil {
+		logger.Errorf("GetUploadProgress: 参数绑定失败: %v", err)
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	data, err := ctrl.fileService.GetUploadProgress(userID, req.Filename, req.TargetPath)
 	if err != nil {
+		logger.Errorf("GetUploadProgress: 获取上传进度失败: userID=%d, filename=%s, path=%s, err=%v", userID, req.Filename, req.TargetPath, err)
 		response.BizError(c, err)
 		return
 	}
@@ -306,6 +333,7 @@ func (ctrl *Controller) DownloadFile(c *gin.Context) {
 		// 尝试从 JSON Body 获取 (支持前端 POST/GET JSON 调用)
 		// 注意：GET 请求带 Body 不符合标准，但在某些内部调用中可能存在
 		if errBody := c.ShouldBindJSON(&req); errBody != nil {
+			logger.Errorf("DownloadFile: 参数绑定失败: %v", err)
 			// 如果两者都失败，返回 Query 的错误(或者根据情况返回)
 			response.BadRequest(c, "Invalid parameters: "+err.Error())
 			return
@@ -314,6 +342,7 @@ func (ctrl *Controller) DownloadFile(c *gin.Context) {
 	// 二次校验：如果 Query 绑定成功但 Path 为空(虽然有 required 校验，但为了稳妥)，再次尝试 JSON
 	if req.Path == "" {
 		if err := c.ShouldBindJSON(&req); err != nil {
+			logger.Errorf("DownloadFile: 缺少 path 参数: %v", err)
 			response.BadRequest(c, err.Error())
 			return
 		}
@@ -321,26 +350,38 @@ func (ctrl *Controller) DownloadFile(c *gin.Context) {
 
 	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
+		logger.Errorf("DownloadFile: 检查系统访问权限失败: userID=%d, err=%v", userID, err)
 		response.BizError(c, err)
 		return
 	}
-	reader, filename, fileSize, err := ctrl.fileService.DownloadFile(userID, req.Path, isRootMode)
+	reader, filename, fileSize, _, err := ctrl.fileService.DownloadFile(userID, req.Path, isRootMode)
 	if err != nil {
+		logger.Errorf("DownloadFile: 下载文件失败: userID=%d, path=%s, err=%v", userID, req.Path, err)
 		response.BizError(c, err)
 		return
 	}
 	defer func(reader io.ReadCloser) {
 		err := reader.Close()
 		if err != nil {
+			logger.Errorf("DownloadFile: 关闭下载文件失败: %v", err)
 			return
 		}
 	}(reader)
 
+	// 设置响应头
 	c.Header("Content-Disposition", "attachment; filename="+url.QueryEscape(filename))
+	c.Header("Content-Type", "application/octet-stream") // 通用二进制类型
 	c.Header("Content-Length", fmt.Sprintf("%d", fileSize))
-	_, err = io.Copy(c.Writer, reader)
+
+	// 使用 http.ServeContent 进行流式传输，它能处理 Range 请求等
+	// 注意：SFTP reader 不支持 Seek，所以我们不能直接用 http.ServeContent
+	// 我们手动设置了必要的头，然后用 io.Copy
+	// 为了提升性能，可以使用 io.CopyBuffer
+	buf := make([]byte, 32*1024) // 32KB buffer
+	_, err = io.CopyBuffer(c.Writer, reader, buf)
 	if err != nil {
-		return
+		// 记录错误，但此时可能已经无法向客户端发送错误信息了
+		logger.Errorf("下载文件时发生错误: %v", err)
 	}
 }
 
@@ -349,12 +390,14 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 	userID := middleware.GetUserID(c)
 	var req request.UnzipRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
+		logger.Errorf("UnzipFile: 参数绑定失败: %v", err)
 		response.BadRequest(c, err.Error())
 		return
 	}
 
 	isRootMode, err := ctrl.authService.HasSystemAccess(userID, service.AccessTypeFile)
 	if err != nil {
+		logger.Errorf("UnzipFile: 检查系统访问权限失败: userID=%d, err=%v", userID, err)
 		response.BizError(c, err)
 		return
 	}
@@ -363,6 +406,7 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 	// 注意：如果解压文件过大，可能会导致请求超时，建议后续优化为 预检查+异步任务 模式
 	err = ctrl.fileService.UnzipFile(userID, &req, isRootMode)
 	if err != nil {
+		logger.Errorf("UnzipFile: 解压文件失败: userID=%d, path=%s, err=%v", userID, req.Path, err)
 		response.BizError(c, err)
 		return
 	}

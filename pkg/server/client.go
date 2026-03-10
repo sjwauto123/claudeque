@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"cloudque/pkg/errors"
+	"cloudque/pkg/logger"
+
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -233,11 +236,12 @@ func (c *Client) MkdirAll(path string) error {
 func (c *Client) ExecuteCommand(cmd string) (string, error) {
 	session, err := c.sshClient.NewSession()
 	if err != nil {
-		return "", fmt.Errorf("创建会话失败: %w", err)
+		logger.Errorf("创建SSH会话失败: %s, 错误: %v", cmd, err)
+		return "", errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("创建SSH会话失败: %s", cmd), err)
 	}
 	defer func() {
-		if err := session.Close(); err != nil && err != io.EOF {
-			// 仅记录非 EOF 错误，或者直接忽略
+		if closeErr := session.Close(); closeErr != nil && closeErr != io.EOF {
+			logger.Warnf("关闭SSH会话失败: %s, 错误: %v", cmd, closeErr)
 		}
 	}()
 
@@ -245,7 +249,9 @@ func (c *Client) ExecuteCommand(cmd string) (string, error) {
 	session.Stdout = &buf
 	session.Stderr = &buf
 	if err := session.Run(cmd); err != nil {
-		return buf.String(), err
+		output := buf.String()
+		logger.Errorf("执行SSH命令失败: %s, 输出: %s, 错误: %v", cmd, output, err)
+		return output, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("执行SSH命令失败: %s, 输出: %s", cmd, output), err)
 	}
 	return buf.String(), nil
 }
