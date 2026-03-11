@@ -14,14 +14,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/redis/go-redis/v9"
+	"go.uber.org/zap"
+	"golang.org/x/crypto/bcrypt"
 	"log"
 	"os"
 	"strconv"
 	"strings"
-
-	"github.com/redis/go-redis/v9"
-	"go.uber.org/zap"
-	"golang.org/x/crypto/bcrypt"
 )
 
 // userService 用户服务实现
@@ -292,7 +291,7 @@ func (s *userService) deleteVMUser(username string) error {
 	checkCmd := fmt.Sprintf("id -u %s", username)
 	if _, err := client.ExecuteCommand(checkCmd); err != nil {
 		// User not found, consider as success
-		return nil
+		return err
 	}
 
 	// Delete user
