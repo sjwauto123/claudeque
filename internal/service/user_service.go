@@ -134,7 +134,12 @@ func (s *userService) createVMUser(username, password string) error {
 	if err != nil {
 		return fmt.Errorf("connect to vm failed: %w", err)
 	}
-	defer client.Close()
+	defer func(client *server.Client) {
+		err := client.Close()
+		if err != nil {
+			logger.Error("与服务器连接的client关闭失败")
+		}
+	}(client)
 
 	// 1. Check if user exists
 	checkCmd := fmt.Sprintf("id -u %s", username)
@@ -257,7 +262,12 @@ func (s *userService) updateVMPassword(username, password string) error {
 	if err != nil {
 		return fmt.Errorf("connect to vm failed: %w", err)
 	}
-	defer client.Close()
+	defer func(client *server.Client) {
+		err := client.Close()
+		if err != nil {
+			logger.Error("与服务器连接的client关闭失败")
+		}
+	}(client)
 
 	// Set password
 	// Escape single quotes in password for shell safety
@@ -285,12 +295,16 @@ func (s *userService) deleteVMUser(username string) error {
 	if err != nil {
 		return fmt.Errorf("connect to vm failed: %w", err)
 	}
-	defer client.Close()
+	defer func(client *server.Client) {
+		err := client.Close()
+		if err != nil {
+			logger.Error("与服务器连接的client关闭失败")
+		}
+	}(client)
 
 	// Check if user exists
 	checkCmd := fmt.Sprintf("id -u %s", username)
 	if _, err := client.ExecuteCommand(checkCmd); err != nil {
-		// User not found, consider as success
 		return err
 	}
 

@@ -120,7 +120,7 @@ func (w *PrivateTerminalWriter) Write(p []byte) (int, error) {
 	select {
 	case w.client.Send <- jsonBytes:
 	default:
-		logger.Errorf("PrivateTerminalWriter.Write: %s发送缓冲区满，无法发送数据", w.client)
+		logger.Errorf("PrivateTerminalWriter.Write: %v发送缓冲区满，无法发送数据", w.client)
 	}
 
 	return len(p), nil
