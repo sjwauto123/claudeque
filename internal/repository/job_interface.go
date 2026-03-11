@@ -16,6 +16,8 @@ type JobRepository interface {
 	GetWaitJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error)
 	// Create 新建任务
 	Create(job *entity.Job) error
+	// Delete 删除任务
+	Delete(jobId int) error
 	// GetByID 根据ID获得任务信息
 	GetByID(id int) (*entity.Job, error)
 	// UpdateStatus 更新任务状态

@@ -94,30 +94,22 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		UserId:      userID,
 		FilePath:    req.FilePath,
 		GpuIDs:      gpuIDs,
-		Status:      entity.JobStatusPending,
+		Status:      entity.JobStatusQueued,
 	}
 
 	if err := s.jobRepo.Create(job); err != nil {
 		return nil, fmt.Errorf("创建任务失败: %w", err)
 	}
 
-	// 将任务加入排队队列
 	enqueueErr := s.queueSvc.Enqueue(ctx, job.ID, priority)
 	if enqueueErr != nil {
-		// 如果入队失败，更新任务状态为失败
-		logger.Error("任务状态变更为失败：加入排队队列失败", zap.Int("job_id", job.ID), zap.Error(enqueueErr)) // 明确打印 enqueueErr
-		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
-			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
+		if err := s.jobRepo.Delete(job.ID); err != nil {
+			logger.Warn("回滚删除任务失败", zap.Int("job_id", job.ID), zap.Error(err))
 		}
 		return nil, fmt.Errorf("加入排队队列失败: %w", enqueueErr)
 	}
-	// 更新任务状态为排队中
-	if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusQueued); err != nil {
-		return nil, fmt.Errorf("更新任务状态失败: %w", err)
-	}
+
 	logger.Info("加入排队队列成功", zap.Int("job_id", job.ID)) // 这里不再打印 err，因为我们知道它是 nil
-	//j, _ := s.jobRepo.GetByID(job.ID)
-	//logger.Info("任务状态为", zap.Int("status", j.Status)) // 这里不再打印 err
 	return job, nil
 }
 
@@ -139,14 +131,20 @@ func (s *jobService) CancelJob(ctx context.Context, jobID int, userID int) error
 		return errors.New(errors.CodeJobCannotCancel, "任务状态不允许取消")
 	}
 
-	// 从队列中移除
-	if err := s.queueSvc.Remove(ctx, jobID); err != nil {
-		return fmt.Errorf("从队列移除失败: %w", err)
-	}
-
 	// 更新任务状态
 	if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusCancelled); err != nil {
 		return fmt.Errorf("更新任务状态失败: %w", err)
+	}
+
+	// 从队列中移除
+	if err := s.queueSvc.Remove(ctx, jobID); err != nil {
+		logger.Warn("队列删除失败，回滚任务状态", zap.Int("job_id", jobID), zap.Error(err))
+
+		if err := s.jobRepo.UpdateStatus(jobID, job.Status); err != nil {
+			logger.Warn("回滚跟任务状态失败", zap.Int("job_id", job.ID), zap.Error(err))
+		}
+
+		return fmt.Errorf("从队列移除失败: %w", err)
 	}
 
 	return nil
