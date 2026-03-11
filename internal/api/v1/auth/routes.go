@@ -17,7 +17,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 		//登录
 		authGroup.POST("/login", middleware.WithOperation("用户登录"), ctrl.Login)
 		//登出
-		authGroup.POST("/logout", middleware.WithOperation("用户登出"), ctrl.Logout)
+		authGroup.POST("/logout", middleware.Auth(), middleware.WithOperation("用户登出"), ctrl.Logout)
 		//发送邮箱验证码
 		authGroup.POST("/email/code", ctrl.SendEmailCode)
 		//忘记密码

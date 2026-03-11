@@ -10,7 +10,6 @@ import (
 	bizerrors "cloudque/pkg/errors"
 	"cloudque/pkg/jwt"
 	"cloudque/pkg/logger"
-	"cloudque/pkg/server"
 	"cloudque/pkg/ssh"
 	"cloudque/pkg/utils"
 	"context"
@@ -393,83 +392,6 @@ func (s *authService) RefreshToken(token string) (string, error) {
 		return "", err
 	}
 	return newToken, nil
-}
-
-// verifySSHCredentials 验证SSH凭据
-func (s *authService) verifySSHCredentials(username, password string, isRoot bool) (*server.Client, error) {
-	if s.sshServerHost == "" {
-		return nil, bizerrors.New(bizerrors.CodeInternalError, "SSH服务器地址未配置")
-	}
-	sshConfig := &server.Config{
-		Host:     s.sshServerHost,
-		Username: username,
-		Password: password,
-		Timeout:  s.sessionManager.GetTimeout(),
-	}
-	// 只有当是root用户时，才添加私钥路径和私钥密码
-	if isRoot {
-		sshConfig.PrivateKeyPath = s.sessionManager.Cfg.PrivateKeyPath
-		sshConfig.PrivateKeyPassphrase = s.sessionManager.Cfg.PrivateKeyPassphrase
-	}
-
-	client, err := server.NewClient(sshConfig)
-	if err != nil {
-		return nil, bizerrors.NewWithErr(403, "SSH凭据验证失败", err)
-	}
-	return client, nil
-}
-
-func (s *authService) syncSystemUser(username, password string) error {
-	if s.sessionManager == nil || s.sessionManager.Cfg == nil {
-		logger.Errorf("SSH会话管理器或其配置未初始化")
-		return bizerrors.New(bizerrors.CodeInternalError, "SSH会话管理器或其配置未初始化")
-	}
-	if s.sshServerHost == "" {
-		logger.Errorf("SSH服务器地址未配置")
-		return bizerrors.New(bizerrors.CodeInternalError, "SSH服务器地址未配置")
-	}
-
-	cfg := &server.Config{
-		Host:                 s.sshServerHost,
-		Username:             s.sessionManager.GetRootUsername(),
-		Password:             s.sessionManager.Cfg.RootPassword,
-		Timeout:              s.sessionManager.GetTimeout(),
-		PrivateKeyPath:       s.sessionManager.Cfg.PrivateKeyPath,
-		PrivateKeyPassphrase: s.sessionManager.Cfg.PrivateKeyPassphrase,
-	}
-
-	client, err := server.NewClient(cfg)
-	if err != nil {
-		logger.Errorf("为同步系统用户创建root连接失败: err=%v", err)
-		return bizerrors.NewWithErr(bizerrors.CodeSSHConnectionFailed, "root连接失败", err)
-	}
-	defer func() {
-		if client != nil {
-			if closeErr := client.Close(); closeErr != nil {
-				logger.Warnf("关闭root连接失败: err=%v", closeErr)
-			}
-		}
-	}()
-
-	safeUser := "'" + strings.ReplaceAll(username, "'", "'\\''") + "'"
-	checkCmd := fmt.Sprintf("id -u %s", safeUser)
-	if _, err := client.ExecuteCommand(checkCmd); err != nil {
-		createCmd := fmt.Sprintf("useradd -m -s /bin/bash %s", safeUser)
-		if out, err := client.ExecuteCommand(createCmd); err != nil {
-			logger.Errorf("执行useradd命令失败: user=%s, output=%s, err=%v", username, out, err)
-			return bizerrors.NewWithErr(bizerrors.CodeSSHCommandExecutionFailed, fmt.Sprintf("useradd失败: %s", out), err)
-		}
-	}
-
-	safeEchoUser := strings.ReplaceAll(username, "'", "'\\''")
-	safeEchoPwd := strings.ReplaceAll(password, "'", "'\\''")
-	passCmd := fmt.Sprintf("echo '%s:%s' | chpasswd", safeEchoUser, safeEchoPwd)
-	if out, err := client.ExecuteCommand(passCmd); err != nil {
-		logger.Errorf("执行chpasswd命令失败: user=%s, output=%s, err=%v", username, out, err)
-		return bizerrors.NewWithErr(bizerrors.CodeSSHCommandExecutionFailed, fmt.Sprintf("chpasswd失败: %s", out), err)
-	}
-
-	return nil
 }
 
 // saveUserCredentialsToRedis 将用户的SSH凭证保存到Redis
