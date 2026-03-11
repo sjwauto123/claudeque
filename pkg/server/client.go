@@ -156,9 +156,13 @@ func dialAndCreateClient(config *Config, sshConfig *ssh.ClientConfig) (*Client, 
 
 	sftpClient, err := sftp.NewClient(sshClient, sftp.MaxPacket(32768), sftp.UseConcurrentWrites(true))
 	if err != nil {
-		err := sshClient.Close()
-		if err != nil {
-			return nil, err
+		if sshClient != nil {
+			err := sshClient.Close()
+			if err != nil {
+				return nil, fmt.Errorf("sshClient关闭的时候报错%v", err)
+			}
+		} else {
+			return nil, fmt.Errorf("SFTP连接失败，因为sshclient为nil%v", err)
 		}
 		return nil, fmt.Errorf("SFTP连接失败: %w", err)
 	}
