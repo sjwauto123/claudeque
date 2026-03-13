@@ -302,7 +302,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		gpuIndices[i] = strconv.Itoa(card.Index)
 	}
 	cmd.Env = append(os.Environ(),
-		//"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
+		"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
 		"JOB_ID="+strconv.Itoa(job.ID),
 		"PYTHONUNBUFFERED=1",
 	)
