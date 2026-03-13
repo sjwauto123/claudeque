@@ -10,7 +10,6 @@ import (
 
 // FileService 文件服务接口
 type FileService interface {
-	//获取文件列表
 	GetFileList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
 	UploadFile(userID int, file multipart.File, header *multipart.FileHeader, targetPath string, isRootMode bool) (*dto.FileUploadData, error)
 	DownloadFile(userID int, path string, isRootMode bool) (io.ReadCloser, string, int64, time.Time, error)
