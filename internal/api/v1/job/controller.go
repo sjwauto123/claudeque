@@ -5,11 +5,13 @@ import (
 	"cloudque/internal/model/dto/request"
 	dtoResponse "cloudque/internal/model/dto/response"
 	"cloudque/internal/service"
+	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"cloudque/pkg/utils"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 // Controller 任务控制器
@@ -140,4 +142,15 @@ func (ctrl *Controller) GetGpus(c *gin.Context) {
 		return
 	}
 	response.Success(c, gpus)
+}
+
+// GetCondaEnvs 获取Conda环境列表
+func (ctrl *Controller) GetCondaEnvs(c *gin.Context) {
+	envs, err := ctrl.jobService.ListCondaEnvs(c.Request.Context())
+	if err != nil {
+		response.InternalError(c, err.Error())
+		logger.Error("获取Conda环境列表失败", zap.Error(err))
+		return
+	}
+	response.Success(c, envs)
 }
