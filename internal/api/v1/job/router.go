@@ -19,5 +19,6 @@ func (ctrl *Controller) JobsRoutes(router *gin.RouterGroup) {
 		r.GET("/stats", middleware.WithOperation("任务统计"), ctrl.GetStats)
 		r.DELETE("/:id", middleware.WithOperation("删除排队任务"), ctrl.CancelJob)
 		r.GET("/gpus", middleware.WithOperation("获取所有GPU信息"), ctrl.GetGpus)
+		r.GET("/conda-envs", middleware.WithOperation("获取Conda环境列表"), ctrl.GetCondaEnvs)
 	}
 }
