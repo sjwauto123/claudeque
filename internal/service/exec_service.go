@@ -40,6 +40,11 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	if err != nil {
 		return 0, err
 	}
+	jobID := env["JOB_ID"]
+	var exitFile string
+	if jobID != "" {
+		exitFile = "/tmp/cloudque_exit/job_" + jobID + ".code"
+	}
 	var exports []string
 	for k, v := range env {
 		escaped := strings.ReplaceAll(v, "'", "'\\''")
@@ -53,8 +58,14 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	if len(exports) > 0 {
 		parts = append(parts, strings.Join(exports, "; "))
 	}
+	if exitFile != "" {
+		parts = append(parts, "mkdir -p /tmp/cloudque_exit")
+	}
 	parts = append(parts, cmd)
 	full := strings.Join(parts, " && ")
+	if exitFile != "" {
+		full = full + " ; code=$?; echo $code > " + escapeBashArg(exitFile)
+	}
 	wrapper := "bash -lc '(" + full + ") >/dev/null 2>&1 & echo $!'"
 	out, err := session.Client.ExecuteCommand(wrapper)
 	if err != nil {
