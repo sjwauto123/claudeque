@@ -211,7 +211,7 @@ func (s *jobService) ListCondaEnvs(ctx context.Context, username string) ([]resp
 		}
 	}
 	if condaRoot == "" {
-		return nil, fmt.Errorf("conda installation not found for user %s", username)
+		return nil, fmt.Errorf("%s 中没有Conda环境", username)
 	}
 	envs := make([]response.CondaEnv, 0, 8)
 	// base 环境

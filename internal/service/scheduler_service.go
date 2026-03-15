@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -415,62 +416,45 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		}
 	}()
 
-	// 获取 *os.Process 对象
-	process, err := os.FindProcess(jp.pid)
-	if err != nil {
-		logger.Error("监控任务时查找进程失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
-		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
-			logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", jobID))
-		}
-		return
-	}
-
-	// 使用 select 监听进程结束或调度器停止
-	processWaitChan := make(chan waitResult, 1)
-	go func() {
-		state, err := process.Wait() // 忽略 *os.ProcessState，只发送 error
-		processWaitChan <- waitResult{
-			state: state,
-			err:   err,
-		}
-	}()
-
-	select {
-	case <-s.ctx.Done():
-		logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
-		return // 调度器停止，monitorJob 退出，不影响任务进程
-	case result := <-processWaitChan: // 进程结束
-		// 获取任务详情
-		logger.Info("任务进程退出", zap.Int("job_id", jobID), zap.Int("pid", jp.pid), zap.Error(result.err))
-		job, err2 := s.jobRepo.GetByID(jobID)
-		if err2 != nil {
-			logger.Error("获取任务详情失败", zap.Error(err2), zap.Int("job_id", jobID))
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-s.ctx.Done():
+			logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 			return
-		}
-
-		if job == nil {
-			return
-		}
-
-		// 更新任务状态
-		status := entity.JobStatusCompleted
-		if result.err != nil {
-			status = entity.JobStatusFailed
-			logger.Info("任务执行结束（Wait调用失败）", zap.Int("job_id", jobID), zap.Error(result.err))
-		} else {
-			exitCode := result.state.ExitCode()
-			// 非0退出码（包括 kill -9）
-			if exitCode != 0 {
-				status = entity.JobStatusFailed
-				logger.Info("任务执行结束（异常退出）", zap.Int("job_id", jobID), zap.Int("exit_code", exitCode))
-			} else {
-				status = entity.JobStatusCompleted
-				logger.Info("任务执行成功", zap.Int("job_id", jobID))
+		case <-ticker.C:
+			running := isProcessRunning(jp.pid)
+			if running {
+				continue
 			}
-		}
-
-		if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
-			logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+			job, err2 := s.jobRepo.GetByID(jobID)
+			if err2 != nil || job == nil {
+				return
+			}
+			exitFile := "/tmp/cloudque_exit/job_" + strconv.Itoa(jobID) + ".code"
+			data, readErr := os.ReadFile(exitFile)
+			status := entity.JobStatusCompleted
+			if readErr != nil {
+				status = entity.JobStatusFailed
+				logger.Info("任务执行结束（未获取退出码文件）", zap.Int("job_id", jobID), zap.Error(readErr))
+			} else {
+				codeStr := strings.TrimSpace(string(data))
+				if code, parseErr := strconv.Atoi(codeStr); parseErr != nil {
+					status = entity.JobStatusFailed
+					logger.Info("任务执行结束（退出码解析失败）", zap.Int("job_id", jobID), zap.String("exit_code_raw", codeStr), zap.Error(parseErr))
+				} else if code != 0 {
+					status = entity.JobStatusFailed
+					logger.Info("任务执行结束（异常退出）", zap.Int("job_id", jobID), zap.Int("exit_code", code))
+				} else {
+					status = entity.JobStatusCompleted
+					logger.Info("任务执行成功", zap.Int("job_id", jobID))
+				}
+			}
+			if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
+				logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+			}
+			return
 		}
 	}
 }
@@ -599,11 +583,16 @@ func (s *scheduler) auditRunningJobs() {
 func isProcessRunning(pid int) bool {
 	process, err := os.FindProcess(pid)
 	if err != nil {
-		return false // 进程不存在
+		return false
 	}
-
 	err = process.Signal(syscall.Signal(0))
-	return err == nil
+	if err == nil {
+		return true
+	}
+	if errors.Is(err, syscall.EPERM) {
+		return true
+	}
+	return false
 }
 
 // parseGpuIDs 辅助函数，解析 GPU ID 字符串
