@@ -43,11 +43,13 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	jobID := env["JOB_ID"]
 	var exitFile string
 	var logFile string
+	var pidFile string
 	if jobID != "" {
 		username := session.GetUsername()
 		home := "/home/" + username
 		exitFile = home + "/cloudque_exit/job_" + jobID + ".code"
 		logFile = home + "/cloudque_logs/job_" + jobID + ".log"
+		pidFile = home + "/cloudque_exit/job_" + jobID + ".pid"
 	}
 	var exports []string
 	for k, v := range env {
@@ -65,6 +67,9 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	if exitFile != "" {
 		parts = append(parts, "mkdir -p $(dirname "+escapeBashArg(exitFile)+") || true")
 	}
+	if pidFile != "" {
+		parts = append(parts, "mkdir -p $(dirname "+escapeBashArg(pidFile)+") || true")
+	}
 	if logFile != "" {
 		parts = append(parts, "mkdir -p $(dirname "+escapeBashArg(logFile)+") || true")
 	}
@@ -77,8 +82,8 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		}
 	}
 	if logFile != "" {
-		prefix := "mkdir -p $(dirname " + escapeBashArg(logFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(exitFile) + ") || true; "
-		wrapper := "bash -lc \"" + prefix + "(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & echo \\$!\""
+		prefix := "mkdir -p $(dirname " + escapeBashArg(logFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(exitFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(pidFile) + ") || true; "
+		wrapper := "bash -lc \"" + prefix + "(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & pid=\\$!; echo \\$pid; echo \\$pid > " + escapeBashArg(pidFile) + "\""
 		out, err := session.Client.ExecuteCommand(wrapper)
 		if err != nil {
 			appendCmd := "bash -lc \"mkdir -p $(dirname " + escapeBashArg(logFile) + "); echo START_FAILED: $(date) >> " + escapeBashArg(logFile) + "\""
@@ -87,20 +92,38 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		}
 		pid := parsePID(out)
 		if pid <= 0 {
-			logger.Warnf("未解析到PID，输出: %s", out)
-			return 0, fmt.Errorf("未获取到后台进程PID")
+			if pidFile != "" {
+				readPidCmd := "bash -lc \"cat " + escapeBashArg(pidFile) + "\""
+				pout, perr := session.Client.ExecuteCommand(readPidCmd)
+				if perr == nil {
+					pid = parsePID(pout)
+				}
+			}
+			if pid <= 0 {
+				logger.Warnf("未解析到PID，输出: %s", out)
+				return 0, fmt.Errorf("未获取到后台进程PID")
+			}
 		}
 		return pid, nil
 	}
-	wrapper := "bash -lc \"(" + full + ") >/dev/null 2>&1 & echo \\$!\""
+	wrapper := "bash -lc \"mkdir -p $(dirname " + escapeBashArg(exitFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(pidFile) + ") || true; (" + full + ") >/dev/null 2>&1 & pid=\\$!; echo \\$pid; echo \\$pid > " + escapeBashArg(pidFile) + "\""
 	out, err := session.Client.ExecuteCommand(wrapper)
 	if err != nil {
 		return 0, fmt.Errorf("后台启动失败: %w", err)
 	}
 	pid := parsePID(out)
 	if pid <= 0 {
-		logger.Warnf("未解析到PID，输出: %s", out)
-		return 0, fmt.Errorf("未获取到后台进程PID")
+		if pidFile != "" {
+			readPidCmd := "bash -lc \"cat " + escapeBashArg(pidFile) + "\""
+			pout, perr := session.Client.ExecuteCommand(readPidCmd)
+			if perr == nil {
+				pid = parsePID(pout)
+			}
+		}
+		if pid <= 0 {
+			logger.Warnf("未解析到PID，输出: %s", out)
+			return 0, fmt.Errorf("未获取到后台进程PID")
+		}
 	}
 	return pid, nil
 }
