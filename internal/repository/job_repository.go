@@ -5,9 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"go.uber.org/zap"
 	"strconv"
 	"strings"
+
+	"go.uber.org/zap"
 
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/dto/response"
@@ -91,13 +92,21 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 
 	// 批量查询显卡信息
 	gpuIDMap := make(map[string]string)
-	var allGpuIDs []string
+	var allGpuIDs []int
 
 	// 收集所有需要查询的显卡ID
 	for _, job := range list {
 		if job.Card != "" {
 			ids := strings.Split(job.Card, ",")
-			allGpuIDs = append(allGpuIDs, ids...)
+			for _, raw := range ids {
+				s := strings.TrimSpace(raw)
+				if s == "" {
+					continue
+				}
+				if n, err := strconv.Atoi(s); err == nil {
+					allGpuIDs = append(allGpuIDs, n)
+				}
+			}
 		}
 	}
 
@@ -116,7 +125,11 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 		if list[i].Card != "" {
 			ids := strings.Split(list[i].Card, ",")
 			var names []string
-			for _, id := range ids {
+			for _, raw := range ids {
+				id := strings.TrimSpace(raw)
+				if id == "" {
+					continue
+				}
 				if name, ok := gpuIDMap[id]; ok {
 					names = append(names, name)
 				}

@@ -2,7 +2,12 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 
@@ -12,7 +17,6 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
-	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -34,6 +38,12 @@ func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuS
 		gpuSvc:   gpuSvc,
 		userRepo: userRepo,
 	}
+}
+
+type condaInfoJSON struct {
+	Envs          []string `json:"envs"`
+	RootPrefix    string   `json:"root_prefix"`
+	DefaultPrefix string   `json:"default_prefix"`
 }
 
 // GetJobList 获取任务列表
@@ -94,6 +104,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		UserId:      userID,
 		FilePath:    req.FilePath,
 		GpuIDs:      gpuIDs,
+		CondaEnv:    req.CondaEnv,
 		Status:      entity.JobStatusQueued,
 	}
 
@@ -182,4 +193,49 @@ func (s *jobService) GetJobByID(jobID int) (*entity.Job, error) {
 
 func (s *jobService) GetStats() (*response.JobStatsResponse, error) {
 	return s.jobRepo.GetStats()
+}
+
+func (s *jobService) ListCondaEnvs(ctx context.Context) ([]response.CondaEnv, error) {
+	var cmd *exec.Cmd
+	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
+		script := `
+			if command -v conda >/dev/null 2>&1; then
+				source "$(conda info --base)/etc/profile.d/conda.sh" >/dev/null 2>&1 || true
+				conda info --json
+			else
+				echo '{"envs":[]}'
+				fi
+			`
+		cmd = exec.CommandContext(ctx, "bash", "-lc", script)
+	} else {
+		cmd = exec.CommandContext(ctx, "conda", "info", "--json")
+	}
+	output, err := cmd.Output()
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 127 {
+			return []response.CondaEnv{}, nil
+		}
+		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "未找到命令") {
+			return []response.CondaEnv{}, nil
+		}
+		return nil, fmt.Errorf("获取 Conda 环境失败: %w", err)
+	}
+	var data condaInfoJSON
+	if err := json.Unmarshal(output, &data); err != nil {
+		return nil, fmt.Errorf("解析 Conda 环境列表失败: %w", err)
+	}
+	envs := make([]response.CondaEnv, 0, len(data.Envs))
+	for _, p := range data.Envs {
+		name := filepath.Base(p)
+		// 修复 base 环境名称
+		if p == data.RootPrefix {
+			name = "base"
+		}
+		envs = append(envs, response.CondaEnv{
+			Name:      name,
+			Prefix:    p,
+			IsDefault: p == data.DefaultPrefix,
+		})
+	}
+	return envs, nil
 }
