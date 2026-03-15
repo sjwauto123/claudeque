@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
@@ -25,6 +25,7 @@ type scheduler struct {
 	gpuSvc      GpuService
 	processRepo repository.ProcessRepository
 	procCache   repository.ProcessCacheRepository
+	execSvc     ExecService
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -59,6 +60,7 @@ func NewScheduler(
 	gpuSvc GpuService,
 	processRepo repository.ProcessRepository,
 	procCache repository.ProcessCacheRepository,
+	execSvc ExecService,
 ) Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &scheduler{
@@ -67,6 +69,7 @@ func NewScheduler(
 		gpuSvc:      gpuSvc,
 		processRepo: processRepo,
 		procCache:   procCache,
+		execSvc:     execSvc,
 		ctx:         ctx,
 		cancel:      cancel,
 		runningJobs: make(map[int]*JobProcess),
@@ -285,46 +288,51 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		return fmt.Errorf("任务脚本路径为空")
 	}
 
-	// 构建命令
-	cmd := exec.Command("python3", "-u", scriptPath)
-	//cmd.Dir = filepath.Dir(scriptPath)
-	logger.Info("任务路径", zap.String("job_file_path", job.FilePath))
-	// 获取显存中的显卡信息以获取其当前的系统索引
+	// 获取GPU
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
 	if err != nil {
 		logger.Error("获取显卡详情失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
 		return fmt.Errorf("获取显卡详情失败: %w", err)
 	}
-
-	// 设置环境变量，指定使用的GPU
+	// GPU index
 	gpuIndices := make([]string, len(cards))
 	for i, card := range cards {
 		gpuIndices[i] = strconv.Itoa(card.Index)
 	}
-	cmd.Env = append(os.Environ(),
-		//"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
-		"JOB_ID="+strconv.Itoa(job.ID),
-		"PYTHONUNBUFFERED=1",
-	)
 
-	// 启动任务
-	if err := cmd.Start(); err != nil {
+	// 通过 SSH 后台执行，拿到 PID
+	workdir := filepath.Dir(scriptPath)
+	env := map[string]string{
+		"CUDA_VISIBLE_DEVICES": strings.Join(gpuIndices, ","),
+		"JOB_ID":               strconv.Itoa(job.ID),
+		"PYTHONUNBUFFERED":     "1",
+	}
+	escPath := "'" + strings.ReplaceAll(scriptPath, "'", "'\\''") + "'"
+	var cmdStr string
+	if job.CondaEnv != "" {
+		escEnv := "'" + strings.ReplaceAll(job.CondaEnv, "'", "'\\''") + "'"
+		cmdStr = "source \"$(conda info --base)/etc/profile.d/conda.sh\" >/dev/null 2>&1 || true; conda activate " + escEnv + " && python -u " + escPath
+	} else {
+		cmdStr = "python -u " + escPath
+	}
+	pid, runErr := s.execSvc.RunBackgroundForUser(s.ctx, job.UserId, cmdStr, workdir, env)
+	if runErr != nil || pid <= 0 {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
-			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
+			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
-		// 移除队列
 		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
 			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
-		return fmt.Errorf("启动训练脚本失败: %w", err)
+		return fmt.Errorf("启动训练脚本失败: %w", runErr)
 	}
+	logger.Info("任务路径", zap.String("job_file_path", job.FilePath))
 
 	// 记录运行中的任务
 	jp := &JobProcess{
-		pid:     cmd.Process.Pid, // 存储 PID
+		pid:     pid, // 存储 PID
 		jobID:   job.ID,
 		jobName: job.Name,
 		cardIDs: cardIDs,
@@ -335,7 +343,6 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	s.runningMu.Unlock()
 
 	// 写入进程表
-	pid := cmd.Process.Pid
 	for _, cardID := range cardIDs {
 		process := &entity.Process{
 			PID:    pid,
@@ -360,7 +367,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	logger.Info("任务已启动",
 		zap.Int("job_id", job.ID),
-		zap.Int("pid", cmd.Process.Pid), // 直接使用 cmd.Process.Pid
+		zap.Int("pid", pid),
 		zap.Ints("gpu_ids", cardIDs))
 
 	return nil

@@ -141,3 +141,14 @@ func (ctrl *Controller) GetGpus(c *gin.Context) {
 	}
 	response.Success(c, gpus)
 }
+
+// GetCondaEnvs 取提交者用户下的Conda环境
+func (ctrl *Controller) GetCondaEnvs(c *gin.Context) {
+	username := middleware.GetUsername(c)
+	envs, err := ctrl.jobService.ListCondaEnvs(c, username)
+	if err != nil {
+		response.InternalError(c, err.Error())
+		return
+	}
+	response.Success(c, envs)
+}

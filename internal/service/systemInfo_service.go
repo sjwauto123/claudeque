@@ -132,9 +132,19 @@ func (rc *ResourceCollector) Start() {
 
 // collectSystemInfo 收集系统信息
 func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
-	diskInfo, err := getDiskInfo()
+	diskHome, err := getDiskInfo("/home")
 	if err != nil {
-		logger.Errorf("Failed to get disk info: %v", err)
+		logger.Errorf("Failed to get /home info: %v", err)
+	}
+
+	diskMain, err := getDiskInfo("/")
+	if err != nil {
+		logger.Errorf("Failed to get / info: %v", err)
+	}
+
+	diskBoot, err := getDiskInfo("/boot")
+	if err != nil {
+		logger.Errorf("Failed to get /boot info: %v", err)
 	}
 
 	memoryInfo, err := getMemoryInfo()
@@ -154,23 +164,21 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 	}
 
 	var info response.SystemInfosResponse
-	info.CpuList = append(info.CpuList, *diskInfo)
-	info.CpuList = append(info.CpuList, *memoryInfo)
+	info.CpuList = append(info.CpuList, *diskMain, *diskHome, *diskBoot, *memoryInfo)
 	info.GpuList = append(info.GpuList, gpuInfo...)
 	info.ProcessList = append(info.ProcessList, processInfos...)
 	return &info
 }
 
 // 获取磁盘信息
-func getDiskInfo() (*response.CpuInfoResponse, error) {
-	mountPoint := "/"
+func getDiskInfo(mountPoint string) (*response.CpuInfoResponse, error) {
 	usage, err := disk.Usage(mountPoint)
 	if err != nil {
 		return nil, err
 	}
 
 	return &response.CpuInfoResponse{
-		DeviceName: "磁盘",
+		DeviceName: mountPoint + "分区",
 		TotalCap:   bytesToGB(usage.Total),
 		UseCap:     bytesToGB(usage.Used),
 		RemainCap:  bytesToGB(usage.Free),
@@ -280,7 +288,6 @@ func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoRespons
 		}
 		processInfos = append(processInfos, info)
 	}
-
 	return processInfos, nil
 }
 

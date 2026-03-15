@@ -23,4 +23,6 @@ type JobService interface {
 	GetJobByID(jobID int) (*entity.Job, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
+	// ListCondaEnvs 获取服务用户可见的Conda环境
+	ListCondaEnvs(ctx context.Context, username string) ([]response.CondaEnv, error)
 }

@@ -3,6 +3,8 @@ package service
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -12,7 +14,6 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
-	"os"
 	"time"
 
 	"go.uber.org/zap"
@@ -35,6 +36,12 @@ func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuS
 		userRepo: userRepo,
 	}
 }
+
+//type condaInfoJSON struct {
+//	Envs          []string `json:"envs"`
+//	RootPrefix    string   `json:"root_prefix"`
+//	DefaultPrefix string   `json:"default_prefix"`
+//}
 
 // GetJobList 获取任务列表
 func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
@@ -94,6 +101,7 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		UserId:      userID,
 		FilePath:    req.FilePath,
 		GpuIDs:      gpuIDs,
+		CondaEnv:    req.CondaEnv,
 		Status:      entity.JobStatusQueued,
 	}
 
@@ -182,4 +190,56 @@ func (s *jobService) GetJobByID(jobID int) (*entity.Job, error) {
 
 func (s *jobService) GetStats() (*response.JobStatsResponse, error) {
 	return s.jobRepo.GetStats()
+}
+
+func (s *jobService) ListCondaEnvs(ctx context.Context, username string) ([]response.CondaEnv, error) {
+	homeDir := filepath.Join("/home", username)
+	// 常见conda安装目录
+	candidates := []string{
+		"miniconda3",
+		"anaconda3",
+		"miniforge3",
+		"mambaforge",
+		"conda",
+	}
+	var condaRoot string
+	for _, dir := range candidates {
+		p := filepath.Join(homeDir, dir)
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			condaRoot = p
+			break
+		}
+	}
+	if condaRoot == "" {
+		return nil, fmt.Errorf("conda installation not found for user %s", username)
+	}
+	envs := make([]response.CondaEnv, 0, 8)
+	// base 环境
+	envs = append(envs, response.CondaEnv{
+		Name:      "base",
+		Prefix:    condaRoot,
+		IsDefault: true,
+	})
+	envDir := filepath.Join(condaRoot, "envs")
+	files, err := os.ReadDir(envDir)
+	if err != nil {
+		// envs不存在说明只有base
+		if os.IsNotExist(err) {
+			return envs, nil
+		}
+		return nil, err
+	}
+	for _, f := range files {
+		if !f.IsDir() {
+			continue
+		}
+		name := f.Name()
+		prefix := filepath.Join(envDir, name)
+		envs = append(envs, response.CondaEnv{
+			Name:      name,
+			Prefix:    prefix,
+			IsDefault: false,
+		})
+	}
+	return envs, nil
 }
