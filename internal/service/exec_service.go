@@ -83,7 +83,8 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	}
 	if logFile != "" {
 		prefix := "mkdir -p $(dirname " + escapeBashArg(logFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(exitFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(pidFile) + ") || true; "
-		wrapper := "bash -lc \"" + prefix + "(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & pid=\\$!; echo \\$pid; echo \\$pid > " + escapeBashArg(pidFile) + "\""
+		inner := "(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1"
+		wrapper := "bash -lc \"" + prefix + "nohup sh -c " + escapeBashArg(inner) + " </dev/null & pid=\\$!; echo \\$pid; echo \\$pid > " + escapeBashArg(pidFile) + "\""
 		out, err := session.Client.ExecuteCommand(wrapper)
 		if err != nil {
 			appendCmd := "bash -lc \"mkdir -p $(dirname " + escapeBashArg(logFile) + "); echo START_FAILED: $(date) >> " + escapeBashArg(logFile) + "\""
@@ -106,7 +107,8 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		}
 		return pid, nil
 	}
-	wrapper := "bash -lc \"mkdir -p $(dirname " + escapeBashArg(exitFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(pidFile) + ") || true; (" + full + ") >/dev/null 2>&1 & pid=\\$!; echo \\$pid; echo \\$pid > " + escapeBashArg(pidFile) + "\""
+	inner := "(" + full + ") >/dev/null 2>&1"
+	wrapper := "bash -lc \"mkdir -p $(dirname " + escapeBashArg(exitFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(pidFile) + ") || true; nohup sh -c " + escapeBashArg(inner) + " </dev/null & pid=\\$!; echo \\$pid; echo \\$pid > " + escapeBashArg(pidFile) + "\""
 	out, err := session.Client.ExecuteCommand(wrapper)
 	if err != nil {
 		return 0, fmt.Errorf("后台启动失败: %w", err)
