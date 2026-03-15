@@ -47,9 +47,9 @@ func (ctrl *Controller) CreateUser(c *gin.Context) {
 		return
 	}
 
-	var regexpLetterOnly = regexp.MustCompile(`^[a-zA-Z]+$`)
-	if regexpLetterOnly.MatchString(req.Username) == false {
-		response.BadRequest(c, "用户名只能包含大小写英文字母，不能有数字、符号或中文")
+	var regexpAlphaNum = regexp.MustCompile(`^[a-zA-Z0-9]+$`)
+	if !regexpAlphaNum.MatchString(req.Username) {
+		response.BadRequest(c, "用户名只能包含字母或数字")
 		return
 	}
 
