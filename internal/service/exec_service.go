@@ -42,8 +42,10 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	}
 	jobID := env["JOB_ID"]
 	var exitFile string
+	var logFile string
 	if jobID != "" {
 		exitFile = "/tmp/cloudque_exit/job_" + jobID + ".code"
+		logFile = "/tmp/cloudque_logs/job_" + jobID + ".log"
 	}
 	var exports []string
 	for k, v := range env {
@@ -51,6 +53,7 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		exports = append(exports, fmt.Sprintf("export %s='%s'", k, escaped))
 	}
 	sort.Strings(exports)
+	printableEnv := strings.Join(exports, "; ")
 	var parts []string
 	if workdir != "" {
 		parts = append(parts, "cd "+escapeBashArg(workdir))
@@ -61,10 +64,39 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	if exitFile != "" {
 		parts = append(parts, "mkdir -p /tmp/cloudque_exit")
 	}
+	if logFile != "" {
+		parts = append(parts, "mkdir -p /tmp/cloudque_logs")
+		parts = append(parts, "echo CLOUDQUE_START: $(date) >> "+escapeBashArg(logFile))
+		if workdir != "" {
+			parts = append(parts, "echo WORKDIR: "+escapeBashArg(workdir)+" >> "+escapeBashArg(logFile))
+		}
+		if printableEnv != "" {
+			parts = append(parts, "echo ENV: "+escapeBashArg(printableEnv)+" >> "+escapeBashArg(logFile))
+		}
+		parts = append(parts, "echo CMD: "+escapeBashArg(cmd)+" >> "+escapeBashArg(logFile))
+	}
 	parts = append(parts, cmd)
 	full := strings.Join(parts, " && ")
 	if exitFile != "" {
 		full = full + " ; code=$?; echo $code > " + escapeBashArg(exitFile)
+		if logFile != "" {
+			full = full + " ; echo EXIT_CODE: $code >> " + escapeBashArg(logFile)
+		}
+	}
+	if logFile != "" {
+		wrapper := "bash -lc '(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & echo $!'"
+		out, err := session.Client.ExecuteCommand(wrapper)
+		if err != nil {
+			appendCmd := "bash -lc 'mkdir -p /tmp/cloudque_logs && echo START_FAILED: $(date) >> " + escapeBashArg(logFile) + " && echo " + escapeBashArg(out) + " >> " + escapeBashArg(logFile) + "'"
+			_, _ = session.Client.ExecuteCommand(appendCmd)
+			return 0, fmt.Errorf("后台启动失败: %w", err)
+		}
+		pid := parsePID(out)
+		if pid <= 0 {
+			logger.Warnf("未解析到PID，输出: %s", out)
+			return 0, fmt.Errorf("未获取到后台进程PID")
+		}
+		return pid, nil
 	}
 	wrapper := "bash -lc '(" + full + ") >/dev/null 2>&1 & echo $!'"
 	out, err := session.Client.ExecuteCommand(wrapper)

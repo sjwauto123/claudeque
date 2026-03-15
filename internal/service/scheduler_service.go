@@ -48,12 +48,6 @@ type JobProcess struct {
 	done    chan struct{}
 }
 
-// 用于接收 process.Wait 结果
-type waitResult struct {
-	state *os.ProcessState
-	err   error
-}
-
 // NewScheduler 创建调度器
 func NewScheduler(
 	jobRepo repository.JobRepository,
@@ -454,6 +448,7 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 			if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
 				logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
 			}
+			logger.Info("任务日志位置", zap.Int("job_id", jobID), zap.String("log_path", "/tmp/cloudque_logs/job_"+strconv.Itoa(jobID)+".log"))
 			return
 		}
 	}
