@@ -142,11 +142,6 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 		logger.Errorf("Failed to get / info: %v", err)
 	}
 
-	diskBoot, err := getDiskInfo("/boot")
-	if err != nil {
-		logger.Errorf("Failed to get /boot info: %v", err)
-	}
-
 	memoryInfo, err := getMemoryInfo()
 	if err != nil {
 		logger.Errorf("Failed to get memory info: %v", err)
@@ -164,7 +159,7 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 	}
 
 	var info response.SystemInfosResponse
-	info.CpuList = append(info.CpuList, *diskMain, *diskHome, *diskBoot, *memoryInfo)
+	info.CpuList = append(info.CpuList, *diskMain, *diskHome, *memoryInfo)
 	info.GpuList = append(info.GpuList, gpuInfo...)
 	info.ProcessList = append(info.ProcessList, processInfos...)
 	return &info
