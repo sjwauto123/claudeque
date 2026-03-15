@@ -44,8 +44,10 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	var exitFile string
 	var logFile string
 	if jobID != "" {
-		exitFile = "/tmp/cloudque_exit/job_" + jobID + ".code"
-		logFile = "/tmp/cloudque_logs/job_" + jobID + ".log"
+		username := session.GetUsername()
+		home := "/home/" + username
+		exitFile = home + "/cloudque_exit/job_" + jobID + ".code"
+		logFile = home + "/cloudque_logs/job_" + jobID + ".log"
 	}
 	var exports []string
 	for k, v := range env {
@@ -61,10 +63,10 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		parts = append(parts, strings.Join(exports, "; "))
 	}
 	if exitFile != "" {
-		parts = append(parts, "mkdir -p /tmp/cloudque_exit")
+		parts = append(parts, "mkdir -p $(dirname "+escapeBashArg(exitFile)+") || true")
 	}
 	if logFile != "" {
-		parts = append(parts, "mkdir -p /tmp/cloudque_logs")
+		parts = append(parts, "mkdir -p $(dirname "+escapeBashArg(logFile)+") || true")
 	}
 	parts = append(parts, cmd)
 	full := strings.Join(parts, " && ")
@@ -75,10 +77,11 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		}
 	}
 	if logFile != "" {
-		wrapper := "bash -lc \"(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & echo \\$!\""
+		prefix := "mkdir -p $(dirname " + escapeBashArg(logFile) + ") || true; mkdir -p $(dirname " + escapeBashArg(exitFile) + ") || true; "
+		wrapper := "bash -lc \"" + prefix + "(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & echo \\$!\""
 		out, err := session.Client.ExecuteCommand(wrapper)
 		if err != nil {
-			appendCmd := "bash -lc \"mkdir -p /tmp/cloudque_logs; echo START_FAILED: $(date) >> " + escapeBashArg(logFile) + "\""
+			appendCmd := "bash -lc \"mkdir -p $(dirname " + escapeBashArg(logFile) + "); echo START_FAILED: $(date) >> " + escapeBashArg(logFile) + "\""
 			_, _ = session.Client.ExecuteCommand(appendCmd)
 			return 0, fmt.Errorf("后台启动失败: %w", err)
 		}
@@ -107,7 +110,8 @@ func (s *execService) IsProcessRunning(ctx context.Context, userID int, pid int)
 	if err != nil {
 		return false, err
 	}
-	check := fmt.Sprintf("bash -lc \"kill -0 %d >/dev/null 2>&1 && echo alive || echo dead\"", pid)
+	// 优先使用 /proc/<pid> 判断进程是否存在，避免 EPERM 误判
+	check := fmt.Sprintf("bash -lc \"[ -d /proc/%d ] && echo alive || echo dead\"", pid)
 	out, err := session.Client.ExecuteCommand(check)
 	if err != nil {
 		return false, err
@@ -121,7 +125,8 @@ func (s *execService) GetExitCode(ctx context.Context, userID int, jobID int) (i
 	if err != nil {
 		return 0, err
 	}
-	path := fmt.Sprintf("/tmp/cloudque_exit/job_%d.code", jobID)
+	username := session.GetUsername()
+	path := fmt.Sprintf("/home/%s/cloudque_exit/job_%d.code", username, jobID)
 	cmd := "bash -lc \"cat " + escapeBashArg(path) + "\""
 	out, err := session.Client.ExecuteCommand(cmd)
 	if err != nil {

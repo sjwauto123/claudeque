@@ -2,14 +2,11 @@ package service
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"cloudque/internal/model/entity"
@@ -448,7 +445,6 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 			if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
 				logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
 			}
-			logger.Info("任务日志位置", zap.Int("job_id", jobID), zap.String("log_path", "/tmp/cloudque_logs/job_"+strconv.Itoa(jobID)+".log"))
 			return
 		}
 	}
@@ -486,8 +482,12 @@ func (s *scheduler) recoverRunningJobs() {
 		for _, processRecord := range processes {
 			pid := processRecord.PID
 
-			// 检查进程是否存在
-			if isProcessRunning(pid) {
+			// 检查进程是否存在（远程）
+			running, checkErr := s.execSvc.IsProcessRunning(ctx, job.UserId, pid)
+			if checkErr != nil {
+				logger.Warn("远程检查进程失败", zap.Error(checkErr), zap.Int("job_id", job.ID), zap.Int("pid", pid))
+			}
+			if running {
 				logger.Info("进程仍在运行，重新接管任务", zap.Int("job_id", job.ID), zap.Int("pid", pid))
 
 				// 重新构建 JobProcess
@@ -564,8 +564,13 @@ func (s *scheduler) auditRunningJobs() {
 				continue
 			}
 
-			// 检查进程是否存在
-			if !isProcessRunning(pid) {
+			// 检查进程是否存在（远程）
+			running, checkErr := s.execSvc.IsProcessRunning(ctx, job.UserId, pid)
+			if checkErr != nil {
+				logger.Warn("远程检查进程失败", zap.Error(checkErr), zap.Int("job_id", job.ID), zap.Int("pid", pid))
+				continue
+			}
+			if !running {
 				logger.Warn("同步发现进程已不存在，清理任务记录", zap.Int("job_id", job.ID), zap.Int("pid", pid))
 				handleMissingProcess(s, ctx, job, &processRecord) // 传递 processRecord 的地址
 			}
@@ -576,20 +581,20 @@ func (s *scheduler) auditRunningJobs() {
 }
 
 // isProcessRunning 检查指定 PID 的进程是否仍在运行
-func isProcessRunning(pid int) bool {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	err = process.Signal(syscall.Signal(0))
-	if err == nil {
-		return true
-	}
-	if errors.Is(err, syscall.EPERM) {
-		return true
-	}
-	return false
-}
+//func isProcessRunning(pid int) bool {
+//	process, err := os.FindProcess(pid)
+//	if err != nil {
+//		return false
+//	}
+//	err = process.Signal(syscall.Signal(0))
+//	if err == nil {
+//		return true
+//	}
+//	if errors.Is(err, syscall.EPERM) {
+//		return true
+//	}
+//	return false
+//}
 
 // parseGpuIDs 辅助函数，解析 GPU ID 字符串
 func parseGpuIDs(gpuIDsStr string) []int {
