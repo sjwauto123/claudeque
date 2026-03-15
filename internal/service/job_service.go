@@ -2,12 +2,9 @@ package service
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 
@@ -40,11 +37,11 @@ func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuS
 	}
 }
 
-type condaInfoJSON struct {
-	Envs          []string `json:"envs"`
-	RootPrefix    string   `json:"root_prefix"`
-	DefaultPrefix string   `json:"default_prefix"`
-}
+//type condaInfoJSON struct {
+//	Envs          []string `json:"envs"`
+//	RootPrefix    string   `json:"root_prefix"`
+//	DefaultPrefix string   `json:"default_prefix"`
+//}
 
 // GetJobList 获取任务列表
 func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
@@ -195,46 +192,53 @@ func (s *jobService) GetStats() (*response.JobStatsResponse, error) {
 	return s.jobRepo.GetStats()
 }
 
-func (s *jobService) ListCondaEnvs(ctx context.Context) ([]response.CondaEnv, error) {
-	var cmd *exec.Cmd
-	if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
-		script := `
-			if command -v conda >/dev/null 2>&1; then
-				source "$(conda info --base)/etc/profile.d/conda.sh" >/dev/null 2>&1 || true
-				conda info --json
-			else
-				echo '{"envs":[]}'
-				fi
-			`
-		cmd = exec.CommandContext(ctx, "bash", "-lc", script)
-	} else {
-		cmd = exec.CommandContext(ctx, "conda", "info", "--json")
+func (s *jobService) ListCondaEnvs(ctx context.Context, username string) ([]response.CondaEnv, error) {
+	homeDir := filepath.Join("/home", username)
+	// 常见conda安装目录
+	candidates := []string{
+		"miniconda3",
+		"anaconda3",
+		"miniforge3",
+		"mambaforge",
+		"conda",
 	}
-	output, err := cmd.Output()
+	var condaRoot string
+	for _, dir := range candidates {
+		p := filepath.Join(homeDir, dir)
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			condaRoot = p
+			break
+		}
+	}
+	if condaRoot == "" {
+		return nil, fmt.Errorf("conda installation not found for user %s", username)
+	}
+	envs := make([]response.CondaEnv, 0, 8)
+	// base 环境
+	envs = append(envs, response.CondaEnv{
+		Name:      "base",
+		Prefix:    condaRoot,
+		IsDefault: true,
+	})
+	envDir := filepath.Join(condaRoot, "envs")
+	files, err := os.ReadDir(envDir)
 	if err != nil {
-		if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 127 {
-			return []response.CondaEnv{}, nil
+		// envs不存在说明只有base
+		if os.IsNotExist(err) {
+			return envs, nil
 		}
-		if strings.Contains(err.Error(), "not found") || strings.Contains(err.Error(), "未找到命令") {
-			return []response.CondaEnv{}, nil
-		}
-		return nil, fmt.Errorf("获取 Conda 环境失败: %w", err)
+		return nil, err
 	}
-	var data condaInfoJSON
-	if err := json.Unmarshal(output, &data); err != nil {
-		return nil, fmt.Errorf("解析 Conda 环境列表失败: %w", err)
-	}
-	envs := make([]response.CondaEnv, 0, len(data.Envs))
-	for _, p := range data.Envs {
-		name := filepath.Base(p)
-		// 修复 base 环境名称
-		if p == data.RootPrefix {
-			name = "base"
+	for _, f := range files {
+		if !f.IsDir() {
+			continue
 		}
+		name := f.Name()
+		prefix := filepath.Join(envDir, name)
 		envs = append(envs, response.CondaEnv{
 			Name:      name,
-			Prefix:    p,
-			IsDefault: p == data.DefaultPrefix,
+			Prefix:    prefix,
+			IsDefault: false,
 		})
 	}
 	return envs, nil
