@@ -267,7 +267,7 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 	resolvedPath, err := s.resolvePath(opUserID, req.Path, isRootMode)
 	if err != nil {
 		logger.Errorf("解析路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", opUserID, req.Path, isRootMode, err)
-		return nil, errors.NewWithErr(errors.CodeInternalError, "解析路径失败", err)
+		return nil, errors.NewWithErr(errors.CodeInternalError, "普通用户无法访问自己用户目录外的目录", err)
 	}
 
 	var dirs []*dto.DirectoryItem = []*dto.DirectoryItem{}
