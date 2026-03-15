@@ -75,10 +75,10 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		}
 	}
 	if logFile != "" {
-		wrapper := "bash -lc '(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & echo $!'"
+		wrapper := "bash -lc \"(" + full + ") >> " + escapeBashArg(logFile) + " 2>&1 & echo \\$!\""
 		out, err := session.Client.ExecuteCommand(wrapper)
 		if err != nil {
-			appendCmd := "bash -lc 'mkdir -p /tmp/cloudque_logs && echo START_FAILED: $(date) >> " + escapeBashArg(logFile) + " && echo " + escapeBashArg(out) + " >> " + escapeBashArg(logFile) + "'"
+			appendCmd := "bash -lc \"mkdir -p /tmp/cloudque_logs; echo START_FAILED: $(date) >> " + escapeBashArg(logFile) + "\""
 			_, _ = session.Client.ExecuteCommand(appendCmd)
 			return 0, fmt.Errorf("后台启动失败: %w", err)
 		}
@@ -89,7 +89,7 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		}
 		return pid, nil
 	}
-	wrapper := "bash -lc '(" + full + ") >/dev/null 2>&1 & echo $!'"
+	wrapper := "bash -lc \"(" + full + ") >/dev/null 2>&1 & echo \\$!\""
 	out, err := session.Client.ExecuteCommand(wrapper)
 	if err != nil {
 		return 0, fmt.Errorf("后台启动失败: %w", err)
