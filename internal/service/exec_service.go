@@ -102,6 +102,39 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	return pid, nil
 }
 
+func (s *execService) IsProcessRunning(ctx context.Context, userID int, pid int) (bool, error) {
+	session, err := s.ensureSession(userID)
+	if err != nil {
+		return false, err
+	}
+	check := fmt.Sprintf("bash -lc \"kill -0 %d >/dev/null 2>&1 && echo alive || echo dead\"", pid)
+	out, err := session.Client.ExecuteCommand(check)
+	if err != nil {
+		return false, err
+	}
+	out = strings.TrimSpace(out)
+	return strings.Contains(out, "alive"), nil
+}
+
+func (s *execService) GetExitCode(ctx context.Context, userID int, jobID int) (int, error) {
+	session, err := s.ensureSession(userID)
+	if err != nil {
+		return 0, err
+	}
+	path := fmt.Sprintf("/tmp/cloudque_exit/job_%d.code", jobID)
+	cmd := "bash -lc \"cat " + escapeBashArg(path) + "\""
+	out, err := session.Client.ExecuteCommand(cmd)
+	if err != nil {
+		return 0, err
+	}
+	codeStr := strings.TrimSpace(out)
+	var code int
+	if _, scanErr := fmt.Sscanf(codeStr, "%d", &code); scanErr != nil {
+		return 0, scanErr
+	}
+	return code, nil
+}
+
 func escapeBashArg(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }

@@ -43,6 +43,7 @@ type scheduler struct {
 type JobProcess struct {
 	pid     int // 存储进程ID
 	jobID   int
+	userID  int
 	jobName string
 	cardIDs []int
 	done    chan struct{}
@@ -329,6 +330,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	jp := &JobProcess{
 		pid:     pid, // 存储 PID
 		jobID:   job.ID,
+		userID:  job.UserId,
 		jobName: job.Name,
 		cardIDs: cardIDs,
 		done:    make(chan struct{}),
@@ -418,7 +420,10 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 			logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 			return
 		case <-ticker.C:
-			running := isProcessRunning(jp.pid)
+			running, runErr := s.execSvc.IsProcessRunning(s.ctx, jp.userID, jp.pid)
+			if runErr != nil {
+				logger.Warn("远程检查进程失败", zap.Error(runErr), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+			}
 			if running {
 				continue
 			}
@@ -426,18 +431,13 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 			if err2 != nil || job == nil {
 				return
 			}
-			exitFile := "/tmp/cloudque_exit/job_" + strconv.Itoa(jobID) + ".code"
-			data, readErr := os.ReadFile(exitFile)
+			code, readErr := s.execSvc.GetExitCode(s.ctx, jp.userID, jobID)
 			status := entity.JobStatusCompleted
 			if readErr != nil {
 				status = entity.JobStatusFailed
 				logger.Info("任务执行结束（未获取退出码文件）", zap.Int("job_id", jobID), zap.Error(readErr))
 			} else {
-				codeStr := strings.TrimSpace(string(data))
-				if code, parseErr := strconv.Atoi(codeStr); parseErr != nil {
-					status = entity.JobStatusFailed
-					logger.Info("任务执行结束（退出码解析失败）", zap.Int("job_id", jobID), zap.String("exit_code_raw", codeStr), zap.Error(parseErr))
-				} else if code != 0 {
+				if code != 0 {
 					status = entity.JobStatusFailed
 					logger.Info("任务执行结束（异常退出）", zap.Int("job_id", jobID), zap.Int("exit_code", code))
 				} else {
@@ -494,6 +494,7 @@ func (s *scheduler) recoverRunningJobs() {
 				jp := &JobProcess{
 					pid:     pid,
 					jobID:   job.ID,
+					userID:  job.UserId,
 					jobName: job.Name,
 					cardIDs: parseGpuIDs(job.GpuIDs),
 					done:    make(chan struct{}),
