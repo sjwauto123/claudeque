@@ -53,7 +53,6 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 		exports = append(exports, fmt.Sprintf("export %s='%s'", k, escaped))
 	}
 	sort.Strings(exports)
-	printableEnv := strings.Join(exports, "; ")
 	var parts []string
 	if workdir != "" {
 		parts = append(parts, "cd "+escapeBashArg(workdir))
@@ -66,14 +65,6 @@ func (s *execService) RunBackgroundForUser(ctx context.Context, userID int, cmd 
 	}
 	if logFile != "" {
 		parts = append(parts, "mkdir -p /tmp/cloudque_logs")
-		parts = append(parts, "echo CLOUDQUE_START: $(date) >> "+escapeBashArg(logFile))
-		if workdir != "" {
-			parts = append(parts, "echo WORKDIR: "+escapeBashArg(workdir)+" >> "+escapeBashArg(logFile))
-		}
-		if printableEnv != "" {
-			parts = append(parts, "echo ENV: "+escapeBashArg(printableEnv)+" >> "+escapeBashArg(logFile))
-		}
-		parts = append(parts, "echo CMD: "+escapeBashArg(cmd)+" >> "+escapeBashArg(logFile))
 	}
 	parts = append(parts, cmd)
 	full := strings.Join(parts, " && ")
