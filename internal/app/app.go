@@ -249,11 +249,8 @@ func (a *App) initDependencies() {
 	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo)
 	terminalSvc := service.NewTerminalService(sessionManager, authSvc, a.wsPool)
 
-	// 创建执行服务（用于通过SSH后台运行任务）
-	execSvc := service.NewExecService(sessionManager, authSvc)
-
 	// 创建调度器
-	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo, execSvc)
+	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
 
 	//创建系统信息管理器
 	a.infoService = infoService
