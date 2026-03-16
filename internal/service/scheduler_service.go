@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -287,46 +285,37 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		return fmt.Errorf("任务脚本路径为空")
 	}
 
-	var cmd *exec.Cmd
-	if job.CondaEnv != "" {
-		if runtime.GOOS == "linux" || runtime.GOOS == "darwin" {
-			escPath := "'" + strings.ReplaceAll(scriptPath, "'", "'\\''") + "'"
-			script := "source \"$(conda info --base)/etc/profile.d/conda.sh\" >/dev/null 2>&1 || true; " +
-				"conda run -n " + job.CondaEnv + " --no-capture-output python -u " + escPath
-			cmd = exec.Command("bash", "-lc", script)
-		} else {
-			cmd = exec.Command("conda", "run", "-n", job.CondaEnv, "--no-capture-output", "python", "-u", scriptPath)
-		}
-	} else {
-		cmd = exec.Command("python", "-u", scriptPath)
-	}
-	cmd.Dir = filepath.Dir(scriptPath)
+	// 构建命令
+	cmd := exec.Command("python3", "-u", scriptPath)
+	//cmd.Dir = filepath.Dir(scriptPath)
 	logger.Info("任务路径", zap.String("job_file_path", job.FilePath))
-	// 获取GPU
+	// 获取显存中的显卡信息以获取其当前的系统索引
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
 	if err != nil {
 		logger.Error("获取显卡详情失败", zap.Error(err), zap.Ints("card_ids", cardIDs))
 		return fmt.Errorf("获取显卡详情失败: %w", err)
 	}
-	// GPU index
+
+	// 设置环境变量，指定使用的GPU
 	gpuIndices := make([]string, len(cards))
 	for i, card := range cards {
 		gpuIndices[i] = strconv.Itoa(card.Index)
 	}
-	// 设置环境变量
 	cmd.Env = append(os.Environ(),
 		"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
 		"JOB_ID="+strconv.Itoa(job.ID),
 		"PYTHONUNBUFFERED=1",
 	)
+
 	// 启动任务
 	if err := cmd.Start(); err != nil {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
-			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID))
+			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
 		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
 			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
+		// 移除队列
 		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
 			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
