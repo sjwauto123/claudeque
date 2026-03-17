@@ -24,6 +24,7 @@ type scheduler struct {
 	processRepo repository.ProcessRepository
 	procCache   repository.ProcessCacheRepository
 	execSvc     ExecService
+	authSvc     AuthService
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -60,6 +61,7 @@ func NewScheduler(
 	processRepo repository.ProcessRepository,
 	procCache repository.ProcessCacheRepository,
 	execSvc ExecService,
+	authSvc AuthService,
 ) Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &scheduler{
@@ -69,6 +71,7 @@ func NewScheduler(
 		processRepo: processRepo,
 		procCache:   procCache,
 		execSvc:     execSvc,
+		authSvc:     authSvc,
 		ctx:         ctx,
 		cancel:      cancel,
 		runningJobs: make(map[int]*JobProcess),
@@ -307,8 +310,24 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		"PYTHONUNBUFFERED":     "1",
 	}
 
+	// 检查用户是否拥有 Root 权限
+	isRoot, err := s.authSvc.HasSystemAccess(job.UserId, AccessTypeFile)
+	if err != nil {
+		logger.Errorf("ExecuteJob: 检查用户权限失败: userID=%d, err=%v", job.UserId, err)
+		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
+			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
+		}
+		if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusFailed); err != nil {
+			logger.Warn("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
+		}
+		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
+			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
+		}
+		return fmt.Errorf("检查用户权限失败: %w", err)
+	}
+
 	// 远程启动任务
-	pid, err := s.execSvc.ExecuteCommandRemote(s.ctx, job.UserId, job.CondaEnv, "python3 -u "+scriptPath, envVars)
+	pid, err := s.execSvc.ExecuteCommandRemote(s.ctx, job.UserId, job.CondaEnv, "python3 -u "+scriptPath, envVars, isRoot)
 	if err != nil {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
@@ -421,7 +440,18 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 			logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 			return
 		case <-ticker.C:
-			running, err := s.execSvc.IsProcessRunningRemote(s.ctx, jp.userID, jp.pid)
+			// 检查用户是否拥有 Root 权限
+			isRoot, err := s.authSvc.HasSystemAccess(jp.userID, AccessTypeFile)
+			if err != nil {
+				logger.Errorf("monitorJob: 检查用户权限失败: userID=%d, err=%v", jp.userID, err)
+				failCount++
+				if failCount >= 10 {
+					return
+				}
+				continue
+			}
+
+			running, err := s.execSvc.IsProcessRunningRemote(s.ctx, jp.userID, jp.pid, isRoot)
 			if err != nil {
 				logger.Error("检查远程进程状态失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 				failCount++
@@ -483,8 +513,21 @@ func (s *scheduler) recoverRunningJobs() {
 		for _, processRecord := range processes {
 			pid := processRecord.PID
 
+			// 检查用户权限
+			isRoot, err := s.authSvc.HasSystemAccess(job.UserId, AccessTypeFile)
+			if err != nil {
+				logger.Error("检查用户权限失败", zap.Error(err), zap.Int("user_id", job.UserId))
+				continue
+			}
+
 			// 检查进程是否存在
-			if s.isProcessRunning(job.UserId, pid) {
+			running, err := s.execSvc.IsProcessRunningRemote(ctx, job.UserId, pid, isRoot)
+			if err != nil {
+				logger.Error("检查进程状态失败", zap.Error(err), zap.Int("user_id", job.UserId), zap.Int("pid", pid))
+				continue
+			}
+
+			if running {
 				logger.Info("进程仍在运行，重新接管任务", zap.Int("job_id", job.ID), zap.Int("pid", pid))
 
 				// 重新构建 JobProcess
@@ -561,8 +604,21 @@ func (s *scheduler) auditRunningJobs() {
 				continue
 			}
 
+			// 检查用户权限
+			isRoot, err := s.authSvc.HasSystemAccess(job.UserId, AccessTypeFile)
+			if err != nil {
+				logger.Error("检查用户权限失败", zap.Error(err), zap.Int("user_id", job.UserId))
+				continue
+			}
+
 			// 检查进程是否存在
-			if !s.isProcessRunning(job.UserId, pid) {
+			running, err := s.execSvc.IsProcessRunningRemote(ctx, job.UserId, pid, isRoot)
+			if err != nil {
+				logger.Error("检查进程状态失败", zap.Error(err), zap.Int("user_id", job.UserId), zap.Int("pid", pid))
+				continue
+			}
+
+			if !running {
 				logger.Warn("同步发现进程已不存在，清理任务记录", zap.Int("job_id", job.ID), zap.Int("pid", pid))
 				handleMissingProcess(s, ctx, job, &processRecord) // 传递 processRecord 的地址
 			}
@@ -570,16 +626,6 @@ func (s *scheduler) auditRunningJobs() {
 	}
 
 	logger.Info("周期性同步运行中的任务完成。")
-}
-
-// isProcessRunning 检查指定 PID 的进程是否仍在运行
-func (s *scheduler) isProcessRunning(userID int, pid int) bool {
-	running, err := s.execSvc.IsProcessRunningRemote(s.ctx, userID, pid)
-	if err != nil {
-		logger.Errorf("isProcessRunning: 远程检查进程状态失败: userID=%d, pid=%d, err=%v", userID, pid, err)
-		return false
-	}
-	return running
 }
 
 // parseGpuIDs 辅助函数，解析 GPU ID 字符串

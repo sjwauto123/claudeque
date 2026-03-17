@@ -27,17 +27,27 @@ func NewExecService(sessionManager *ssh.SessionManager, authService AuthService)
 
 // ListCondaEnvs 获取远程服务器上的 Conda 环境列表
 func (s *execService) ListCondaEnvs(ctx context.Context, userID int) ([]string, error) {
-	client, err := s.getSSHClient(userID, false)
+	// 检查用户是否拥有 Root 权限
+	isRoot, err := s.authService.HasSystemAccess(userID, AccessTypeFile)
 	if err != nil {
-		logger.Errorf("ListCondaEnvs: 获取 SSH 客户端失败: userID=%d, err=%v", userID, err)
+		logger.Errorf("ListCondaEnvs: 检查用户权限失败: userID=%d, err=%v", userID, err)
+		isRoot = false // 回退到普通用户权限
+	}
+
+	client, err := s.getSSHClient(userID, isRoot)
+	if err != nil {
+		logger.Errorf("ListCondaEnvs: 获取 SSH 客户端失败: userID=%d, isRoot=%v, err=%v", userID, isRoot, err)
 		return nil, err
 	}
 
-	// 执行 conda env list 命令
-	output, err := client.ExecuteCommand("conda env list")
+	// 尝试加载用户的环境变量配置，特别是 .bashrc 或 conda 的初始化脚本
+	// 有些环境的 conda 并不是全局可用的，需要 source ~/.bashrc 或者指定完整路径
+	cmd := "source ~/.bashrc 2>/dev/null; conda env list || /opt/conda/bin/conda env list || ~/miniconda3/bin/conda env list || ~/anaconda3/bin/conda env list"
+
+	output, err := client.ExecuteCommand(cmd)
 	if err != nil {
-		logger.Errorf("ListCondaEnvs: 执行 conda env list 失败: userID=%d, err=%v", userID, err)
-		return nil, fmt.Errorf("执行 conda env list 失败: %w", err)
+		logger.Errorf("ListCondaEnvs: 执行 conda env list 失败: userID=%d, err=%v, output=%s", userID, err, output)
+		return nil, fmt.Errorf("conda命令不存在")
 	}
 
 	// 解析输出
@@ -55,12 +65,16 @@ func (s *execService) ListCondaEnvs(ctx context.Context, userID int) ([]string, 
 		}
 	}
 
+	if len(envs) == 0 {
+		return nil, fmt.Errorf("conda命令不存在")
+	}
+
 	return envs, nil
 }
 
 // ExecuteCommandRemote 在指定环境下远程执行命令，返回 PID
-func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, condaEnv string, cmdStr string, envVars map[string]string) (int, error) {
-	client, err := s.getSSHClient(userID, false)
+func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, condaEnv string, cmdStr string, envVars map[string]string, isRoot bool) (int, error) {
+	client, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		logger.Errorf("ExecuteCommandRemote: 获取 SSH 客户端失败: userID=%d, err=%v", userID, err)
 		return 0, err
@@ -151,8 +165,8 @@ func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, cond
 }
 
 // IsProcessRunningRemote 检查远程进程是否在运行
-func (s *execService) IsProcessRunningRemote(ctx context.Context, userID int, pid int) (bool, error) {
-	client, err := s.getSSHClient(userID, false)
+func (s *execService) IsProcessRunningRemote(ctx context.Context, userID int, pid int, isRoot bool) (bool, error) {
+	client, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		logger.Errorf("IsProcessRunningRemote: 获取 SSH 客户端失败: userID=%d, pid=%d, err=%v", userID, pid, err)
 		return false, err
@@ -176,8 +190,8 @@ func (s *execService) IsProcessRunningRemote(ctx context.Context, userID int, pi
 }
 
 // FileExistsRemote 检查远程文件是否存在
-func (s *execService) FileExistsRemote(ctx context.Context, userID int, filePath string) (bool, error) {
-	client, err := s.getSSHClient(userID, false)
+func (s *execService) FileExistsRemote(ctx context.Context, userID int, filePath string, isRoot bool) (bool, error) {
+	client, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		logger.Errorf("FileExistsRemote: 获取 SSH 客户端失败: userID=%d, path=%s, err=%v", userID, filePath, err)
 		return false, err

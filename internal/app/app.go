@@ -250,10 +250,10 @@ func (a *App) initDependencies() {
 	terminalSvc := service.NewTerminalService(sessionManager, authSvc, a.wsPool)
 
 	// 重新创建 jobSvc 以包含 execSvc
-	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo, execSvc)
+	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo, execSvc, authSvc)
 
 	// 创建调度器
-	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo, execSvc)
+	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo, execSvc, authSvc)
 
 	// 将调度器注入 jobSvc
 	jobSvc.SetScheduler(a.scheduler)

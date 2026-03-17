@@ -19,22 +19,24 @@ import (
 
 // jobService 任务服务实现
 type jobService struct {
-	jobRepo   repository.JobRepository
-	queueSvc  QueueService
-	gpuSvc    GpuService
-	userRepo  repository.UserRepository
-	execSvc   ExecService
-	scheduler Scheduler
+	jobRepo     repository.JobRepository
+	queueSvc    QueueService
+	gpuSvc      GpuService
+	userRepo    repository.UserRepository
+	execSvc     ExecService
+	scheduler   Scheduler
+	authService AuthService // 添加 authService
 }
 
 // NewJobService 创建任务服务
-func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc GpuService, userRepo repository.UserRepository, execSvc ExecService) JobService {
+func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc GpuService, userRepo repository.UserRepository, execSvc ExecService, authService AuthService) JobService {
 	return &jobService{
-		jobRepo:  jobRepo,
-		queueSvc: queueSvc,
-		gpuSvc:   gpuSvc,
-		userRepo: userRepo,
-		execSvc:  execSvc,
+		jobRepo:     jobRepo,
+		queueSvc:    queueSvc,
+		gpuSvc:      gpuSvc,
+		userRepo:    userRepo,
+		execSvc:     execSvc,
+		authService: authService,
 	}
 }
 
@@ -62,8 +64,15 @@ func (s *jobService) GetWaitJobList(req request.JobListRequest, startTime time.T
 
 // SubmitJob 提交任务
 func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error) {
+	// 检查用户是否拥有 Root 权限
+	isRoot, err := s.authService.HasSystemAccess(userID, AccessTypeFile)
+	if err != nil {
+		logger.Errorf("SubmitJob: 检查用户权限失败: userID=%d, err=%v", userID, err)
+		return nil, fmt.Errorf("检查用户权限失败: %w", err)
+	}
+
 	// 检查远程文件路径是否存在
-	exists, err := s.execSvc.FileExistsRemote(ctx, userID, req.FilePath)
+	exists, err := s.execSvc.FileExistsRemote(ctx, userID, req.FilePath, isRoot)
 	if err != nil {
 		logger.Errorf("SubmitJob: 检查远程文件失败: userID=%d, path=%s, err=%v", userID, req.FilePath, err)
 		return nil, fmt.Errorf("检查任务文件失败: %w", err)
