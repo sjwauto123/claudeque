@@ -14,6 +14,8 @@ import (
 	"cloudque/pkg/logger"
 
 	"go.uber.org/zap"
+
+	"github.com/shirou/gopsutil/v3/process"
 )
 
 // Scheduler 任务调度器
@@ -440,20 +442,10 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 			logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 			return
 		case <-ticker.C:
-			// 检查用户是否拥有 Root 权限
-			isRoot, err := s.authSvc.HasSystemAccess(jp.userID, AccessTypeFile)
+			// 使用 os 包或 gopsutil 检查进程是否存在
+			running, err := process.PidExists(int32(jp.pid))
 			if err != nil {
-				logger.Errorf("monitorJob: 检查用户权限失败: userID=%d, err=%v", jp.userID, err)
-				failCount++
-				if failCount >= 10 {
-					return
-				}
-				continue
-			}
-
-			running, err := s.execSvc.IsProcessRunningRemote(s.ctx, jp.userID, jp.pid, isRoot)
-			if err != nil {
-				logger.Error("检查远程进程状态失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+				logger.Error("检查本地进程状态失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 				failCount++
 				// 连续失败 10 次 (约 20 秒) 则认为任务失联/失败
 				if failCount >= 10 {
@@ -513,15 +505,8 @@ func (s *scheduler) recoverRunningJobs() {
 		for _, processRecord := range processes {
 			pid := processRecord.PID
 
-			// 检查用户权限
-			isRoot, err := s.authSvc.HasSystemAccess(job.UserId, AccessTypeFile)
-			if err != nil {
-				logger.Error("检查用户权限失败", zap.Error(err), zap.Int("user_id", job.UserId))
-				continue
-			}
-
-			// 检查进程是否存在
-			running, err := s.execSvc.IsProcessRunningRemote(ctx, job.UserId, pid, isRoot)
+			// 使用 os 包或 gopsutil 检查进程是否存在
+			running, err := process.PidExists(int32(pid))
 			if err != nil {
 				logger.Error("检查进程状态失败", zap.Error(err), zap.Int("user_id", job.UserId), zap.Int("pid", pid))
 				continue
@@ -604,15 +589,8 @@ func (s *scheduler) auditRunningJobs() {
 				continue
 			}
 
-			// 检查用户权限
-			isRoot, err := s.authSvc.HasSystemAccess(job.UserId, AccessTypeFile)
-			if err != nil {
-				logger.Error("检查用户权限失败", zap.Error(err), zap.Int("user_id", job.UserId))
-				continue
-			}
-
-			// 检查进程是否存在
-			running, err := s.execSvc.IsProcessRunningRemote(ctx, job.UserId, pid, isRoot)
+			// 使用 os 包或 gopsutil 检查进程是否存在
+			running, err := process.PidExists(int32(pid))
 			if err != nil {
 				logger.Error("检查进程状态失败", zap.Error(err), zap.Int("user_id", job.UserId), zap.Int("pid", pid))
 				continue

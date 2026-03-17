@@ -164,31 +164,6 @@ func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, cond
 	}
 }
 
-// IsProcessRunningRemote 检查远程进程是否在运行
-func (s *execService) IsProcessRunningRemote(ctx context.Context, userID int, pid int, isRoot bool) (bool, error) {
-	client, err := s.getSSHClient(userID, isRoot)
-	if err != nil {
-		logger.Errorf("IsProcessRunningRemote: 获取 SSH 客户端失败: userID=%d, pid=%d, err=%v", userID, pid, err)
-		return false, err
-	}
-
-	// 使用 kill -0 PID 检查进程是否存在
-	cmd := fmt.Sprintf("kill -0 %d", pid)
-	_, exitCode, err := client.ExecuteCommandWithStatus(cmd)
-	if err != nil {
-		if exitCode == 1 {
-			// 进程不存在，这是正常情况
-			logger.Debugf("IsProcessRunningRemote: 进程不存在: userID=%d, pid=%d", userID, pid)
-			return false, nil
-		}
-		// 其他错误（如连接断开）
-		logger.Errorf("IsProcessRunningRemote: 执行检查命令失败: userID=%d, pid=%d, err=%v", userID, pid, err)
-		return false, err
-	}
-
-	return true, nil
-}
-
 // FileExistsRemote 检查远程文件是否存在
 func (s *execService) FileExistsRemote(ctx context.Context, userID int, filePath string, isRoot bool) (bool, error) {
 	client, err := s.getSSHClient(userID, isRoot)
