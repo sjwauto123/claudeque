@@ -232,12 +232,12 @@ func (a *App) initDependencies() {
 	infoService := service.NewSystemInfoService(a.wsPool, procCacheRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
-	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo)
 	userSvc := service.NewUserService(userRepo, redisRepo, sshConfig)
 	roleSvc := service.NewRoleService(roleRepo)
 	apiSvc := service.NewAPIService(apiRepo)
 	menuSvc := service.NewMenuService(menuRepo)
 	authSvc := service.NewAuthService(userRepo, roleRepo, redisRepo, userSvc, sessionRepo, sessionManager, sshConfig)
+	execSvc := service.NewExecService(sessionManager, authSvc)
 
 	// 创建日志管理器
 	a.logManager = middleware.NewLogManager(userLogSvc)
@@ -249,8 +249,14 @@ func (a *App) initDependencies() {
 	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo)
 	terminalSvc := service.NewTerminalService(sessionManager, authSvc, a.wsPool)
 
+	// 重新创建 jobSvc 以包含 execSvc
+	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo, execSvc)
+
 	// 创建调度器
-	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo)
+	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo, execSvc)
+
+	// 将调度器注入 jobSvc
+	jobSvc.SetScheduler(a.scheduler)
 
 	//创建系统信息管理器
 	a.infoService = infoService

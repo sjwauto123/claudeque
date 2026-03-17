@@ -7,9 +7,9 @@ type Job struct {
 	Name        string     `json:"name" gorm:"column:name;type:varchar(100);not null"`
 	Description string     `json:"description" gorm:"column:description;type:text"`
 	UserId      int        `json:"user_id" gorm:"column:user_id;index;not null"`
-	FilePath    string     `json:"file_path" gorm:"column:file_path;index"` // 训练脚本文件
+	FilePath    string     `json:"file_path" gorm:"column:file_path;index"`             // 训练脚本文件
+	CondaEnv    string     `json:"conda_env" gorm:"column:conda_env;type:varchar(100)"` // Conda 环境名称
 	GpuIDs      string     `json:"gpu_ids" gorm:"column:gpu_ids;type:varchar(255)"`
-	CondaEnv    string     `json:"conda_env" gorm:"column:conda_env;type:varchar(100)"`
 	Status      int        `json:"status" gorm:"column:status;index"`
 	CreatedAt   *time.Time `json:"created_at" gorm:"column:created_at;autoCreateTime"`
 	StartedAt   *time.Time `json:"started_at" gorm:"column:started_at"`

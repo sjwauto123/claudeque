@@ -3,8 +3,6 @@ package service
 import (
 	"context"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -21,27 +19,24 @@ import (
 
 // jobService 任务服务实现
 type jobService struct {
-	jobRepo  repository.JobRepository
-	queueSvc QueueService
-	gpuSvc   GpuService
-	userRepo repository.UserRepository
+	jobRepo   repository.JobRepository
+	queueSvc  QueueService
+	gpuSvc    GpuService
+	userRepo  repository.UserRepository
+	execSvc   ExecService
+	scheduler Scheduler
 }
 
 // NewJobService 创建任务服务
-func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc GpuService, userRepo repository.UserRepository) JobService {
+func NewJobService(jobRepo repository.JobRepository, queueSvc QueueService, gpuSvc GpuService, userRepo repository.UserRepository, execSvc ExecService) JobService {
 	return &jobService{
 		jobRepo:  jobRepo,
 		queueSvc: queueSvc,
 		gpuSvc:   gpuSvc,
 		userRepo: userRepo,
+		execSvc:  execSvc,
 	}
 }
-
-//type condaInfoJSON struct {
-//	Envs          []string `json:"envs"`
-//	RootPrefix    string   `json:"root_prefix"`
-//	DefaultPrefix string   `json:"default_prefix"`
-//}
 
 // GetJobList 获取任务列表
 func (s *jobService) GetJobList(req request.JobListRequest, startTime time.Time, endTime time.Time, userID int) ([]response.JobResponse, int64, int, int, error) {
@@ -67,13 +62,15 @@ func (s *jobService) GetWaitJobList(req request.JobListRequest, startTime time.T
 
 // SubmitJob 提交任务
 func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest, userID int) (*entity.Job, error) {
-	// 检查文件路径是否存在
-	if _, err := os.Stat(req.FilePath); err != nil {
-		logger.Info("任务路径", zap.Error(err))
-		if os.IsNotExist(err) {
-			return nil, errors.New(errors.CodeFileNotFound, "任务文件不存在")
-		}
+	// 检查远程文件路径是否存在
+	exists, err := s.execSvc.FileExistsRemote(ctx, userID, req.FilePath)
+	if err != nil {
+		logger.Errorf("SubmitJob: 检查远程文件失败: userID=%d, path=%s, err=%v", userID, req.FilePath, err)
 		return nil, fmt.Errorf("检查任务文件失败: %w", err)
+	}
+	if !exists {
+		logger.Infof("SubmitJob: 任务文件不存在: userID=%d, path=%s", userID, req.FilePath)
+		return nil, errors.New(errors.CodeFileNotFound, "任务文件不存在")
 	}
 
 	// 获取用户优先级
@@ -100,8 +97,8 @@ func (s *jobService) SubmitJob(ctx context.Context, req request.SubmitJobRequest
 		Description: req.Description,
 		UserId:      userID,
 		FilePath:    req.FilePath,
-		GpuIDs:      gpuIDs,
 		CondaEnv:    req.CondaEnv,
+		GpuIDs:      gpuIDs,
 		Status:      entity.JobStatusQueued,
 	}
 
@@ -192,54 +189,10 @@ func (s *jobService) GetStats() (*response.JobStatsResponse, error) {
 	return s.jobRepo.GetStats()
 }
 
-func (s *jobService) ListCondaEnvs(ctx context.Context, username string) ([]response.CondaEnv, error) {
-	homeDir := filepath.Join("/home", username)
-	// 常见conda安装目录
-	candidates := []string{
-		"miniconda3",
-		"anaconda3",
-		"miniforge3",
-		"mambaforge",
-		"conda",
-	}
-	var condaRoot string
-	for _, dir := range candidates {
-		p := filepath.Join(homeDir, dir)
-		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
-			condaRoot = p
-			break
-		}
-	}
-	if condaRoot == "" {
-		return nil, fmt.Errorf("%s 中没有Conda环境", username)
-	}
-	envs := make([]response.CondaEnv, 0, 8)
-	// base 环境
-	envs = append(envs, response.CondaEnv{
-		Name:      "base",
-		Prefix:    condaRoot,
-		IsDefault: true,
-	})
-	envDir := filepath.Join(condaRoot, "envs")
-	files, err := os.ReadDir(envDir)
-	if err != nil {
-		// envs不存在说明只有base
-		if os.IsNotExist(err) {
-			return envs, nil
-		}
-		return nil, err
-	}
-	for _, f := range files {
-		if !f.IsDir() {
-			continue
-		}
-		name := f.Name()
-		prefix := filepath.Join(envDir, name)
-		envs = append(envs, response.CondaEnv{
-			Name:      name,
-			Prefix:    prefix,
-			IsDefault: false,
-		})
-	}
-	return envs, nil
+func (s *jobService) ListCondaEnvs(ctx context.Context, userID int) ([]string, error) {
+	return s.execSvc.ListCondaEnvs(ctx, userID)
+}
+
+func (s *jobService) SetScheduler(scheduler Scheduler) {
+	s.scheduler = scheduler
 }

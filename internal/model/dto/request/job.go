@@ -16,6 +16,6 @@ type SubmitJobRequest struct {
 	Name        string `json:"name" binding:"required"`      // 任务名称
 	Description string `json:"description"`                  // 任务描述
 	FilePath    string `json:"file_path" binding:"required"` // 训练脚本文件路径
+	CondaEnv    string `json:"conda_env"`                    // Conda 环境名称
 	GpuIDs      []int  `json:"gpu_ids" binding:"required"`   // 使用显卡 ID 数组，如 [1,2]
-	CondaEnv    string `json:"conda_env"`
 }

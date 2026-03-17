@@ -11,6 +11,8 @@ type JobResponse struct {
 	Description string `json:"description"`
 	// 任务状态：0-待执行 1-排队中 2-执行中 3-已完成 4-失败 5-被终止 6-等待显卡
 	Status int `json:"status"`
+	// Conda 环境名称
+	CondaEnv string `json:"conda_env"`
 	// 创建时间
 	CreatedAt time.Time `json:"created_at"`
 	// 使用的显卡

@@ -4,11 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"cloudque/internal/model/entity"
@@ -25,6 +23,7 @@ type scheduler struct {
 	gpuSvc      GpuService
 	processRepo repository.ProcessRepository
 	procCache   repository.ProcessCacheRepository
+	execSvc     ExecService
 
 	ctx       context.Context
 	cancel    context.CancelFunc
@@ -41,6 +40,7 @@ type scheduler struct {
 type JobProcess struct {
 	pid     int // 存储进程ID
 	jobID   int
+	userID  int // 添加用户ID，用于 SSH 连接
 	jobName string
 	cardIDs []int
 	done    chan struct{}
@@ -59,6 +59,7 @@ func NewScheduler(
 	gpuSvc GpuService,
 	processRepo repository.ProcessRepository,
 	procCache repository.ProcessCacheRepository,
+	execSvc ExecService,
 ) Scheduler {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &scheduler{
@@ -67,6 +68,7 @@ func NewScheduler(
 		gpuSvc:      gpuSvc,
 		processRepo: processRepo,
 		procCache:   procCache,
+		execSvc:     execSvc,
 		ctx:         ctx,
 		cancel:      cancel,
 		runningJobs: make(map[int]*JobProcess),
@@ -228,6 +230,7 @@ func (s *scheduler) processQueue() {
 
 	if !available {
 		// 显卡不可用，更新任务状态为等待显卡
+		logger.Warn("显卡资源不足或被占用", zap.Int("job_id", job.ID), zap.Ints("requested_card_ids", cardIDs))
 		if job.Status != entity.JobStatusWaitingGpu {
 			if err := s.jobRepo.UpdateStatus(job.ID, entity.JobStatusWaitingGpu); err != nil {
 				logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", job.ID))
@@ -285,9 +288,6 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		return fmt.Errorf("任务脚本路径为空")
 	}
 
-	// 构建命令
-	cmd := exec.Command("python3", "-u", scriptPath)
-	//cmd.Dir = filepath.Dir(scriptPath)
 	logger.Info("任务路径", zap.String("job_file_path", job.FilePath))
 	// 获取显存中的显卡信息以获取其当前的系统索引
 	cards, err := s.gpuSvc.GetGpuCardsByIDs(s.ctx, cardIDs)
@@ -301,14 +301,15 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	for i, card := range cards {
 		gpuIndices[i] = strconv.Itoa(card.Index)
 	}
-	cmd.Env = append(os.Environ(),
-		"CUDA_VISIBLE_DEVICES="+strings.Join(gpuIndices, ","),
-		"JOB_ID="+strconv.Itoa(job.ID),
-		"PYTHONUNBUFFERED=1",
-	)
+	envVars := map[string]string{
+		"CUDA_VISIBLE_DEVICES": strings.Join(gpuIndices, ","),
+		"JOB_ID":               strconv.Itoa(job.ID),
+		"PYTHONUNBUFFERED":     "1",
+	}
 
-	// 启动任务
-	if err := cmd.Start(); err != nil {
+	// 远程启动任务
+	pid, err := s.execSvc.ExecuteCommandRemote(s.ctx, job.UserId, job.CondaEnv, "python3 -u "+scriptPath, envVars)
+	if err != nil {
 		if err := s.gpuSvc.ReleaseCards(s.ctx, cardIDs); err != nil {
 			logger.Warn("释放显卡失败", zap.Error(err), zap.Int("job_id", job.ID), zap.Ints("card_ids", cardIDs))
 		}
@@ -319,13 +320,14 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 		if err := s.queueSvc.Remove(s.ctx, job.ID); err != nil {
 			logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", job.ID))
 		}
-		return fmt.Errorf("启动训练脚本失败: %w", err)
+		return fmt.Errorf("远程启动训练脚本失败: %w", err)
 	}
 
 	// 记录运行中的任务
 	jp := &JobProcess{
-		pid:     cmd.Process.Pid, // 存储 PID
+		pid:     pid, // 存储远程 PID
 		jobID:   job.ID,
+		userID:  job.UserId,
 		jobName: job.Name,
 		cardIDs: cardIDs,
 		done:    make(chan struct{}),
@@ -335,7 +337,6 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 	s.runningMu.Unlock()
 
 	// 写入进程表
-	pid := cmd.Process.Pid
 	for _, cardID := range cardIDs {
 		process := &entity.Process{
 			PID:    pid,
@@ -360,7 +361,7 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	logger.Info("任务已启动",
 		zap.Int("job_id", job.ID),
-		zap.Int("pid", cmd.Process.Pid), // 直接使用 cmd.Process.Pid
+		zap.Int("pid", pid),
 		zap.Ints("gpu_ids", cardIDs))
 
 	return nil
@@ -408,62 +409,44 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 		}
 	}()
 
-	// 获取 *os.Process 对象
-	process, err := os.FindProcess(jp.pid)
-	if err != nil {
-		logger.Error("监控任务时查找进程失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
-		if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
-			logger.Error("更新任务状态为失败失败", zap.Error(err), zap.Int("job_id", jobID))
-		}
-		return
-	}
+	// 循环检查远程进程状态
+	ticker := time.NewTicker(2 * time.Second)
+	defer ticker.Stop()
 
-	// 使用 select 监听进程结束或调度器停止
-	processWaitChan := make(chan waitResult, 1)
-	go func() {
-		state, err := process.Wait() // 忽略 *os.ProcessState，只发送 error
-		processWaitChan <- waitResult{
-			state: state,
-			err:   err,
-		}
-	}()
+	failCount := 0
 
-	select {
-	case <-s.ctx.Done():
-		logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
-		return // 调度器停止，monitorJob 退出，不影响任务进程
-	case result := <-processWaitChan: // 进程结束
-		// 获取任务详情
-		logger.Info("任务进程退出", zap.Int("job_id", jobID), zap.Int("pid", jp.pid), zap.Error(result.err))
-		job, err2 := s.jobRepo.GetByID(jobID)
-		if err2 != nil {
-			logger.Error("获取任务详情失败", zap.Error(err2), zap.Int("job_id", jobID))
+	for {
+		select {
+		case <-s.ctx.Done():
+			logger.Info("调度器停止，monitorJob 退出，任务进程继续运行", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 			return
-		}
-
-		if job == nil {
-			return
-		}
-
-		// 更新任务状态
-		status := entity.JobStatusCompleted
-		if result.err != nil {
-			status = entity.JobStatusFailed
-			logger.Info("任务执行结束（Wait调用失败）", zap.Int("job_id", jobID), zap.Error(result.err))
-		} else {
-			exitCode := result.state.ExitCode()
-			// 非0退出码（包括 kill -9）
-			if exitCode != 0 {
-				status = entity.JobStatusFailed
-				logger.Info("任务执行结束（异常退出）", zap.Int("job_id", jobID), zap.Int("exit_code", exitCode))
-			} else {
-				status = entity.JobStatusCompleted
-				logger.Info("任务执行成功", zap.Int("job_id", jobID))
+		case <-ticker.C:
+			running, err := s.execSvc.IsProcessRunningRemote(s.ctx, jp.userID, jp.pid)
+			if err != nil {
+				logger.Error("检查远程进程状态失败", zap.Error(err), zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+				failCount++
+				// 连续失败 10 次 (约 20 秒) 则认为任务失联/失败
+				if failCount >= 10 {
+					logger.Error("连续多次无法获取进程状态，判定为任务失败", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+					if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusFailed); err != nil {
+						logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+					}
+					return
+				}
+				continue
 			}
-		}
 
-		if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
-			logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+			failCount = 0 // 成功获取状态，重置计数器
+
+			if !running {
+				logger.Info("任务进程退出", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
+
+				// 更新任务状态为已完成（因为无法获取远程退出码，默认成功，如果需要更精确可以检查日志）
+				if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusCompleted); err != nil {
+					logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
+				}
+				return
+			}
 		}
 	}
 }
@@ -501,13 +484,14 @@ func (s *scheduler) recoverRunningJobs() {
 			pid := processRecord.PID
 
 			// 检查进程是否存在
-			if isProcessRunning(pid) {
+			if s.isProcessRunning(job.UserId, pid) {
 				logger.Info("进程仍在运行，重新接管任务", zap.Int("job_id", job.ID), zap.Int("pid", pid))
 
 				// 重新构建 JobProcess
 				jp := &JobProcess{
 					pid:     pid,
 					jobID:   job.ID,
+					userID:  job.UserId,
 					jobName: job.Name,
 					cardIDs: parseGpuIDs(job.GpuIDs),
 					done:    make(chan struct{}),
@@ -578,7 +562,7 @@ func (s *scheduler) auditRunningJobs() {
 			}
 
 			// 检查进程是否存在
-			if !isProcessRunning(pid) {
+			if !s.isProcessRunning(job.UserId, pid) {
 				logger.Warn("同步发现进程已不存在，清理任务记录", zap.Int("job_id", job.ID), zap.Int("pid", pid))
 				handleMissingProcess(s, ctx, job, &processRecord) // 传递 processRecord 的地址
 			}
@@ -589,14 +573,13 @@ func (s *scheduler) auditRunningJobs() {
 }
 
 // isProcessRunning 检查指定 PID 的进程是否仍在运行
-func isProcessRunning(pid int) bool {
-	process, err := os.FindProcess(pid)
+func (s *scheduler) isProcessRunning(userID int, pid int) bool {
+	running, err := s.execSvc.IsProcessRunningRemote(s.ctx, userID, pid)
 	if err != nil {
-		return false // 进程不存在
+		logger.Errorf("isProcessRunning: 远程检查进程状态失败: userID=%d, pid=%d, err=%v", userID, pid, err)
+		return false
 	}
-
-	err = process.Signal(syscall.Signal(0))
-	return err == nil
+	return running
 }
 
 // parseGpuIDs 辅助函数，解析 GPU ID 字符串

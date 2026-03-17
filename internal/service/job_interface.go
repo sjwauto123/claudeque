@@ -23,6 +23,8 @@ type JobService interface {
 	GetJobByID(jobID int) (*entity.Job, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
-	// ListCondaEnvs 获取服务用户可见的Conda环境
-	ListCondaEnvs(ctx context.Context, username string) ([]response.CondaEnv, error)
+	// ListCondaEnvs 获取 Conda 环境列表
+	ListCondaEnvs(ctx context.Context, userID int) ([]string, error)
+	// SetScheduler 设置调度器
+	SetScheduler(scheduler Scheduler)
 }

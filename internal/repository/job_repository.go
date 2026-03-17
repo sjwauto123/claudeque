@@ -5,10 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"go.uber.org/zap"
 	"strconv"
 	"strings"
-
-	"go.uber.org/zap"
 
 	"cloudque/internal/model/dto/request"
 	"cloudque/internal/model/dto/response"
@@ -83,7 +82,7 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 	offset := (req.Page - 1) * req.PageSize
 
 	err := baseDB.
-		Select(`j.id,j.name,j.description,j.status,j.created_at,j.gpu_ids AS card,0 AS count`).
+		Select(`j.id,j.name,j.description,j.status,j.conda_env,j.created_at,j.gpu_ids AS card,0 AS count`).
 		Order("j.created_at DESC").Limit(req.PageSize).Offset(offset).Scan(&list).Error
 
 	if err != nil {
@@ -92,21 +91,13 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 
 	// 批量查询显卡信息
 	gpuIDMap := make(map[string]string)
-	var allGpuIDs []int
+	var allGpuIDs []string
 
 	// 收集所有需要查询的显卡ID
 	for _, job := range list {
 		if job.Card != "" {
 			ids := strings.Split(job.Card, ",")
-			for _, raw := range ids {
-				s := strings.TrimSpace(raw)
-				if s == "" {
-					continue
-				}
-				if n, err := strconv.Atoi(s); err == nil {
-					allGpuIDs = append(allGpuIDs, n)
-				}
-			}
+			allGpuIDs = append(allGpuIDs, ids...)
 		}
 	}
 
@@ -125,11 +116,7 @@ func (r *jobRepository) getJobListWithFilters(req request.JobListRequest, startT
 		if list[i].Card != "" {
 			ids := strings.Split(list[i].Card, ",")
 			var names []string
-			for _, raw := range ids {
-				id := strings.TrimSpace(raw)
-				if id == "" {
-					continue
-				}
+			for _, id := range ids {
 				if name, ok := gpuIDMap[id]; ok {
 					names = append(names, name)
 				}

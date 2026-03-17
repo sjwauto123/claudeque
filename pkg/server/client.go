@@ -241,26 +241,42 @@ func (c *Client) MkdirAll(path string) error {
 
 // ExecuteCommand 执行非交互式命令，返回stdout+stderr
 func (c *Client) ExecuteCommand(cmd string) (string, error) {
+	output, _, err := c.ExecuteCommandWithStatus(cmd)
+	if err != nil {
+		logger.Errorf("执行SSH命令失败: %s, 输出: %s, 错误: %v", cmd, output, err)
+		return output, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("执行SSH命令失败: %s, 输出: %s", cmd, output), err)
+	}
+	return output, nil
+}
+
+// ExecuteCommandWithStatus 执行命令并返回输出、退出状态码和错误
+func (c *Client) ExecuteCommandWithStatus(cmd string) (string, int, error) {
 	session, err := c.sshClient.NewSession()
 	if err != nil {
-		logger.Errorf("创建SSH会话失败: %s, 错误: %v", cmd, err)
-		return "", errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("创建SSH会话失败: %s", cmd), err)
+		return "", -1, err
 	}
 	defer func() {
 		if closeErr := session.Close(); closeErr != nil && closeErr != io.EOF {
-			logger.Warnf("关闭SSH会话失败: %s, 错误: %v", cmd, closeErr)
+			// 静默关闭
 		}
 	}()
 
 	var buf bytes.Buffer
 	session.Stdout = &buf
 	session.Stderr = &buf
-	if err := session.Run(cmd); err != nil {
-		output := buf.String()
-		logger.Errorf("执行SSH命令失败: %s, 输出: %s, 错误: %v", cmd, output, err)
-		return output, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, fmt.Sprintf("执行SSH命令失败: %s, 输出: %s", cmd, output), err)
+	err = session.Run(cmd)
+
+	output := buf.String()
+	exitCode := 0
+	if err != nil {
+		if exitErr, ok := err.(*ssh.ExitError); ok {
+			exitCode = exitErr.ExitStatus()
+		} else {
+			exitCode = -1
+		}
 	}
-	return buf.String(), nil
+
+	return output, exitCode, err
 }
 
 // NewTerminalSession 创建一个新的终端会话
