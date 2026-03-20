@@ -463,8 +463,21 @@ func (s *scheduler) monitorJob(jp *JobProcess) {
 			if !running {
 				logger.Info("任务进程退出", zap.Int("job_id", jobID), zap.Int("pid", jp.pid))
 
-				// 更新任务状态为已完成（因为无法获取远程退出码，默认成功，如果需要更精确可以检查日志）
-				if err := s.jobRepo.UpdateStatus(jobID, entity.JobStatusCompleted); err != nil {
+				// 检查用户是否拥有 Root 权限以读取退出码
+				isRoot, _ := s.authSvc.HasSystemAccess(jp.userID, AccessTypeFile)
+
+				// 尝试获取退出码
+				exitCode, err := s.execSvc.GetJobExitCode(s.ctx, jp.userID, jobID, isRoot)
+				status := entity.JobStatusCompleted
+				if err != nil {
+					logger.Warn("获取退出码失败，默认标记为已完成", zap.Error(err), zap.Int("job_id", jobID))
+				} else if exitCode != 0 {
+					logger.Warn("任务执行失败", zap.Int("job_id", jobID), zap.Int("exit_code", exitCode))
+					status = entity.JobStatusFailed
+				}
+
+				// 更新任务状态
+				if err := s.jobRepo.UpdateStatus(jobID, status); err != nil {
 					logger.Error("更新任务状态失败", zap.Error(err), zap.Int("job_id", jobID))
 				}
 				return

@@ -12,4 +12,6 @@ type ExecService interface {
 	ExecuteCommandRemote(ctx context.Context, userID int, condaEnv string, cmd string, envVars map[string]string, isRoot bool) (int, error)
 	// FileExistsRemote 检查远程文件是否存在
 	FileExistsRemote(ctx context.Context, userID int, filePath string, isRoot bool) (bool, error)
+	// GetJobExitCode 获取任务的退出码
+	GetJobExitCode(ctx context.Context, userID int, jobID int, isRoot bool) (int, error)
 }

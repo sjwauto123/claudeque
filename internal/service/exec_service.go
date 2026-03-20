@@ -6,6 +6,7 @@ import (
 	"cloudque/pkg/ssh"
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +90,7 @@ func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, cond
 	jobID := envVars["JOB_ID"]
 	logDir := "$HOME/cloudque_logs"
 	logFile := fmt.Sprintf("%s/job_%s.log", logDir, jobID)
+	exitFile := fmt.Sprintf("%s/job_%s.exitcode", logDir, jobID)
 
 	// 构建执行命令
 	var runCmd string
@@ -99,12 +101,13 @@ func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, cond
 	}
 
 	// 模拟 cmd.Process.Pid 的核心逻辑：
-	// 1. 使用 bash -c 启动，先打印当前 Shell 的 PID ($$)
-	// 2. 然后使用 exec 执行 nohup 命令，让任务进程替换掉当前的 Shell 进程
-	// 3. 这样任务进程就会继承刚才打印出来的那个 PID
-	fullCmd := fmt.Sprintf("mkdir -p %s && bash -c 'echo $$ ; %s exec nohup %s > %s 2>&1'",
-		logDir, envPrefix.String(), runCmd, logFile)
-
+	// 1. 使用 bash -l -c 启动（login shell，确保加载 conda 等环境变量）
+	// 2. 先打印当前 Shell 的 PID ($$)
+	// 3. 然后使用 exec 执行 nohup 命令，启动一个新的 bash 包装器
+	// 4. 该包装器会运行实际任务，并在结束后将退出码 ($?) 写入文件
+	// 5. 任务进程会继承刚才打印出来的那个 PID
+	fullCmd := fmt.Sprintf("mkdir -p %s && bash -l -c 'echo $$ ; %s exec nohup bash -c \"%s; echo \\$? > %s\" > %s 2>&1'",
+		logDir, envPrefix.String(), runCmd, exitFile, logFile)
 	logger.Info("模拟 cmd.Process.Pid 逻辑启动任务", zap.String("job_id", jobID))
 
 	// 1. 获取底层的 ssh.Client 并开启 Session
@@ -186,6 +189,43 @@ func (s *execService) FileExistsRemote(ctx context.Context, userID int, filePath
 	}
 
 	return true, nil
+}
+
+// GetJobExitCode 获取任务的退出码
+func (s *execService) GetJobExitCode(ctx context.Context, userID int, jobID int, isRoot bool) (int, error) {
+	client, err := s.getSSHClient(userID, isRoot)
+	if err != nil {
+		logger.Errorf("GetJobExitCode: 获取 SSH 客户端失败: userID=%d, jobID=%d, err=%v", userID, jobID, err)
+		return -1, err
+	}
+
+	exitFile := fmt.Sprintf("$HOME/cloudque_logs/job_%d.exitcode", jobID)
+	cmd := fmt.Sprintf("cat %s", exitFile)
+
+	// 重试机制：由于进程退出（PID消失）和包装器 Bash 将退出码写入文件之间存在极小的时间差，
+	// 所以需要重试几次以确保能读到文件
+	var output string
+	var execErr error
+	maxRetries := 5
+	for i := 0; i < maxRetries; i++ {
+		output, execErr = client.ExecuteCommand(cmd)
+		if execErr == nil {
+			break
+		}
+		time.Sleep(1 * time.Second)
+	}
+
+	if execErr != nil {
+		return -1, fmt.Errorf("读取退出码文件失败 (已重试 %d 次): %w", maxRetries, execErr)
+	}
+
+	output = strings.TrimSpace(output)
+	exitCode, err := strconv.Atoi(output)
+	if err != nil {
+		return -1, fmt.Errorf("解析退出码失败: %w, 内容: %s", err, output)
+	}
+
+	return exitCode, nil
 }
 
 // getSSHClient 获取用户的 SSH 客户端
