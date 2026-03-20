@@ -10,8 +10,8 @@ type ExecService interface {
 	ListCondaEnvs(ctx context.Context, userID int) ([]string, error)
 	// ExecuteCommandRemote 在指定环境下远程执行命令，返回 PID
 	ExecuteCommandRemote(ctx context.Context, userID int, condaEnv string, cmd string, envVars map[string]string, isRoot bool) (int, error)
-	// IsProcessRunningRemote 检查远程进程是否在运行
-	IsProcessRunningRemote(ctx context.Context, userID int, pid int, isRoot bool) (bool, error)
 	// FileExistsRemote 检查远程文件是否存在
 	FileExistsRemote(ctx context.Context, userID int, filePath string, isRoot bool) (bool, error)
+	// GetJobExitCode 获取任务的退出码
+	GetJobExitCode(ctx context.Context, userID int, jobID int, isRoot bool) (int, error)
 }

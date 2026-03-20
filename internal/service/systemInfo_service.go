@@ -242,7 +242,7 @@ func GetNvidiaGPUInfo() ([]response.GPUInfoResponse, error) {
 
 		gpus = append(gpus, response.GPUInfoResponse{
 			Index:      index,
-			DeviceName: name,
+			DeviceName: fmt.Sprintf("%d-%s", index, name),
 			Temp:       temp,
 			Util:       util,
 			MemUsed:    memUsed,
@@ -255,73 +255,125 @@ func GetNvidiaGPUInfo() ([]response.GPUInfoResponse, error) {
 
 // collectProcessInfo 收集进程信息
 func (rc *ResourceCollector) collectProcessInfo() ([]response.ProcessInfoResponse, error) {
-	//创建带超时的上下文，防止Redis操作超时
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-
-	//从redis获取进程信息
-	jobNames, processes, err := rc.ProcRepo.GetAllPid(ctx)
+	// 直接从nvidia-smi获取进程信息
+	processList, err := getProcessInfoFromNvidiaSMI()
 	if err != nil {
-		return nil, fmt.Errorf("查询进程信息失败: %w", err)
+		return nil, fmt.Errorf("从nvidia-smi获取进程信息失败: %w", err)
 	}
 
-	if len(jobNames) == 0 || len(processes) == 0 || len(jobNames) != len(processes) {
-		return []response.ProcessInfoResponse{}, nil
-	}
-	// 获取 Redis 中进程与 GPU 的映射
-	gpuMap := getGPUMap(processes)
-	if len(gpuMap) == 0 {
+	if len(processList) == 0 {
 		return []response.ProcessInfoResponse{}, nil
 	}
 
 	var processInfos []response.ProcessInfoResponse
-	for i, p := range processes {
+	for _, processInfo := range processList {
 		// 通过本地命令获取进程的详细信息
-		info, err := getProcessDetails(p, gpuMap, jobNames[i])
+		info, err := getProcessDetails(processInfo.PID, processInfo.GPUName, processInfo.ProcessName)
 		if err != nil {
-			logger.Infof("获取进程 id 为%v 详细信息失败:%v", p, err)
+			logger.Infof("获取进程 id 为%v 详细信息失败:%v", processInfo.PID, err)
+			continue
 		}
 		processInfos = append(processInfos, info)
 	}
 	return processInfos, nil
 }
 
-// getGPUMap 获取指定进程与 GPU 的映射
-func getGPUMap(processes []int) map[string]string {
+// ProcessInfo 保存从nvidia-smi获取的进程信息
+type ProcessInfo struct {
+	PID         int
+	ProcessName string
+	GPUName     string
+}
+
+// getGPUIndexMap 获取GPU bus_id到索引+名称的映射关系
+func getGPUIndexMap() (map[string]string, error) {
 	gpuMap := make(map[string]string)
 
-	// 使用 nvidia-smi 命令获取所有进程所在的 GPU 信息
-	cmd := exec.Command("nvidia-smi", "--query-compute-apps=pid,gpu_name", "--format=csv,noheader")
+	// 获取所有GPU的索引、bus_id和名称
+	cmd := exec.Command("nvidia-smi", "--query-gpu=index,gpu_bus_id,name", "--format=csv,noheader,nounits")
 	output, err := cmd.Output()
 	if err != nil {
-		return gpuMap
+		return gpuMap, fmt.Errorf("获取GPU信息失败: %w", err)
 	}
 
-	// 构建需要查询的 PID 集合，用于快速查找
-	pidSet := make(map[string]bool)
-	for _, pid := range processes {
-		pidSet[strconv.Itoa(pid)] = true
-	}
-
-	// 只保留我们关心的进程
+	// 解析输出，建立bus_id到"索引-名称"的映射
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
 		parts := strings.Split(strings.TrimSpace(line), ", ")
-		if len(parts) == 2 {
-			pidStr := parts[0]
-			// 只保留 Redis 中存在的进程
-			if pidSet[pidStr] {
-				gpuName := parts[1]
-				gpuMap[pidStr] = gpuName
-			}
+		if len(parts) >= 3 {
+			index := parts[0] // GPU索引
+			busId := parts[1] // GPU bus_id
+			name := parts[2]  // GPU名称
+
+			// 创建"索引-名称"格式的标识，如："0-RTX 3060"
+			gpuMap[busId] = fmt.Sprintf("%s-%s", index, name)
 		}
 	}
 
-	return gpuMap
+	return gpuMap, nil
+}
+
+// getProcessInfoFromNvidiaSMI 直接从nvidia-smi获取进程信息
+func getProcessInfoFromNvidiaSMI() ([]ProcessInfo, error) {
+	var processList []ProcessInfo
+
+	// 先获取GPU索引和名称的映射
+	gpuIndexMap, err := getGPUIndexMap()
+	if err != nil {
+		logger.Infof("获取GPU映射失败: %v", err)
+	}
+
+	// 使用nvidia-smi获取进程信息
+	// 注意：--query-compute-apps 不支持 index 字段，必须通过 gpu_bus_id 或 gpu_uuid 进行映射
+	cmd := exec.Command("nvidia-smi", "--query-compute-apps=pid,gpu_bus_id,process_name,gpu_name", "--format=csv,noheader,nounits")
+	output, err := cmd.Output()
+	if err != nil {
+		return processList, fmt.Errorf("执行nvidia-smi命令失败: %w", err)
+	}
+
+	// 解析输出
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+
+		parts := strings.Split(strings.TrimSpace(line), ", ")
+		if len(parts) >= 4 {
+			pidStr := parts[0]
+			busId := parts[1]
+			processName := parts[2]
+			gpuName := parts[3]
+
+			pid, err := strconv.Atoi(pidStr)
+			if err != nil {
+				logger.Infof("解析PID失败: %v", err)
+				continue
+			}
+
+			// 通过 bus_id 获取 "索引-名称"
+			displayName := gpuIndexMap[busId]
+			if displayName == "" {
+				displayName = gpuName // 兜底使用显卡名称
+			}
+
+			processList = append(processList, ProcessInfo{
+				PID:         pid,
+				ProcessName: processName,
+				GPUName:     displayName,
+			})
+		}
+	}
+
+	return processList, nil
 }
 
 // getProcessDetails 获取进程的详细信息
-func getProcessDetails(pid int, gpuMap map[string]string, jobName string) (response.ProcessInfoResponse, error) {
+func getProcessDetails(pid int, gpuName string, jobName string) (response.ProcessInfoResponse, error) {
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
 		return response.ProcessInfoResponse{}, err
@@ -345,12 +397,6 @@ func getProcessDetails(pid int, gpuMap map[string]string, jobName string) (respo
 	startTime := time.Unix(createTime/1000, 0).Format("2006-01-02 15:04:05")
 	duration := time.Since(time.Unix(createTime/1000, 0))
 	r := formatDuration(duration)
-
-	// 从映射中获取 GPU 信息
-	gpuName := gpuMap[strconv.Itoa(pid)]
-	if gpuName == "" {
-		gpuName = "未获取到显卡信息"
-	}
 
 	isNormal := 1
 	// 如果进程已经退出，IsRunning() 会返回 false
