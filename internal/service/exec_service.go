@@ -41,8 +41,8 @@ func (s *execService) ListCondaEnvs(ctx context.Context, userID int) ([]string, 
 	}
 
 	// 尝试加载用户的环境变量配置，特别是 .bashrc 或 conda 的初始化脚本
-	// 有些环境的 conda 并不是全局可用的，需要 source ~/.bashrc 或者指定完整路径
-	cmd := "source ~/.bashrc 2>/dev/null; conda env list || /opt/conda/bin/conda env list || ~/miniconda3/bin/conda env list || ~/anaconda3/bin/conda env list"
+	// 直接执行 conda env list，如果环境变量未配置好则尝试加载 .bashrc，最后兜底常见路径
+	cmd := `conda env list 2>/dev/null || bash -lc 'conda env list' 2>/dev/null || bash -c 'source ~/.bashrc 2>/dev/null; conda env list' 2>/dev/null || /opt/conda/bin/conda env list 2>/dev/null || ~/miniconda3/bin/conda env list 2>/dev/null || ~/anaconda3/bin/conda env list 2>/dev/null || /usr/local/miniconda3/bin/conda env list 2>/dev/null || /usr/local/anaconda3/bin/conda env list 2>/dev/null || /root/miniconda3/bin/conda env list 2>/dev/null || /root/anaconda3/bin/conda env list 2>/dev/null`
 
 	output, err := client.ExecuteCommand(cmd)
 	if err != nil {
@@ -93,7 +93,9 @@ func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, cond
 	// 构建执行命令
 	var runCmd string
 	if condaEnv != "" {
-		runCmd = fmt.Sprintf("conda run --no-capture-output -n %s %s", condaEnv, cmdStr)
+		// 添加常见的 conda 路径到 PATH 中，确保能找到 conda 命令
+		condaPath := `export PATH=$PATH:/opt/conda/bin:$HOME/miniconda3/bin:$HOME/anaconda3/bin:/usr/local/miniconda3/bin:/usr/local/anaconda3/bin:/root/miniconda3/bin:/root/anaconda3/bin; `
+		runCmd = fmt.Sprintf("%sconda run --no-capture-output -n %s %s", condaPath, condaEnv, cmdStr)
 	} else {
 		runCmd = cmdStr
 	}

@@ -906,7 +906,7 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 	//wg.Add(2)
 
 	// 1. 串行执行 du (不再并行，避免 SSH 通道竞争)
-	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
+	cmd := fmt.Sprintf("du -sb %s 2>/dev/null | awk '{print $1}'", safePath)
 	output, err := s.executeSSHCommand(userID, cmd, isRootMode)
 	if err != nil {
 		// 尝试回退方案
@@ -915,13 +915,23 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 			errDu = errors.NewWithErr(errors.CodeForbidden, "权限不足，无法访问该目录", err)
 		} else {
 			// 尝试使用 du -sk 作为回退方案
-			cmdFallback := fmt.Sprintf("du -sk %s | awk '{print $1}'", safePath)
+			cmdFallback := fmt.Sprintf("du -sk %s 2>/dev/null | awk '{print $1}'", safePath)
 			outputFallback, errFallback := s.executeSSHCommand(userID, cmdFallback, isRootMode)
 			if errFallback == nil && strings.TrimSpace(outputFallback) != "" {
 				output = outputFallback
 				// 标记需要转换为字节（du -sk 输出的是 KB）
 				kbStr := strings.TrimSpace(output)
-				fields := strings.Fields(kbStr)
+				// 取最后一行，避免其他输出干扰
+				lines := strings.Split(kbStr, "\n")
+				lastLine := ""
+				for i := len(lines) - 1; i >= 0; i-- {
+					l := strings.TrimSpace(lines[i])
+					if l != "" {
+						lastLine = l
+						break
+					}
+				}
+				fields := strings.Fields(lastLine)
 				if len(fields) > 0 {
 					kbStr = fields[0]
 				}
@@ -936,7 +946,7 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 		sizeStr := strings.TrimSpace(output)
 		if sizeStr == "" {
 			// 如果 output 为空但 err 为 nil，可能是管道问题，尝试直接 du -sb
-			cmdDirect := fmt.Sprintf("du -sb %s", safePath)
+			cmdDirect := fmt.Sprintf("du -sb %s 2>/dev/null", safePath)
 			outDirect, errDirect := s.executeSSHCommand(userID, cmdDirect, isRootMode)
 			if errDirect == nil && strings.TrimSpace(outDirect) != "" {
 				sizeStr = strings.TrimSpace(outDirect)
@@ -947,7 +957,17 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 		}
 
 		if sizeStr != "" {
-			fields := strings.Fields(sizeStr)
+			// 取最后一行，避免其他输出干扰
+			lines := strings.Split(sizeStr, "\n")
+			lastLine := ""
+			for i := len(lines) - 1; i >= 0; i-- {
+				l := strings.TrimSpace(lines[i])
+				if l != "" {
+					lastLine = l
+					break
+				}
+			}
+			fields := strings.Fields(lastLine)
 			if len(fields) > 0 {
 				sizeStr = fields[0]
 			}
