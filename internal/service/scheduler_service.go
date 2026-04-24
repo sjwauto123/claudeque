@@ -11,6 +11,7 @@ import (
 
 	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
+	"cloudque/pkg/database"
 	"cloudque/pkg/logger"
 
 	"go.uber.org/zap"
@@ -47,12 +48,6 @@ type JobProcess struct {
 	jobName string
 	cardIDs []int
 	done    chan struct{}
-}
-
-// 用于接收 process.Wait 结果
-type waitResult struct {
-	state *os.ProcessState
-	err   error
 }
 
 // NewScheduler 创建调度器
@@ -167,6 +162,15 @@ func (s *scheduler) processQueue() {
 		return
 	}
 	s.mu.RUnlock()
+	// 获取Redis锁
+	token, ok := s.acquireQueueLock(s.ctx, 30*time.Second)
+	if !ok {
+		return
+	}
+	// 释放锁
+	defer s.releaseQueueLock(s.ctx, token)
+	stopRenew := s.startQueueLockWatchdog(s.ctx, token, 30*time.Second)
+	defer stopRenew()
 
 	// 获取队列头部的任务
 	item, err := s.queueSvc.Peek(s.ctx)
@@ -258,6 +262,76 @@ func (s *scheduler) processQueue() {
 	if err := s.queueSvc.Remove(s.ctx, item.JobID); err != nil {
 		logger.Warn("从队列移除任务失败", zap.Error(err), zap.Int("job_id", item.JobID))
 	}
+}
+
+func (s *scheduler) acquireQueueLock(ctx context.Context, ttl time.Duration) (string, bool) {
+	client := database.GetRedis()
+	if client == nil {
+		return "", false
+	}
+	key := "lock:queue_process"
+	token := fmt.Sprintf("%d-%d", time.Now().UnixNano(), os.Getpid())
+	ok, err := client.SetNX(ctx, key, token, ttl).Result()
+	if err != nil {
+		logger.Error("获取队列锁失败", zap.Error(err))
+		return "", false
+	}
+	return token, ok
+}
+
+func (s *scheduler) releaseQueueLock(ctx context.Context, token string) {
+	client := database.GetRedis()
+	if client == nil || token == "" {
+		return
+	}
+	key := "lock:queue_process"
+	script := `
+		if redis.call("get", KEYS[1]) == ARGV[1] then
+  			return redis.call("del", KEYS[1])
+		else
+  			return 0
+		end
+	`
+	_, err := client.Eval(ctx, script, []string{key}, token).Result()
+	if err != nil {
+	}
+}
+
+func (s *scheduler) startQueueLockWatchdog(ctx context.Context, token string, ttl time.Duration) func() {
+	client := database.GetRedis()
+	if client == nil || token == "" || ttl <= 0 {
+		return func() {}
+	}
+	key := "lock:queue_process"
+	interval := ttl / 3
+	if interval <= 0 {
+		interval = time.Second
+	}
+	ticker := time.NewTicker(interval)
+	stop := make(chan struct{})
+	go func() {
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				script := `
+				if redis.call("get", KEYS[1]) == ARGV[1] then
+  					return redis.call("pexpire", KEYS[1], ARGV[2])
+				else
+  					return 0
+				end
+				`
+				ms := int(ttl.Milliseconds())
+				_, err := client.Eval(ctx, script, []string{key}, token, ms).Result()
+				if err != nil {
+					logger.Warn("续期队列锁失败", zap.Error(err))
+				}
+			}
+		}
+	}()
+	return func() { close(stop) }
 }
 
 // executeJob 执行任务
@@ -359,12 +433,12 @@ func (s *scheduler) executeJob(job *entity.Job, cardIDs []int) error {
 
 	// 写入进程表
 	for _, cardID := range cardIDs {
-		process := &entity.Process{
+		p := &entity.Process{
 			PID:    pid,
 			CardID: cardID,
 			JobID:  job.ID,
 		}
-		if err := s.processRepo.Create(process); err != nil {
+		if err := s.processRepo.Create(p); err != nil {
 			logger.Warn("写入进程表失败", zap.Error(err), zap.Int("pid", pid), zap.Int("card_id", cardID))
 			return err
 		}
