@@ -9,8 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"go.uber.org/zap"
 )
 
 type execService struct {
@@ -34,23 +32,20 @@ func (s *execService) ListCondaEnvs(ctx context.Context, userID int) ([]string, 
 		logger.Errorf("ListCondaEnvs: 检查用户权限失败: userID=%d, err=%v", userID, err)
 		isRoot = false // 回退到普通用户权限
 	}
-
+	// 获取SSH连接
 	client, err := s.getSSHClient(userID, isRoot)
 	if err != nil {
 		logger.Errorf("ListCondaEnvs: 获取 SSH 客户端失败: userID=%d, isRoot=%v, err=%v", userID, isRoot, err)
 		return nil, err
 	}
-
-	// 尝试加载用户的环境变量配置，特别是 .bashrc 或 conda 的初始化脚本
-	// 直接执行 conda env list，如果环境变量未配置好则尝试加载 .bashrc，最后兜底常见路径
-	cmd := `conda env list 2>/dev/null || bash -lc 'conda env list' 2>/dev/null || bash -c 'source ~/.bashrc 2>/dev/null; conda env list' 2>/dev/null || /opt/conda/bin/conda env list 2>/dev/null || ~/miniconda3/bin/conda env list 2>/dev/null || ~/anaconda3/bin/conda env list 2>/dev/null || /usr/local/miniconda3/bin/conda env list 2>/dev/null || /usr/local/anaconda3/bin/conda env list 2>/dev/null || /root/miniconda3/bin/conda env list 2>/dev/null || /root/anaconda3/bin/conda env list 2>/dev/null`
-
+	// 尝试加载Bash配置文件，失败静默处理，然后级联路径查找Conda环境
+	cmd := "source ~/.bashrc 2>/dev/null; conda env list || /opt/conda/bin/conda env list || ~/miniconda3/bin/conda env list || ~/anaconda3/bin/conda env list"
+	// 执行命令
 	output, err := client.ExecuteCommand(cmd)
 	if err != nil {
 		logger.Errorf("ListCondaEnvs: 执行 conda env list 失败: userID=%d, err=%v, output=%s", userID, err, output)
 		return nil, fmt.Errorf("conda命令不存在")
 	}
-
 	// 解析输出
 	lines := strings.Split(output, "\n")
 	var envs []string
@@ -59,17 +54,14 @@ func (s *execService) ListCondaEnvs(ctx context.Context, userID int) ([]string, 
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		// conda env list 输出格式通常是: name   *   /path/to/env 或者 name /path/to/env
 		parts := strings.Fields(line)
 		if len(parts) > 0 {
 			envs = append(envs, parts[0])
 		}
 	}
-
 	if len(envs) == 0 {
 		return nil, fmt.Errorf("conda命令不存在")
 	}
-
 	return envs, nil
 }
 
@@ -80,59 +72,42 @@ func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, cond
 		logger.Errorf("ExecuteCommandRemote: 获取 SSH 客户端失败: userID=%d, err=%v", userID, err)
 		return 0, err
 	}
-
-	// 构建环境变量前缀
+	// 将环境变量转换成标准的 Shell 环境变量导出语句
 	var envPrefix strings.Builder
 	for k, v := range envVars {
 		envPrefix.WriteString(fmt.Sprintf("export %s=%s && ", k, v))
 	}
-
-	jobID := envVars["JOB_ID"]
-	logDir := "$HOME/cloudque_logs"
+	// 构建文件路径
+	jobID, logDir := envVars["JOB_ID"], "$HOME/cloudque_logs"
 	logFile := fmt.Sprintf("%s/job_%s.log", logDir, jobID)
 	exitFile := fmt.Sprintf("%s/job_%s.exitcode", logDir, jobID)
-
 	// 构建执行命令
 	var runCmd string
+	runCmd = fmt.Sprintf("conda run --no-capture-output -n %s %s", condaEnv, cmdStr)
 	if condaEnv != "" {
-		// 添加常见的 conda 路径到 PATH 中，确保能找到 conda 命令
-		condaPath := `export PATH=$PATH:/opt/conda/bin:$HOME/miniconda3/bin:$HOME/anaconda3/bin:/usr/local/miniconda3/bin:/usr/local/anaconda3/bin:/root/miniconda3/bin:/root/anaconda3/bin; `
-		runCmd = fmt.Sprintf("%sconda run --no-capture-output -n %s %s", condaPath, condaEnv, cmdStr)
+		runCmd = fmt.Sprintf("conda run --no-capture-output -n %s %s", condaEnv, cmdStr)
 	} else {
 		runCmd = cmdStr
 	}
-
-	// 模拟 cmd.Process.Pid 的核心逻辑：
-	// 1. 使用 bash -l -c 启动（login shell，确保加载 conda 等环境变量）
-	// 2. 先打印当前 Shell 的 PID ($$)
-	// 3. 然后使用 exec 执行 nohup 命令，启动一个新的 bash 包装器
-	// 4. 该包装器会运行实际任务，并在结束后将退出码 ($?) 写入文件
-	// 5. 任务进程会继承刚才打印出来的那个 PID
 	fullCmd := fmt.Sprintf("mkdir -p %s && bash -l -c 'echo $$ ; %s exec nohup bash -c \"%s; echo \\$? > %s\" > %s 2>&1'",
 		logDir, envPrefix.String(), runCmd, exitFile, logFile)
-	logger.Info("模拟 cmd.Process.Pid 逻辑启动任务", zap.String("job_id", jobID))
-
-	// 1. 获取底层的 ssh.Client 并开启 Session
-	sshClient := client.GetSSHClient()
-	session, err := sshClient.NewSession()
+	// 开启 Session
+	session, err := client.GetSSHClient().NewSession()
 	if err != nil {
 		return 0, fmt.Errorf("创建 SSH 会话失败: %w", err)
 	}
-
-	// 2. 获取输出管道以读取 PID
+	// 获取输出管道以读取 PID
 	stdout, err := session.StdoutPipe()
 	if err != nil {
 		session.Close()
 		return 0, fmt.Errorf("获取 StdoutPipe 失败: %w", err)
 	}
-
-	// 3. 异步启动命令（对应本地的 cmd.Start()）
+	// 异步启动命令
 	if err := session.Start(fullCmd); err != nil {
 		session.Close()
 		return 0, fmt.Errorf("启动远程命令失败: %w", err)
 	}
-
-	// 4. 立即从输出流读取 PID（对应本地的 cmd.Process.Pid）
+	// 从输出流读取 PID
 	type result struct {
 		pid int
 		err error
@@ -146,23 +121,30 @@ func (s *execService) ExecuteCommandRemote(ctx context.Context, userID int, cond
 		}
 		resChan <- result{pid, nil}
 	}()
-
-	// 5. 等待结果，确保拿到 PID
+	// 拿到 PID
 	select {
 	case res := <-resChan:
 		if res.err != nil {
 			session.Close()
 			return 0, fmt.Errorf("读取 PID 失败: %w", res.err)
 		}
-		// 拿到 PID 后，我们不需要关闭 session，
-		// 而是让它在后台运行。为了防止 session 结束导致进程收到 SIGHUP，
-		// 我们之前已经在命令里加了 nohup。
-		// 这里我们启动一个协程去等待 session 结束，释放资源
+
+		// 异步等待 session 结束
 		go func() {
 			_ = session.Wait()
 			session.Close()
 		}()
-		return res.pid, nil
+
+		// 尝试查找真正的业务子进程 PID (例如 python)
+		// 给进程一点启动时间
+		time.Sleep(500 * time.Millisecond)
+		workerPID, err := s.findWorkerPID(userID, res.pid, isRoot)
+		if err != nil {
+			logger.Warnf("查找业务子进程失败, 使用原始PID: %v", err)
+			return res.pid, nil
+		}
+
+		return workerPID, nil
 	case <-time.After(15 * time.Second):
 		session.Close()
 		return 0, fmt.Errorf("获取远程 PID 超时")
@@ -235,7 +217,6 @@ func (s *execService) getSSHClient(userID int, isRoot bool) (*server.Client, err
 	if s.sessionManager == nil {
 		return nil, fmt.Errorf("SSH 会话管理器未初始化")
 	}
-
 	session, err := s.sessionManager.GetSession(userID, isRoot)
 	if err != nil || session == nil || session.Client == nil {
 		// 尝试恢复会话
@@ -247,6 +228,60 @@ func (s *execService) getSSHClient(userID int, isRoot bool) (*server.Client, err
 			return nil, fmt.Errorf("获取 SSH 客户端失败")
 		}
 	}
-
 	return session.Client, nil
+}
+
+// findWorkerPID 递归查找叶子节点进程（例如真实的 python 训练进程）
+func (s *execService) findWorkerPID(userID int, parentPID int, isRoot bool) (int, error) {
+	client, err := s.getSSHClient(userID, isRoot)
+	if err != nil {
+		return parentPID, err
+	}
+
+	// 这是一个递归查找叶子节点的脚本
+	// 我们查找运行时间最长（通常是 python）或者最深层的子进程
+	// pgrep -P 会列出子进程 PID
+	script := fmt.Sprintf(`
+		find_worker() {
+			local pid=$1
+			# 查找所有子进程
+			local children=$(pgrep -P $pid 2>/dev/null)
+			if [ -z "$children" ]; then
+				echo $pid
+				return
+			fi
+			# 如果有子进程，递归查找。如果有多个，优先找包含 python 的进程名
+			for child in $children; do
+				if ps -p $child -o comm= 2>/dev/null | grep -qi python; then
+					find_worker $child
+					return
+				fi
+			done
+			# 如果没找到 python，就找最后一个子进程（通常是最后启动的）
+			last_child=$(echo $children | awk '{print $NF}')
+			find_worker $last_child
+		}
+		find_worker %d
+	`, parentPID)
+
+	output, exitCode, err := client.ExecuteCommandWithStatus(script)
+	if err != nil {
+		if exitCode != 0 {
+			// 如果脚本执行出错（比如进程已消失），返回原 PID
+			return parentPID, nil
+		}
+		return parentPID, err
+	}
+
+	childPIDStr := strings.TrimSpace(output)
+	if childPIDStr == "" {
+		return parentPID, nil
+	}
+
+	childPID, err := strconv.Atoi(childPIDStr)
+	if err != nil {
+		return parentPID, nil // 转换失败返回原 PID
+	}
+
+	return childPID, nil
 }
