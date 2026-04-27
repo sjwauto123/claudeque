@@ -39,6 +39,7 @@ type App struct {
 	sessionManager *ssh.SessionManager
 	wsPool         *websocket.ConnectionPool
 	infoService    service.SystemInfoService
+	terminalSvc    service.TerminalService
 	logManager     *middleware.LogManager
 }
 
@@ -248,6 +249,7 @@ func (a *App) initDependencies() {
 	}
 	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo)
 	terminalSvc := service.NewTerminalService(sessionManager, authSvc, a.wsPool)
+	a.terminalSvc = terminalSvc
 
 	// 重新创建 jobSvc 以包含 execSvc
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo, execSvc, authSvc)
@@ -339,6 +341,11 @@ func (a *App) gracefulShutdown() {
 		a.wsPool.CloseAll()
 	}
 
+	// 关闭所有终端 PTY 和输出缓存
+	if a.terminalSvc != nil {
+		a.terminalSvc.CloseAllTerminals()
+	}
+
 	// 停止任务调度器
 	if a.scheduler != nil {
 		a.scheduler.Stop()
@@ -370,13 +377,6 @@ func (a *App) gracefulShutdown() {
 	// 关闭数据库连接
 	_ = database.CloseMySQL()
 	_ = database.CloseRedis()
-
-	// 关闭路由连接
-	if a.router != nil {
-		if err := a.router.Close(); err != nil {
-			logger.Error("关闭路由连接失败", zap.Error(err))
-		}
-	}
 
 	// 同步日志
 	_ = logger.Sync()

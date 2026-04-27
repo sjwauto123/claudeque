@@ -61,7 +61,7 @@ func NewRouter(
 		apiCtrl:          permission.NewAPIController(apiService, authService, userOperationLogService),
 		menuCtrl:         menu.NewMenuController(menuService, authService, userOperationLogService),
 		userCtrl:         user.NewController(userService, userOperationLogService, authService),
-		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
+		authCtrl:         auth.NewController(authService, userService, userOperationLogService, terminalService),
 		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
 		filesCtrl:        files.NewController(fileService, authService, userOperationLogService),
 		terminalCtrl:     terminal.NewController(terminalService, authService, userOperationLogService, wsPool),
@@ -132,6 +132,3 @@ func (r *Router) Setup(engine *gin.Engine) {
 }
 
 // Close 关闭所有路由连接
-func (r *Router) Close() error {
-	return nil
-}
