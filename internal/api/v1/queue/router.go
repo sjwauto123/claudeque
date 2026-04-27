@@ -13,7 +13,7 @@ func (ctrl *Controller) QueueRoutes(router *gin.RouterGroup) {
 	r.Use(middleware.CaptureRawBody())
 	r.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
-		r.GET("", middleware.WithOperation("获取排队队列"), ctrl.GetQueue)
+		r.GET("", ctrl.GetQueue)
 		r.POST("", middleware.WithOperation("重新排序队列"), ctrl.ReorderQueue)
 		r.DELETE("/:jobId", middleware.WithOperation("移除队列中的任务"), ctrl.RemoveJob)
 	}

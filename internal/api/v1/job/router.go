@@ -14,11 +14,11 @@ func (ctrl *Controller) JobsRoutes(router *gin.RouterGroup) {
 	r.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		r.POST("", middleware.WithOperation("提交任务"), ctrl.SubmitJob)
-		r.GET("", middleware.WithOperation("获取任务列表"), ctrl.GetJobsList)
-		r.GET("/wait", middleware.WithOperation("获取排队任务列表"), ctrl.GetWaitJobsList)
-		r.GET("/stats", middleware.WithOperation("任务统计"), ctrl.GetStats)
+		r.GET("", ctrl.GetJobsList)
+		r.GET("/wait", ctrl.GetWaitJobsList)
+		r.GET("/stats", ctrl.GetStats)
 		r.DELETE("/:id", middleware.WithOperation("删除排队任务"), ctrl.CancelJob)
-		r.GET("/gpus", middleware.WithOperation("获取所有GPU信息"), ctrl.GetGpus)
-		r.GET("/conda-envs", middleware.WithOperation("获取Conda环境列表"), ctrl.GetCondaEnvs)
+		r.GET("/gpus", ctrl.GetGpus)
+		r.GET("/conda-envs", ctrl.GetCondaEnvs)
 	}
 }

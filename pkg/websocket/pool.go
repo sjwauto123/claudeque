@@ -39,7 +39,7 @@ type Client struct {
 	once           sync.Once      // 确保关闭连接只执行一次
 }
 
-// ConnectionPool WebSocket连接池（优化版：读写分离、心跳检测）
+// ConnectionPool WebSocket连接池
 type ConnectionPool struct {
 	// userID -> { client -> struct{} }
 	userClients map[int]map[*Client]struct{}

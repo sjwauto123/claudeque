@@ -82,15 +82,6 @@ func NewResourceCollector(pool *websocket.ConnectionPool, procRepo repository.Pr
 	}
 }
 
-// Stop 停止资源收集
-func (rc *ResourceCollector) Stop() {
-	// 取消上下文，通知协程退出
-	rc.cancel()
-	// 等待协程退出
-	rc.wg.Wait()
-	logger.Info("资源收集器已完全停止")
-}
-
 // Start 启动资源收集
 func (rc *ResourceCollector) Start() {
 	rc.Once.Do(func() {
@@ -128,6 +119,15 @@ func (rc *ResourceCollector) Start() {
 		}()
 		logger.Info("资源收集器已启动")
 	})
+}
+
+// Stop 停止资源收集
+func (rc *ResourceCollector) Stop() {
+	// 取消上下文，通知协程退出
+	rc.cancel()
+	// 等待协程退出
+	rc.wg.Wait()
+	logger.Info("资源收集器已完全停止")
 }
 
 // collectSystemInfo 收集系统信息
