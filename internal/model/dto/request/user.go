@@ -46,6 +46,8 @@ type CreateRequest struct {
 	Password        string `json:"password" binding:"required,min=6,max=50"`
 	ConfirmPassword string `json:"confirm_password" binding:"required"`
 	Email           string `json:"email" binding:"required,email"`
+	RealName        string `json:"real_name" binding:"omitempty,max=50"`
+	Phone           string `json:"phone" binding:"omitempty,max=20"`
 
 	Status int       `json:"status"`
 	Roles  *[]string `json:"roles" binding:"omitempty"`
@@ -54,6 +56,8 @@ type CreateRequest struct {
 // AdminUpdateUserRequest 管理员更新用户信息请求
 type AdminUpdateUserRequest struct {
 	Email           string    `json:"email" binding:"omitempty,email"`
+	RealName        string    `json:"real_name" binding:"omitempty,max=50"`
+	Phone           string    `json:"phone" binding:"omitempty,max=20"`
 	Status          *int      `json:"status" binding:"omitempty,oneof=0 1"` // 0:禁用 1:正常
 	Password        string    `json:"password" binding:"omitempty,min=6,max=50"`
 	ConfirmPassword string    `json:"confirm_password" binding:"omitempty"`
@@ -69,4 +73,11 @@ type ResetPasswordRequest struct {
 	EmailCaptcha    string `json:"captcha" binding:"required,len=6"`
 	NewPassword     string `json:"password" binding:"required,min=6,max=50"`
 	ConfirmPassword string `json:"confirm_password" binding:"required"`
+}
+
+// UpdateProfileRequest 用户更新个人信息请求
+type UpdateProfileRequest struct {
+	RealName string `json:"real_name" binding:"omitempty,max=50"`
+	Phone    string `json:"phone" binding:"omitempty,max=20"`
+	Email    string `json:"email" binding:"omitempty,email"`
 }

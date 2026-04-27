@@ -388,6 +388,8 @@ func (s *userService) GetUserResponse(user *entity.User) *dto.UserResponse {
 	return &dto.UserResponse{
 		ID:            user.ID,
 		Username:      user.Username,
+		RealName:      user.RealName,
+		Phone:         user.Phone,
 		Email:         user.Email,
 		Avatar:        user.Avatar,
 		Status:        user.Status,
@@ -436,4 +438,34 @@ func (s *userService) ListUsers(req *request.UserListRequest) (*response.PageRes
 	}
 
 	return response.NewPageResponse(list, total, page, size), nil
+}
+
+// UpdateProfile 更新个人信息
+func (s *userService) UpdateProfile(id int, req *request.UpdateProfileRequest) error {
+	user, err := s.GetUserByID(id)
+	if err != nil {
+		return err
+	}
+
+	if req.RealName != "" {
+		user.RealName = req.RealName
+	}
+
+	if req.Phone != "" {
+		user.Phone = req.Phone
+	}
+
+	if req.Email != "" {
+		// 检查邮箱是否被其他用户占用
+		existing, err := s.userRepo.FindByEmail(req.Email)
+		if err != nil {
+			return err
+		}
+		if existing != nil && existing.ID != id {
+			return bizerrors.New(bizerrors.CodeUserAlreadyExists, "邮箱已被注册")
+		}
+		user.Email = req.Email
+	}
+
+	return s.userRepo.Update(user)
 }

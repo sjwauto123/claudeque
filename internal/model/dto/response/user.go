@@ -8,6 +8,8 @@ import (
 type UserResponse struct {
 	ID            int       `json:"id"`
 	Username      string    `json:"username"`
+	RealName      string    `json:"real_name"`
+	Phone         string    `json:"phone"`
 	Email         string    `json:"email"`
 	Avatar        string    `json:"avatar"`
 	Status        int       `json:"status"`

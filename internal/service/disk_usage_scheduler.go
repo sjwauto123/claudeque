@@ -54,6 +54,9 @@ func (d *DiskUsageScheduler) Start() {
 func (d *DiskUsageScheduler) run() {
 	defer d.wg.Done()
 
+	// 启动时立即执行一次
+	d.executeTask()
+
 	// 计算下次执行时间（每天凌晨 3 点）
 	scheduleNext := func() time.Duration {
 		now := time.Now()
@@ -65,12 +68,9 @@ func (d *DiskUsageScheduler) run() {
 		return next.Sub(now)
 	}
 
-	// 立即执行一次（可选，如果需要）
-	logger.Info("磁盘使用情况调度器开始首次计算")
-
 	// 计算初始延迟
 	initialDelay := scheduleNext()
-	logger.Infof("磁盘使用情况调度器首次执行将在 %v 后执行", initialDelay)
+	logger.Infof("磁盘使用情况调度器首次执行完成，下次将在 %v 后执行", initialDelay)
 
 	timer := time.NewTimer(initialDelay)
 	defer timer.Stop()

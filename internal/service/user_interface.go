@@ -23,6 +23,8 @@ type UserService interface {
 	ResetPassword(req *request.ResetPasswordRequest) error
 	// UpdateAvatar 更新头像路径
 	UpdateAvatar(id int, avatarPath string) error
+	// UpdateProfile 更新个人信息
+	UpdateProfile(id int, req *request.UpdateProfileRequest) error
 	// GetUserResponse 获取用户响应
 	GetUserResponse(user *entity.User) *dto.UserResponse
 	// ListUsers 分页获取用户列表

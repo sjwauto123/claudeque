@@ -261,12 +261,16 @@ func (c *Client) ExecuteCommandWithStatus(cmd string) (string, int, error) {
 		}
 	}()
 
-	var buf bytes.Buffer
-	session.Stdout = &buf
-	session.Stderr = &buf
+	var stdoutBuf, stderrBuf bytes.Buffer
+	session.Stdout = &stdoutBuf
+	session.Stderr = &stderrBuf
 	err = session.Run(cmd)
 
-	output := buf.String()
+	output := stdoutBuf.String()
+	stderrOutput := stderrBuf.String()
+	if stderrOutput != "" {
+		logger.Debugf("SSH命令 stderr: %s", stderrOutput)
+	}
 	exitCode := 0
 	if err != nil {
 		if exitErr, ok := err.(*ssh.ExitError); ok {

@@ -5,6 +5,8 @@ type User struct {
 	BaseEntity
 	Username      string `gorm:"type:varchar(50);uniqueIndex;not null;comment:登录账号" json:"username"`
 	Password      string `gorm:"type:varchar(255);not null;comment:加密后的密码" json:"-"`
+	RealName      string `gorm:"type:varchar(50);comment:真实姓名" json:"real_name"`
+	Phone         string `gorm:"type:varchar(20);comment:手机号" json:"phone"`
 	Avatar        string `gorm:"type:longtext;comment:用户头像(Base64格式)" json:"avatar"`
 	Email         string `gorm:"type:varchar(100);comment:邮箱" json:"email"`
 	Status        int    `gorm:"type:int;default:1;comment:账号状态" json:"status"`
