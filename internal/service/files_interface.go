@@ -3,6 +3,7 @@ package service
 import (
 	"cloudque/internal/model/dto/request"
 	dto "cloudque/internal/model/dto/response"
+	"context"
 	"io"
 	"mime/multipart"
 	"time"
@@ -19,4 +20,12 @@ type FileService interface {
 	CalculateSize(userID int, path string, isRootMode bool) (int64, string, float64, error)
 	GetHomeDirectoriesList(userID int, req *request.FileListRequest, isRootMode bool) (*dto.FilesListData, error)
 	GetUploadProgress(userID int, filename string, targetPath string) (*dto.UploadProgressData, error)
+	// SetDiskUsageCache 设置磁盘使用缓存
+	SetDiskUsageCache(ctx context.Context, userID int, path string, data *dto.DiskUsageData) error
+	// GetDiskUsageCache 获取磁盘使用缓存
+	GetDiskUsageCache(ctx context.Context, userID int, path string) (*dto.DiskUsageData, error)
+	// CalculateAllUsersDiskUsage 计算所有用户磁盘使用情况
+	CalculateAllUsersDiskUsage() error
+	// GetAllUsersDiskUsage 获取所有用户磁盘使用情况列表
+	GetAllUsersDiskUsage() ([]*dto.UserDiskUsageData, error)
 }

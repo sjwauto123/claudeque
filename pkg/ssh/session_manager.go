@@ -87,6 +87,14 @@ func (sm *SessionManager) GetRootUsername() string {
 	return "root" // 默认值
 }
 
+// GetRootPassword 获取Root密码
+func (sm *SessionManager) GetRootPassword() string {
+	if sm.Cfg != nil {
+		return sm.Cfg.RootPassword
+	}
+	return ""
+}
+
 // SetTimeout 设置SSH连接超时
 func (sm *SessionManager) SetTimeout(timeout time.Duration) {
 	if sm.Cfg != nil {

@@ -38,4 +38,12 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 		userDirGroup.GET("/list-home", ctrl.ListHomeDirectories)
 		userDirGroup.GET("/list-home/*path", ctrl.ListHomeDirectories)
 	}
+
+	// 管理员接口 - 获取所有用户磁盘使用情况
+	adminGroup := router.Group("/admin")
+	adminGroup.Use(middleware.Auth())
+	//adminGroup.Use(middleware.RequirePermission(ctrl.authService))
+	{
+		adminGroup.GET("/disk-usage/all", middleware.WithOperation("获取所有用户磁盘使用情况"), ctrl.GetAllUsersDiskUsage)
+	}
 }

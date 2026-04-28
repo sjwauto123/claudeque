@@ -15,6 +15,7 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	userGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		userGroup.GET("/profile", ctrl.GetProfile)
+		userGroup.PUT("/profile", middleware.WithOperation("更新个人信息"), ctrl.UpdateProfile)
 		userGroup.PUT("/password", middleware.WithOperation("修改密码"), ctrl.ChangePassword)
 		userGroup.GET("/list", ctrl.ListUsers)
 		userGroup.GET("/by-username", ctrl.GetByUsername)

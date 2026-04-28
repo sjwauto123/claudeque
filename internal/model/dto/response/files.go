@@ -38,6 +38,15 @@ type DiskUsageData struct {
 	DiskUsage     float64 `json:"disk_usage"`
 }
 
+// UserDiskUsageData 用户磁盘使用数据
+type UserDiskUsageData struct {
+	UserID        int64   `json:"user_id"`
+	Username      string  `json:"username"`
+	DirectorySize int64   `json:"directory_size"`
+	DiskUsage     float64 `json:"disk_usage"`
+	HomeDirectory string  `json:"home_directory"`
+}
+
 // FileUploadData 文件上传响应
 type FileUploadData struct {
 	Filename string `json:"filename"`

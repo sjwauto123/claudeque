@@ -28,18 +28,25 @@ import (
 	"gorm.io/gorm"
 )
 
+// DiskUsageSchedulerInterface 磁盘使用调度器接口
+type DiskUsageSchedulerInterface interface {
+	Start()
+	Stop()
+}
+
 // App 应用结构体
 type App struct {
-	cfg            *config.Config
-	mysqlDB        *gorm.DB
-	redis          *redis.Client
-	router         *api.Router
-	server         *http.Server
-	scheduler      service.Scheduler
-	sessionManager *ssh.SessionManager
-	wsPool         *websocket.ConnectionPool
-	infoService    service.SystemInfoService
-	logManager     *middleware.LogManager
+	cfg                *config.Config
+	mysqlDB            *gorm.DB
+	redis              *redis.Client
+	router             *api.Router
+	server             *http.Server
+	scheduler          service.Scheduler
+	diskUsageScheduler DiskUsageSchedulerInterface
+	sessionManager     *ssh.SessionManager
+	wsPool             *websocket.ConnectionPool
+	infoService        service.SystemInfoService
+	logManager         *middleware.LogManager
 }
 
 // NewApp 创建应用实例
@@ -246,7 +253,13 @@ func (a *App) initDependencies() {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
 		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
 	}
-	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo)
+	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo, userRepo)
+
+	// 初始化磁盘使用定时任务调度器
+	diskUsageScheduler := service.NewDiskUsageScheduler(fileSvc)
+	diskUsageScheduler.Start()
+	a.diskUsageScheduler = diskUsageScheduler
+
 	terminalSvc := service.NewTerminalService(sessionManager, authSvc, a.wsPool)
 
 	// 重新创建 jobSvc 以包含 execSvc
@@ -342,6 +355,11 @@ func (a *App) gracefulShutdown() {
 	// 停止任务调度器
 	if a.scheduler != nil {
 		a.scheduler.Stop()
+	}
+
+	// 停止磁盘使用定时任务调度器
+	if a.diskUsageScheduler != nil {
+		a.diskUsageScheduler.Stop()
 	}
 
 	// 停止系统信息服务
