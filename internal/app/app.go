@@ -36,19 +36,19 @@ type DiskUsageSchedulerInterface interface {
 
 // App 应用结构体
 type App struct {
-	cfg            *config.Config
-	mysqlDB        *gorm.DB
-	redis          *redis.Client
-	router         *api.Router
-	server         *http.Server
-	scheduler      service.Scheduler
+	cfg                *config.Config
+	mysqlDB            *gorm.DB
+	redis              *redis.Client
+	router             *api.Router
+	server             *http.Server
+	scheduler          service.Scheduler
 	diskUsageScheduler DiskUsageSchedulerInterface
-	sessionManager *ssh.SessionManager
-	wsPool         *websocket.ConnectionPool
-	infoService    service.SystemInfoService
-	homeService    service.HomeService
-	terminalSvc    service.TerminalService
-	logManager     *middleware.LogManager
+	sessionManager     *ssh.SessionManager
+	wsPool             *websocket.ConnectionPool
+	infoService        service.SystemInfoService
+	homeService        service.HomeService
+	terminalSvc        service.TerminalService
+	logManager         *middleware.LogManager
 }
 
 // NewApp 创建应用实例

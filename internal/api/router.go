@@ -53,7 +53,7 @@ func NewRouter(
 	jobService service.JobService,
 	homeService service.HomeService,
 	queueService service.QueueService,
-	repository repository.JobRepository,
+	jobRepo repository.JobRepository,
 	gpuService service.GpuService,
 	fileService service.FileService,
 	terminalService service.TerminalService,
@@ -70,7 +70,7 @@ func NewRouter(
 		homeCtrl:         home.NewHomeController(homeService, authService, userOperationLogService),
 		terminalCtrl:     terminal.NewController(terminalService, authService, userOperationLogService, wsPool),
 		jobCtrl:          job.NewController(jobService, authService, gpuService, userOperationLogService),
-		queueCtrl:        queue.NewController(queueService, userOperationLogService, repository, authService),
+		queueCtrl:        queue.NewController(queueService, userOperationLogService, jobRepo, authService),
 		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),
 		systemInfoCtrl:   system.NewController(infoService, authService, userOperationLogService),
 	}
