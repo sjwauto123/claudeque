@@ -4,6 +4,7 @@ import (
 	"cloudque/internal/api/v1/admin"
 	"cloudque/internal/api/v1/auth"
 	"cloudque/internal/api/v1/files"
+	"cloudque/internal/api/v1/home"
 	"cloudque/internal/api/v1/job"
 	"cloudque/internal/api/v1/operationLogs"
 	"cloudque/internal/api/v1/permissionManage/menu"
@@ -28,6 +29,7 @@ type Router struct {
 	authCtrl         *auth.Controller
 	adminCtrl        *admin.Controller
 	filesCtrl        *files.Controller
+	homeCtrl         *home.HomeController
 	terminalCtrl     *terminal.Controller
 	jobCtrl          *job.Controller
 	queueCtrl        *queue.Controller
@@ -49,6 +51,7 @@ func NewRouter(
 	apiService service.APIService,
 	menuService service.MenuService,
 	jobService service.JobService,
+	homeService service.HomeService,
 	queueService service.QueueService,
 	repository repository.JobRepository,
 	gpuService service.GpuService,
@@ -61,9 +64,10 @@ func NewRouter(
 		apiCtrl:          permission.NewAPIController(apiService, authService, userOperationLogService),
 		menuCtrl:         menu.NewMenuController(menuService, authService, userOperationLogService),
 		userCtrl:         user.NewController(userService, userOperationLogService, authService),
-		authCtrl:         auth.NewController(authService, userService, userOperationLogService),
+		authCtrl:         auth.NewController(authService, userService, userOperationLogService, terminalService),
 		adminCtrl:        admin.NewController(userService, userService, authService, userOperationLogService, adminOperationLogService),
 		filesCtrl:        files.NewController(fileService, authService, userOperationLogService),
+		homeCtrl:         home.NewHomeController(homeService, authService, userOperationLogService),
 		terminalCtrl:     terminal.NewController(terminalService, authService, userOperationLogService, wsPool),
 		jobCtrl:          job.NewController(jobService, authService, gpuService, userOperationLogService),
 		queueCtrl:        queue.NewController(queueService, userOperationLogService, repository, authService),
@@ -118,6 +122,9 @@ func (r *Router) Setup(engine *gin.Engine) {
 
 		// 系统路由
 		r.systemInfoCtrl.RegisterRoutes(v1)
+
+		// 首页路由
+		r.homeCtrl.RegisterRoutes(v1)
 
 		// 任务路由
 		r.jobCtrl.JobsRoutes(v1)

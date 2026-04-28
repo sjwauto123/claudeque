@@ -9,7 +9,9 @@ import (
 	"cloudque/pkg/jwt"
 	"cloudque/pkg/response"
 
+	"cloudque/pkg/logger"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 const (
@@ -81,7 +83,6 @@ func Auth() gin.HandlerFunc {
 // RequirePermission 权限检查中间件
 func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 	return func(c *gin.Context) {
-
 		// 取出 userID
 		userIDInterface, exists := c.Get(ContextUserID)
 		if !exists {
@@ -89,21 +90,18 @@ func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-
 		userID, ok := userIDInterface.(int)
 		if !ok {
 			response.Forbidden(c, "用户信息异常")
 			c.Abort()
 			return
 		}
-
-		// 获取当前请求信息
+		// 获取当前请求方法和路径
 		method := c.Request.Method
 		path := c.FullPath()
-
-		// 数据库判断
 		hasPermission, err := authService.CheckUserPermission(userID, method, path)
 		if err != nil {
+			logger.Error("数据库校验权限失败:", zap.Int("user_id:", userID), zap.Error(err))
 			response.Forbidden(c, "权限校验失败")
 			c.Abort()
 			return
@@ -114,7 +112,6 @@ func RequirePermission(authService service.AuthService) gin.HandlerFunc {
 			c.Abort()
 			return
 		}
-
 		c.Next()
 	}
 }
