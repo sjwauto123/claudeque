@@ -20,7 +20,7 @@ const (
 // SessionMetadata 会话元数据
 type SessionMetadata struct {
 	UserID      int
-	SessionType string // "terminal" or "systemInfo"
+	SessionType string // "terminal" or "systemInfo" or "homeOverview"
 	Role        string // "admin" or "user"
 	CreatedAt   int64
 }
@@ -268,6 +268,19 @@ func (p *ConnectionPool) GetTotalConnectionCount() int {
 		total += len(clients)
 	}
 	return total
+}
+
+// IsHavingHomeOverviewConnection 判断是否有首页概览ws连接
+func (p *ConnectionPool) IsHavingHomeOverviewConnection() bool {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	for client := range p.adminClients {
+		if client.Metadata != nil && client.Metadata.SessionType == "homeOverview" {
+			return true
+		}
+	}
+	return false
 }
 
 // CloseAll 关闭所有连接
