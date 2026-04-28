@@ -13,8 +13,8 @@ func (ctrl *MenuController) RegisterRoutes(r *gin.RouterGroup) {
 	menuGroup.Use(middleware.CaptureRawBody())
 	menuGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
-		menuGroup.GET("/page", middleware.WithOperation("分页查询菜单列表"), ctrl.PageList)
-		menuGroup.GET("/:id", middleware.WithOperation("获取菜单信息"), ctrl.GetMenuByID)
+		menuGroup.GET("/page", ctrl.PageList)
+		menuGroup.GET("/:id", ctrl.GetMenuByID)
 		menuGroup.POST("", middleware.WithOperation("创建菜单"), ctrl.Create)
 		menuGroup.PUT("", middleware.WithOperation("更新菜单"), ctrl.Update)
 		menuGroup.DELETE("/:id", middleware.WithOperation("删除菜单"), ctrl.Delete)

@@ -102,6 +102,44 @@ func (ctrl *Controller) ChangePassword(c *gin.Context) {
 	response.Success(c, nil)
 }
 
+// UpdateProfile 更新个人信息
+// @Summary 更新个人信息
+// @Description 更新当前登录用户的真实姓名、手机号、邮箱
+// @Tags 用户
+// @Accept json
+// @Produce json
+// @Security Bearer
+// @Param request body request.UpdateProfileRequest true "个人信息"
+// @Success 200 {object} response.Response
+// @Router /api/v1/user/profile [put]
+func (ctrl *Controller) UpdateProfile(c *gin.Context) {
+	userID := middleware.GetUserID(c)
+	if userID == 0 {
+		response.Unauthorized(c, "用户未登录")
+		return
+	}
+
+	var req request.UpdateProfileRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "数据格式有误")
+		return
+	}
+
+	if err := ctrl.userService.UpdateProfile(userID, &req); err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	// 获取更新后的用户信息返回
+	user, err := ctrl.userService.GetUserByID(userID)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, ctrl.userService.GetUserResponse(user))
+}
+
 // ListUsers 获取用户列表（分页）
 // @Summary 获取用户列表
 // @Description 分页获取用户列表

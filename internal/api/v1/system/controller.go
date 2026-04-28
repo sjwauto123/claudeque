@@ -1,13 +1,13 @@
-// internal/api/system/system_info_controller.go （建议放在 api/system/）
-
 package system
 
 import (
 	"cloudque/internal/middleware"
+	"cloudque/internal/model/dto/request"
 	"cloudque/internal/service"
 	"cloudque/pkg/logger"
 	"cloudque/pkg/response"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
@@ -77,10 +77,88 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+
+	defer conn.Close()
 	if err != nil {
 		logger.Info("Failed to upgrade to WebSocket:")
 		return
 	}
 	// 处理WebSocket连接
 	ctrl.syInfoSvc.HandleSyMessage(conn, userID)
+
+}
+
+// TerminateProcess 手动中断进程
+func (ctrl *Controller) TerminateProcess(c *gin.Context) {
+	pid, err := strconv.Atoi(c.Param("pid"))
+	if err != nil {
+		response.BadRequest(c, "无效的 PID")
+		return
+	}
+
+	err = ctrl.syInfoSvc.TerminateProcess(pid)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, "进程已终止")
+}
+
+// RetainProcess 保留进程
+func (ctrl *Controller) RetainProcess(c *gin.Context) {
+	pid, err := strconv.Atoi(c.Param("pid"))
+	if err != nil {
+		response.BadRequest(c, "无效的 PID")
+		return
+	}
+
+	err = ctrl.syInfoSvc.RetainProcess(pid)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, "已保留该进程")
+}
+
+// CancelRetain 取消保留
+func (ctrl *Controller) CancelRetain(c *gin.Context) {
+	pid, err := strconv.Atoi(c.Param("pid"))
+	if err != nil {
+		response.BadRequest(c, "无效的 PID")
+		return
+	}
+
+	err = ctrl.syInfoSvc.CancelRetain(pid)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, "已取消保留")
+}
+
+// GetConfig 获取全局配置
+func (ctrl *Controller) GetConfig(c *gin.Context) {
+	config := ctrl.syInfoSvc.GetConfig()
+	response.Success(c, config)
+}
+
+// UpdateConfig 更新全局配置
+func (ctrl *Controller) UpdateConfig(c *gin.Context) {
+	var req request.UpdateConfigRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.BadRequest(c, "参数错误")
+		return
+	}
+
+	if req.MaxDurationMinutes != nil && *req.MaxDurationMinutes < 1 {
+		response.BadRequest(c, "最大时长必须大于0")
+		return
+	}
+
+	err := ctrl.syInfoSvc.UpdateConfig(req.AutoTerminateEnabled, req.MaxDurationMinutes)
+	if err != nil {
+		response.BizError(c, err)
+		return
+	}
+	response.Success(c, "配置已更新")
 }

@@ -28,6 +28,12 @@ import (
 	"gorm.io/gorm"
 )
 
+// DiskUsageSchedulerInterface 磁盘使用调度器接口
+type DiskUsageSchedulerInterface interface {
+	Start()
+	Stop()
+}
+
 // App 应用结构体
 type App struct {
 	cfg            *config.Config
@@ -36,6 +42,7 @@ type App struct {
 	router         *api.Router
 	server         *http.Server
 	scheduler      service.Scheduler
+	diskUsageScheduler DiskUsageSchedulerInterface
 	sessionManager *ssh.SessionManager
 	wsPool         *websocket.ConnectionPool
 	infoService    service.SystemInfoService
@@ -192,6 +199,7 @@ func (a *App) initDependencies() {
 	menuRepo := repository.NewMenuRepository(a.mysqlDB)
 	apiRepo := repository.NewAPIRepository(a.mysqlDB)
 	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
+	systemInfoRepo := repository.NewSystemInfoRepository()
 
 	// 创建 SSH 会话管理器
 	var sessionManager *ssh.SessionManager
@@ -231,7 +239,7 @@ func (a *App) initDependencies() {
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
-	infoService := service.NewSystemInfoService(a.wsPool, procCacheRepo)
+	infoService := service.NewSystemInfoService(a.wsPool, systemInfoRepo, redisRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	userSvc := service.NewUserService(userRepo, redisRepo, sshConfig)
@@ -248,7 +256,13 @@ func (a *App) initDependencies() {
 		authSvc.SetSSHServerHost(a.cfg.Server.Host)
 		authSvc.SetSSHTimeout(a.cfg.Server.Timeout)
 	}
-	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo)
+	fileSvc := service.NewFileService(sessionManager, authSvc, redisRepo, userRepo)
+
+	// 初始化磁盘使用定时任务调度器
+	diskUsageScheduler := service.NewDiskUsageScheduler(fileSvc)
+	diskUsageScheduler.Start()
+	a.diskUsageScheduler = diskUsageScheduler
+
 	terminalSvc := service.NewTerminalService(sessionManager, authSvc, a.wsPool)
 	a.terminalSvc = terminalSvc
 
@@ -355,6 +369,11 @@ func (a *App) gracefulShutdown() {
 		a.scheduler.Stop()
 	}
 
+	// 停止磁盘使用定时任务调度器
+	if a.diskUsageScheduler != nil {
+		a.diskUsageScheduler.Stop()
+	}
+
 	// 停止系统信息服务
 	if a.infoService != nil {
 		a.infoService.Stop()
@@ -386,6 +405,13 @@ func (a *App) gracefulShutdown() {
 	// 关闭数据库连接
 	_ = database.CloseMySQL()
 	_ = database.CloseRedis()
+
+	// 关闭路由连接
+	if a.router != nil {
+		if err := a.router.Close(); err != nil {
+			logger.Error("关闭路由连接失败", zap.Error(err))
+		}
+	}
 
 	// 同步日志
 	_ = logger.Sync()

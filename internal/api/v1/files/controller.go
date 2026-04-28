@@ -415,3 +415,23 @@ func (ctrl *Controller) UnzipFile(c *gin.Context) {
 		"message": "解压任务已在后台开始执行",
 	})
 }
+
+// GetAllUsersDiskUsage 获取所有用户磁盘使用情况
+// @Summary 获取所有用户磁盘使用情况
+// @Description 获取所有用户磁盘使用情况列表（管理员接口）
+// @Tags 文件管理
+// @Accept json
+// @Produce json
+// @Success 200 {object} response.Response{data=[]response.UserDiskUsageData}
+// @Router /api/admin/disk-usage/all [get]
+func (ctrl *Controller) GetAllUsersDiskUsage(c *gin.Context) {
+	// 权限检查由 middleware.RequirePermission 处理
+	data, err := ctrl.fileService.GetAllUsersDiskUsage()
+	if err != nil {
+		logger.Errorf("GetAllUsersDiskUsage: 获取所有用户磁盘使用情况失败: err=%v", err)
+		response.BizError(c, err)
+		return
+	}
+
+	response.Success(c, data)
+}

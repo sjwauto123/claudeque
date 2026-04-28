@@ -45,6 +45,8 @@ func (s *userService) CreateUser(req *request.CreateRequest) error {
 	user := &entity.User{
 		Username: req.Username,
 		Password: string(hashedPassword),
+		RealName: req.RealName,
+		Phone:    req.Phone,
 		Email:    req.Email,
 		Status:   req.Status,
 	}
@@ -119,6 +121,14 @@ func (s *userService) AdminUpdateUser(id int, req *request.AdminUpdateUserReques
 			return bizerrors.New(bizerrors.CodeUserAlreadyExists, "邮箱已被注册")
 		}
 		user.Email = req.Email
+	}
+
+	if req.RealName != "" {
+		user.RealName = req.RealName
+	}
+
+	if req.Phone != "" {
+		user.Phone = req.Phone
 	}
 
 	if req.Status != nil {

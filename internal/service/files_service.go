@@ -32,16 +32,18 @@ type fileService struct {
 	sessionManager    *ssh.SessionManager
 	authService       AuthService
 	redisRepo         repository.RedisRepository
+	userRepo          repository.UserRepository
 	homeDirCache      sync.Map
 	sessionCheckCache sync.Map
 }
 
 // NewFileService 创建文件服务
-func NewFileService(sessionManager *ssh.SessionManager, authService AuthService, redisRepo repository.RedisRepository) FileService {
+func NewFileService(sessionManager *ssh.SessionManager, authService AuthService, redisRepo repository.RedisRepository, userRepo repository.UserRepository) FileService {
 	return &fileService{
 		sessionManager: sessionManager,
 		authService:    authService,
 		redisRepo:      redisRepo,
+		userRepo:       userRepo,
 	}
 }
 
@@ -888,6 +890,14 @@ func (s *fileService) UnzipFile(userID int, req *request.UnzipRequest, isRootMod
 
 // GetDiskUsage 计算目录大小及磁盘占用
 func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.DiskUsageData, error) {
+	// 1. 尝试从 Redis 获取缓存
+	ctx := context.Background()
+	cacheData, err := s.GetDiskUsageCache(ctx, userID, p)
+	if err == nil && cacheData != nil {
+		// 缓存存在，返回缓存数据
+		return cacheData, nil
+	}
+
 	resolvedPath, err := s.resolvePath(userID, p, isRootMode)
 	if err != nil {
 		logger.Errorf("解析磁盘使用路径失败: userID=%d, path=%s, isRootMode=%t, err=%v", userID, p, isRootMode, err)
@@ -1086,10 +1096,15 @@ func (s *fileService) GetDiskUsage(userID int, p string, isRootMode bool) (*dto.
 		usage = float64(size) / float64(totalBytes) * 100
 	}
 
-	return &dto.DiskUsageData{
+	result := &dto.DiskUsageData{
 		DirectorySize: size,
 		DiskUsage:     usage,
-	}, nil
+	}
+
+	// 3. 计算完成后，更新 Redis 缓存
+	_ = s.SetDiskUsageCache(ctx, userID, p, result)
+
+	return result, nil
 }
 
 // CalculateSize 计算目录或文件大小
@@ -1482,4 +1497,425 @@ func formatFileSize(s int64) string {
 		i++
 	}
 	return fmt.Sprintf("%.2f %s", humanfmt, sizes[i])
+}
+
+// SetDiskUsageCache 设置磁盘使用缓存
+func (s *fileService) SetDiskUsageCache(ctx context.Context, userID int, path string, data *dto.DiskUsageData) error {
+	key := fmt.Sprintf("disk:usage:%d:%s", userID, path)
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+	return s.redisRepo.Set(ctx, key, string(jsonData), 25*time.Hour)
+}
+
+// GetDiskUsageCache 获取磁盘使用缓存
+func (s *fileService) GetDiskUsageCache(ctx context.Context, userID int, path string) (*dto.DiskUsageData, error) {
+	key := fmt.Sprintf("disk:usage:%d:%s", userID, path)
+	val, err := s.redisRepo.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if val == "" {
+		return nil, nil
+	}
+	var data dto.DiskUsageData
+	if err := json.Unmarshal([]byte(val), &data); err != nil {
+		return nil, err
+	}
+	return &data, nil
+}
+
+// calculateDiskUsageWithRoot 使用 root 会话计算指定用户的磁盘使用情况
+// 避免为每个用户建立 SSH 会话，直接用 root 权限访问任意用户目录
+func (s *fileService) calculateDiskUsageWithRoot(username, homeDir string) (*dto.DiskUsageData, error) {
+	logger.Infof("[DEBUG] 开始计算用户磁盘使用: username=%s, homeDir=%s", username, homeDir)
+
+	if s.sessionManager == nil {
+		logger.Error("[DEBUG] SSH会话管理器未初始化")
+		return nil, errors.New(errors.CodeInternalError, "SSH会话管理器未初始化")
+	}
+
+	// 使用 root 用户名获取 root 会话（不需要用户登录凭证）
+	rootUsername := s.sessionManager.GetRootUsername()
+	logger.Infof("[DEBUG] root用户名: %s", rootUsername)
+
+	// 尝试获取 root 会话，如果存在则检查是否可用
+	var session *ssh.UserSession
+	var err error
+	session, err = s.sessionManager.GetSession(0, true)
+	logger.Infof("[DEBUG] 获取root会话结果: session=%v, err=%v", session != nil, err)
+
+	// 如果会话存在，执行一个简单命令检查会话是否正常
+	if err == nil && session != nil && session.Client != nil {
+		testCmd := "echo 'health_check'"
+		output, testErr := session.Client.ExecuteCommand(testCmd)
+		if testErr != nil || strings.TrimSpace(output) != "health_check" {
+			logger.Warnf("[DEBUG] SSH会话健康检查失败，尝试重新创建: err=%v, output=%s", testErr, output)
+			// 健康检查失败，销毁旧会话
+			_ = s.sessionManager.DeleteSession(0, true)
+			session = nil
+		} else {
+			logger.Info("[DEBUG] SSH会话健康检查成功")
+		}
+	}
+
+	// 如果会话不存在或健康检查失败，创建新会话
+	if session == nil {
+		rootPassword := s.sessionManager.GetRootPassword()
+		logger.Info("[DEBUG] 尝试创建新的root SSH会话")
+		session, err = s.sessionManager.GetOrCreateSession(0, rootUsername, rootPassword, true)
+		if err != nil {
+			logger.Errorf("[DEBUG] 获取 root SSH 会话失败: err=%v", err)
+			return nil, errors.NewWithErr(errors.CodeInternalError, "获取root会话失败", err)
+		}
+		logger.Info("[DEBUG] 成功创建root SSH会话")
+	}
+
+	if session == nil || session.Client == nil {
+		logger.Error("[DEBUG] root SSH 会话不可用: session或client为nil")
+		return nil, errors.New(errors.CodeInternalError, "root SSH 会话不可用")
+	}
+
+	// 直接使用 root 会话执行命令，无需用户凭证
+	safePath := "'" + strings.ReplaceAll(homeDir, "'", "'\\''") + "'"
+	logger.Infof("[DEBUG] 安全路径: %s", safePath)
+
+	// 0. 先测试一个最简单的命令确认 SSH 是否正常
+	logger.Infof("[DEBUG] ===== 测试 SSH 连接 =====")
+	testSimpleCmd := "echo 'ssh_working'"
+	logger.Infof("[DEBUG] 执行测试命令: %s", testSimpleCmd)
+	testSimpleOutput, testSimpleErr := session.Client.ExecuteCommand(testSimpleCmd)
+	logger.Infof("[DEBUG] SSH测试结果(普通): output=%q, err=%v", testSimpleOutput, testSimpleErr)
+
+	logger.Infof("[DEBUG] ===== SSH 测试完成 =====")
+
+	// 0. 先检查目录是否存在 (使用 ExecuteCommandWithStatus 代替 ExecuteCommand)
+	checkCmd := fmt.Sprintf("test -d %s && echo 'exists' || echo 'not_exists'", safePath)
+	logger.Infof("[DEBUG] 检查目录是否存在: %s", checkCmd)
+	checkOutput, checkExitCode, checkErr := session.Client.ExecuteCommandWithStatus(checkCmd)
+	logger.Infof("[DEBUG] 检查目录命令执行完成: output=%q, exitCode=%d, err=%v", checkOutput, checkExitCode, checkErr)
+
+	if checkErr != nil {
+		logger.Errorf("[DEBUG] 检查目录命令执行失败: err=%v, output=%q", checkErr, checkOutput)
+		return nil, errors.NewWithErr(errors.CodeSSHCommandExecutionFailed, "检查目录失败", checkErr)
+	}
+	checkResult := strings.TrimSpace(checkOutput)
+	logger.Infof("[DEBUG] 目录检查结果原始: %q, 去除空格后: %q", checkOutput, checkResult)
+
+	if checkResult != "exists" {
+		logger.Errorf("[DEBUG] !!! 目录不存在: username=%s, homeDir=%s, checkOutput=%q", username, homeDir, checkOutput)
+		return nil, errors.NewWithErr(errors.CodeFileNotFound, fmt.Sprintf("用户目录不存在: %s", homeDir), nil)
+	}
+	logger.Infof("[DEBUG] 目录存在，继续计算磁盘使用")
+
+	// 0.1 测试基本命令是否正常工作
+	testCmd := "echo 'test_output'"
+	logger.Infof("[DEBUG] 执行测试命令: %s", testCmd)
+	testOutput, testErr := session.Client.ExecuteCommand(testCmd)
+	if testErr != nil {
+		logger.Errorf("[DEBUG] 测试命令执行失败: err=%v, output=%q", testErr, testOutput)
+	} else {
+		logger.Infof("[DEBUG] 测试命令输出: %q", testOutput)
+	}
+
+	// 1. 获取目录大小 - 不使用 2>/dev/null，以便看到错误信息
+	cmd := fmt.Sprintf("du -sb %s | awk '{print $1}'", safePath)
+	logger.Infof("[DEBUG] 执行目录大小命令: %s", cmd)
+
+	// 使用 ExecuteCommandWithStatus 获取退出码
+	output2, exitCode, execErr := session.Client.ExecuteCommandWithStatus(cmd)
+	logger.Infof("[DEBUG] du命令结果: output=%q, exitCode=%d, err=%v", output2, exitCode, execErr)
+
+	output := output2
+	var duErr error
+	if execErr != nil && exitCode == 0 {
+		// 有错误但退出码为0，忽略
+	} else if execErr != nil {
+		duErr = execErr
+	}
+
+	if duErr != nil {
+		logger.Errorf("[DEBUG] 执行磁盘使用计算命令失败: username=%s, homeDir=%s, err=%v, output=%q", username, homeDir, duErr, output)
+	}
+
+	sizeStr := strings.TrimSpace(output)
+	var size int64
+	if sizeStr != "" {
+		fields := strings.Fields(sizeStr)
+		if len(fields) > 0 {
+			sizeStr = fields[0]
+		}
+		if sVal, parseErr := strconv.ParseInt(sizeStr, 10, 64); parseErr == nil {
+			size = sVal
+			logger.Infof("[DEBUG] 解析目录大小成功: size=%d bytes (%.2f MB)", size, float64(size)/1024/1024)
+		} else {
+			logger.Errorf("[DEBUG] 解析目录大小失败: sizeStr=%q, parseErr=%v", sizeStr, parseErr)
+		}
+	} else {
+		logger.Warnf("[DEBUG] du命令输出为空，目录可能为空或无权限访问")
+	}
+
+	// 2. 获取磁盘总量（用于计算使用率）
+	var totalBytes int64
+
+	// 方法1：尝试使用 df 命令获取磁盘总量 - 不使用 2>/dev/null
+	cmdDf := fmt.Sprintf("df -B1 %s | tail -n 1", safePath)
+	logger.Infof("[DEBUG] 执行df命令: %s", cmdDf)
+	outputDf2, exitCodeDf, errDf2 := session.Client.ExecuteCommandWithStatus(cmdDf)
+	logger.Infof("[DEBUG] df命令结果: output=%q, exitCode=%d, err=%v", outputDf2, exitCodeDf, errDf2)
+
+	outputDf := outputDf2
+	var errDf error
+	if errDf2 != nil && exitCodeDf == 0 {
+		// 有错误但退出码为0，忽略
+	} else if errDf2 != nil {
+		errDf = errDf2
+	}
+
+	if errDf == nil && strings.TrimSpace(outputDf) != "" {
+		logger.Infof("[DEBUG] df命令原始输出: %q", outputDf)
+		fields := strings.Fields(strings.TrimSpace(outputDf))
+		logger.Infof("[DEBUG] df输出字段数: %d, 字段内容: %v", len(fields), fields)
+		if len(fields) >= 4 {
+			// df 输出：Filesystem 1B-blocks Used Available Use% Mounted on
+			if t, parseErr := strconv.ParseInt(fields[1], 10, 64); parseErr == nil && t > 0 {
+				totalBytes = t
+				logger.Infof("[DEBUG] 解析磁盘总量成功: totalBytes=%d bytes (%.2f GB)", totalBytes, float64(totalBytes)/1024/1024/1024)
+			} else {
+				logger.Errorf("[DEBUG] 解析df输出失败: fields[1]=%q, parseErr=%v", fields[1], parseErr)
+			}
+		} else {
+			logger.Warnf("[DEBUG] df输出字段数不足: %d < 4", len(fields))
+		}
+	} else {
+		logger.Warnf("[DEBUG] df命令执行失败或输出为空: errDf=%v, output=%q", errDf, outputDf)
+	}
+
+	// 方法2：如果 df 失败，尝试使用 stat -f
+	if totalBytes == 0 {
+		logger.Info("[DEBUG] df方法失败，尝试使用stat命令")
+		cmdStat := fmt.Sprintf(`stat -f -c "%%b %%S" %s || stat -f "%%b %%S" %s`, safePath, safePath)
+		logger.Infof("[DEBUG] 执行stat命令: %s", cmdStat)
+		outStat2, exitCodeStat, errStat2 := session.Client.ExecuteCommandWithStatus(cmdStat)
+		logger.Infof("[DEBUG] stat命令结果: output=%q, exitCode=%d, err=%v", outStat2, exitCodeStat, errStat2)
+
+		outStat := outStat2
+		var errStat error
+		if errStat2 != nil && exitCodeStat == 0 {
+			// 有错误但退出码为0，忽略
+		} else if errStat2 != nil {
+			errStat = errStat2
+		}
+
+		if errStat == nil && strings.TrimSpace(outStat) != "" {
+			logger.Infof("[DEBUG] stat命令原始输出: %q", outStat)
+			parts := strings.Fields(strings.TrimSpace(outStat))
+			if len(parts) >= 2 {
+				if b, errB := strconv.ParseInt(parts[0], 10, 64); errB == nil {
+					if ssz, errS := strconv.ParseInt(parts[1], 10, 64); errS == nil {
+						totalBytes = b * ssz
+						logger.Infof("[DEBUG] 通过stat解析磁盘总量成功: blocks=%d, blockSize=%d, totalBytes=%d", b, ssz, totalBytes)
+					} else {
+						logger.Errorf("[DEBUG] 解析stat输出失败: parts[1]=%q, err=%v", parts[1], errS)
+					}
+				} else {
+					logger.Errorf("[DEBUG] 解析stat输出失败: parts[0]=%q, err=%v", parts[0], errB)
+				}
+			} else {
+				logger.Warnf("[DEBUG] stat输出字段数不足: %d < 2", len(parts))
+			}
+		} else {
+			logger.Warnf("[DEBUG] stat命令执行失败或输出为空: errStat=%v, output=%q", errStat, outStat)
+		}
+	}
+
+	// 3. 计算使用率
+	var usage float64
+	if totalBytes > 0 {
+		usage = float64(size) / float64(totalBytes) * 100
+		logger.Infof("[DEBUG] 计算磁盘使用率: size=%d, totalBytes=%d, usage=%.4f%%", size, totalBytes, usage)
+	} else {
+		logger.Warnf("[DEBUG] totalBytes为0，无法计算使用率")
+	}
+
+	logger.Infof("[DEBUG] 计算完成: username=%s, size=%d, totalBytes=%d, usage=%.4f%%", username, size, totalBytes, usage)
+	return &dto.DiskUsageData{
+		DirectorySize: size,
+		DiskUsage:     usage,
+	}, nil
+}
+
+// CalculateAllUsersDiskUsage 计算所有用户磁盘使用情况（定时任务调用）
+func (s *fileService) CalculateAllUsersDiskUsage() error {
+	if s.userRepo == nil {
+		logger.Error("userRepo 未初始化，无法计算用户磁盘使用情况")
+		return errors.New(errors.CodeInternalError, "userRepo 未初始化")
+	}
+
+	// 获取所有用户列表
+	users, _, err := s.userRepo.List(0, 1, "", "", nil)
+	if err != nil {
+		logger.Error("获取用户列表失败", zap.Error(err))
+		return errors.NewWithErr(errors.CodeInternalError, "获取用户列表失败", err)
+	}
+
+	if len(users) == 0 {
+		logger.Info("没有用户需要计算磁盘使用情况")
+		return nil
+	}
+
+	logger.Infof("开始计算 %d 个用户的磁盘使用情况", len(users))
+
+	ctx := context.Background()
+	basePath := config.Get().Server.BasePath
+	if basePath == "" {
+		basePath = "/home"
+	}
+
+	// 遍历每个用户，计算其主目录的磁盘使用情况
+	for _, user := range users {
+		if user.Username == "" {
+			continue
+		}
+
+		// 构建用户主目录路径
+		homeDir := path.Join(basePath, user.Username)
+
+		logger.Infof("计算用户 %s (ID: %d) 的磁盘使用情况，路径: %s", user.Username, user.ID, homeDir)
+
+		// 使用 root 会话计算磁盘使用情况（包括磁盘占比）
+		diskUsageData, calcErr := s.calculateDiskUsageWithRoot(user.Username, homeDir)
+		if calcErr != nil || diskUsageData == nil {
+			logger.Warnf("计算用户磁盘使用情况失败: userID=%d, username=%s, err=%v", user.ID, user.Username, calcErr)
+			continue
+		}
+
+		// 写入 Redis 缓存（使用统一的 key 格式）
+		//cacheKey := fmt.Sprintf("disk:usage:%d:%s", user.ID, homeDir)
+		if err := s.SetDiskUsageCache(ctx, int(user.ID), homeDir, diskUsageData); err != nil {
+			logger.Warnf("写入磁盘使用缓存失败: userID=%d, err=%v", user.ID, err)
+			continue
+		}
+
+		logger.Infof("用户 %s (ID: %d) 磁盘使用情况计算完成: size=%d bytes, usage=%.2f%%",
+			user.Username, user.ID, diskUsageData.DirectorySize, diskUsageData.DiskUsage)
+	}
+
+	logger.Info("所有用户磁盘使用情况计算完成")
+	return nil
+}
+
+// GetAllUsersDiskUsage 获取所有用户磁盘使用情况列表
+func (s *fileService) GetAllUsersDiskUsage() ([]*dto.UserDiskUsageData, error) {
+	logger.Info("[DEBUG] ========== 开始 GetAllUsersDiskUsage ==========")
+
+	if s.userRepo == nil {
+		logger.Error("[DEBUG] userRepo 未初始化，无法获取用户磁盘使用情况")
+		return nil, errors.New(errors.CodeInternalError, "userRepo 未初始化")
+	}
+
+	// 获取所有用户列表（分页获取所有用户）
+	users, total, err := s.userRepo.List(0, 1, "", "", nil)
+	if err != nil {
+		logger.Error("[DEBUG] 获取用户列表失败", zap.Error(err), zap.Int64("total", total))
+		return nil, errors.NewWithErr(errors.CodeInternalError, "获取用户列表失败", err)
+	}
+
+	logger.Info("[DEBUG] 查询到的用户数量", zap.Int("count", len(users)), zap.Int64("total", total))
+	logger.Infof("[DEBUG] 用户列表详情: %+v", users)
+
+	if len(users) == 0 {
+		logger.Info("[DEBUG] 没有用户，返回空列表")
+		return []*dto.UserDiskUsageData{}, nil
+	}
+
+	ctx := context.Background()
+	basePath := config.Get().Server.BasePath
+	if basePath == "" {
+		basePath = "/home"
+	}
+	logger.Infof("[DEBUG] 基础路径: %s", basePath)
+
+	var result []*dto.UserDiskUsageData
+
+	for _, user := range users {
+		if user.Username == "" {
+			logger.Infof("[DEBUG] 跳过空用户名: userID=%d", user.ID)
+			continue
+		}
+
+		homeDir := path.Join(basePath, user.Username)
+		cacheKey := fmt.Sprintf("disk:usage:%d:%s", user.ID, homeDir)
+		logger.Infof("[DEBUG] ========== 处理用户: userID=%d, username=%s, homeDir=%s ==========", user.ID, user.Username, homeDir)
+
+		// 从 Redis 获取缓存数据
+		logger.Infof("[DEBUG] 尝试从Redis读取缓存: key=%s", cacheKey)
+		cacheData, err := s.GetDiskUsageCache(ctx, int(user.ID), homeDir)
+		if err != nil {
+			logger.Warnf("[DEBUG] 读取Redis缓存失败: userID=%d, username=%s, key=%s, err=%v",
+				user.ID, user.Username, cacheKey, err)
+		}
+
+		if err != nil || cacheData == nil {
+			// 缓存不存在，使用 root 会话直接计算（避免为每个用户建立 SSH 会话）
+			logger.Infof("[DEBUG] 缓存不存在或为空，开始计算磁盘使用: userID=%d, username=%s, homeDir=%s",
+				user.ID, user.Username, homeDir)
+			diskUsageData, calcErr := s.calculateDiskUsageWithRoot(user.Username, homeDir)
+			if calcErr != nil || diskUsageData == nil {
+				// 计算也失败，返回0
+				logger.Errorf("[DEBUG] !!! 计算失败，返回0值: userID=%d, username=%s, calcErr=%v, diskUsageData=%v",
+					user.ID, user.Username, calcErr, diskUsageData)
+				result = append(result, &dto.UserDiskUsageData{
+					UserID:        int64(user.ID),
+					Username:      user.Username,
+					DirectorySize: 0,
+					DiskUsage:     0,
+					HomeDirectory: homeDir,
+				})
+				logger.Warnf("[DEBUG] 获取用户磁盘使用情况失败: userID=%d, username=%s, homeDir=%s, err=%v",
+					user.ID, user.Username, homeDir, calcErr)
+				continue
+			}
+
+			logger.Infof("[DEBUG] !!! 计算成功: userID=%d, username=%s, size=%d (%.2f MB), usage=%.4f%%",
+				user.ID, user.Username, diskUsageData.DirectorySize, float64(diskUsageData.DirectorySize)/1024/1024, diskUsageData.DiskUsage)
+
+			// 写入 Redis 缓存，避免下次重复计算
+			if err := s.SetDiskUsageCache(ctx, int(user.ID), homeDir, diskUsageData); err != nil {
+				logger.Warnf("[DEBUG] 写入磁盘使用缓存失败: userID=%d, username=%s, err=%v",
+					user.ID, user.Username, err)
+			} else {
+				logger.Infof("[DEBUG] 成功写入Redis缓存: userID=%d, username=%s", user.ID, user.Username)
+			}
+
+			result = append(result, &dto.UserDiskUsageData{
+				UserID:        int64(user.ID),
+				Username:      user.Username,
+				DirectorySize: diskUsageData.DirectorySize,
+				DiskUsage:     diskUsageData.DiskUsage,
+				HomeDirectory: homeDir,
+			})
+			continue
+		}
+
+		logger.Infof("[DEBUG] 使用缓存数据: userID=%d, username=%s, size=%d (%.2f MB), usage=%.4f%%",
+			user.ID, user.Username, cacheData.DirectorySize, float64(cacheData.DirectorySize)/1024/1024, cacheData.DiskUsage)
+
+		result = append(result, &dto.UserDiskUsageData{
+			UserID:        int64(user.ID),
+			Username:      user.Username,
+			DirectorySize: cacheData.DirectorySize,
+			DiskUsage:     cacheData.DiskUsage,
+			HomeDirectory: homeDir,
+		})
+	}
+
+	logger.Infof("[DEBUG] ========== GetAllUsersDiskUsage 完成，返回 %d 条记录 ==========", len(result))
+	for i, data := range result {
+		logger.Infof("[DEBUG] 结果[%d]: userID=%d, username=%s, size=%d, usage=%.4f%%",
+			i, data.UserID, data.Username, data.DirectorySize, data.DiskUsage)
+	}
+
+	return result, nil
 }
