@@ -18,13 +18,20 @@ import (
 
 type systemInfoRepository struct{}
 
+// nvidiaSMIProcessInfo 保存从 nvidia-smi 获取的进程信息
+type nvidiaSMIProcessInfo struct {
+	PID         int
+	ProcessName string
+	GPUName     string
+}
+
 // NewSystemInfoRepository 创建系统信息仓储实例
 func NewSystemInfoRepository() SystemInfoRepository {
 	return &systemInfoRepository{}
 }
 
 // GetDiskInfo 获取磁盘信息
-func (r *systemInfoRepository) GetDiskInfo(ctx context.Context, mountPoint string) (*response.CpuInfoResponse, error) {
+func (r *systemInfoRepository) GetDiskInfo(mountPoint string) (*response.CpuInfoResponse, error) {
 	usage, err := disk.Usage(mountPoint)
 	if err != nil {
 		return nil, fmt.Errorf("获取磁盘信息失败: %w", err)
@@ -40,7 +47,7 @@ func (r *systemInfoRepository) GetDiskInfo(ctx context.Context, mountPoint strin
 }
 
 // GetMemoryInfo 获取内存信息
-func (r *systemInfoRepository) GetMemoryInfo(ctx context.Context) (*response.CpuInfoResponse, error) {
+func (r *systemInfoRepository) GetMemoryInfo() (*response.CpuInfoResponse, error) {
 	vmStat, err := mem.VirtualMemory()
 	if err != nil {
 		return nil, fmt.Errorf("获取内存信息失败: %w", err)
@@ -59,7 +66,7 @@ func (r *systemInfoRepository) GetMemoryInfo(ctx context.Context) (*response.Cpu
 	}, nil
 }
 
-// GetGPUInfo 获取 GPU 信息
+// GetGPUInfo 获取 GPU显卡 信息
 func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUInfoResponse, map[string]string, error) {
 	gpuMap := make(map[string]string)
 
@@ -114,6 +121,7 @@ func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUIn
 
 // GetProcessInfo 获取进程信息
 func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[string]string) ([]ProcessInfo, error) {
+	//获取在显卡上执行的全部进程
 	processList, err := r.getProcessInfoFromNvidiaSMI(ctx, gpuMap)
 	if err != nil {
 		return nil, fmt.Errorf("从 nvidia-smi 获取进程信息失败: %w", err)
@@ -125,7 +133,8 @@ func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[st
 
 	var processInfos []ProcessInfo
 	for _, processInfo := range processList {
-		info, err := r.getProcessDetails(ctx, processInfo.PID, processInfo.GPUName, processInfo.ProcessName)
+		//获取进程详细信息
+		info, err := r.getProcessDetails(processInfo.PID, processInfo.GPUName, processInfo.ProcessName)
 		if err != nil {
 			logger.Infof("获取进程 id 为%v 详细信息失败:%v", processInfo.PID, err)
 			continue
@@ -135,14 +144,7 @@ func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[st
 	return processInfos, nil
 }
 
-// nvidiaSMIProcessInfo 保存从 nvidia-smi 获取的进程信息
-type nvidiaSMIProcessInfo struct {
-	PID         int
-	ProcessName string
-	GPUName     string
-}
-
-// getProcessInfoFromNvidiaSMI 直接从 nvidia-smi 获取进程信息
+// getProcessInfoFromNvidiaSMI 直接从 nvidia-smi 获取进程部分信息
 func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context, gpuMap map[string]string) ([]nvidiaSMIProcessInfo, error) {
 	var processList []nvidiaSMIProcessInfo
 
@@ -188,7 +190,7 @@ func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context, 
 }
 
 // getProcessDetails 获取进程的详细信息
-func (r *systemInfoRepository) getProcessDetails(ctx context.Context, pid int, gpuName string, jobName string) (ProcessInfo, error) {
+func (r *systemInfoRepository) getProcessDetails(pid int, gpuName string, processName string) (ProcessInfo, error) {
 	p, err := process.NewProcess(int32(pid))
 	if err != nil {
 		return ProcessInfo{}, err
@@ -217,14 +219,15 @@ func (r *systemInfoRepository) getProcessDetails(ctx context.Context, pid int, g
 	}
 
 	return ProcessInfo{
-		Username:  username,
-		PID:       strconv.Itoa(pid),
-		JobName:   jobName,
-		GPUname:   gpuName,
-		StartTime: startTime,
-		IsNormal:  isNormal,
-		Runtime:   runtime,
-		Command:   cmdline,
+		Username:            username,
+		PID:                 strconv.Itoa(pid),
+		JobName:             processName,
+		GPUname:             gpuName,
+		StartTime:           startTime,
+		IsNormal:            isNormal,
+		Runtime:             runtime,
+		RunningDurationSecs: int(duration.Seconds()),
+		Command:             cmdline,
 	}, nil
 }
 

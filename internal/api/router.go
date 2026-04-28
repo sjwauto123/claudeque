@@ -68,7 +68,7 @@ func NewRouter(
 		jobCtrl:          job.NewController(jobService, authService, gpuService, userOperationLogService),
 		queueCtrl:        queue.NewController(queueService, userOperationLogService, repository, authService),
 		operationLogCtrl: operationLogs.NewController(adminOperationLogService, userOperationLogService, authService),
-		systemInfoCtrl:   system.NewController(infoService, authService, userOperationLogService),
+		systemInfoCtrl:   system.NewController(infoService, authService),
 	}
 }
 

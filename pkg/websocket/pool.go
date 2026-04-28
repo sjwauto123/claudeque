@@ -220,7 +220,7 @@ func (c *Client) WritePump() {
 	}
 }
 
-// BroadcastToAdminsByType 广播消息给指定类型的管理员用户
+// BroadcastToAdminsByType 广播消息给指定类型的用户
 func (p *ConnectionPool) BroadcastToAdminsByType(sessionType string, data []byte) {
 	p.mu.RLock()
 	// 先收集需要发送的客户端，避免在持有锁时执行耗时操作

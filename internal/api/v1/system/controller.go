@@ -14,16 +14,14 @@ import (
 )
 
 type Controller struct {
-	syInfoSvc               service.SystemInfoService
-	authService             service.AuthService
-	userOperationLogService service.UserOperationLogService
+	syInfoSvc   service.SystemInfoService
+	authService service.AuthService
 }
 
-func NewController(svc service.SystemInfoService, authSvc service.AuthService, userOperationLogService service.UserOperationLogService) *Controller {
+func NewController(svc service.SystemInfoService, authSvc service.AuthService) *Controller {
 	return &Controller{
-		syInfoSvc:               svc,
-		authService:             authSvc,
-		userOperationLogService: userOperationLogService,
+		syInfoSvc:   svc,
+		authService: authSvc,
 	}
 }
 

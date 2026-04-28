@@ -7,22 +7,23 @@ import (
 
 // ProcessInfo 进程信息（仓储层内部使用）
 type ProcessInfo struct {
-	Username  string
-	PID       string
-	JobName   string
-	GPUname   string
-	StartTime string
-	IsNormal  int
-	Runtime   string
-	Command   string
+	Username            string
+	PID                 string
+	JobName             string
+	GPUname             string
+	StartTime           string
+	IsNormal            int
+	Runtime             string
+	RunningDurationSecs int
+	Command             string
 }
 
 // SystemInfoRepository 系统信息仓储接口
 type SystemInfoRepository interface {
 	// GetDiskInfo 获取磁盘信息
-	GetDiskInfo(ctx context.Context, mountPoint string) (*response.CpuInfoResponse, error)
+	GetDiskInfo(mountPoint string) (*response.CpuInfoResponse, error)
 	// GetMemoryInfo 获取内存信息
-	GetMemoryInfo(ctx context.Context) (*response.CpuInfoResponse, error)
+	GetMemoryInfo() (*response.CpuInfoResponse, error)
 	// GetGPUInfo 获取 GPU 信息
 	GetGPUInfo(ctx context.Context) ([]response.GPUInfoResponse, map[string]string, error)
 	// GetProcessInfo 获取进程信息

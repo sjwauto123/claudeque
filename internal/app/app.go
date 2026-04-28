@@ -237,7 +237,7 @@ func (a *App) initDependencies() {
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
-	infoService := service.NewSystemInfoService(a.wsPool, systemInfoRepo, redisRepo)
+	infoService := service.NewSystemInfoService(a.wsPool, systemInfoRepo, redisRepo, procCacheRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	userSvc := service.NewUserService(userRepo, redisRepo, sshConfig)
