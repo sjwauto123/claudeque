@@ -22,6 +22,8 @@ type GpuRepository interface {
 	CheckAvailable(ctx context.Context, cardIDs []int) (bool, error)
 	// GetGpus 获取显卡信息
 	GetGpus(ctx context.Context) ([]response.GpuSpec, int, error)
+	// GetAllCards 获取全部显卡实体
+	GetAllCards(ctx context.Context) ([]entity.GpuCard, error)
 }
 
 // GpuCacheRepository GPU缓存接口

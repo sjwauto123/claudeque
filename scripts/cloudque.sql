@@ -60,6 +60,7 @@ INSERT INTO `admin_menu` VALUES (18, 6, '排队信息', 2, 'menu', 1, 'MenuUnfol
 INSERT INTO `admin_menu` VALUES (19, 6, '任务提交', 3, 'menu', 1, 'UpSquareOutlined', '/feature/task', '2026-02-06 10:48:08.000', '2026-02-06 10:48:08.000');
 INSERT INTO `admin_menu` VALUES (20, 6, '我的任务', 4, 'menu', 1, 'FileSearchOutlined', '/feature/mytask', '2026-02-06 10:48:08.000', '2026-02-06 10:48:08.000');
 INSERT INTO `admin_menu` VALUES (21, 8, '个人资料', 1, 'menu', 1, 'UserOutlined', '/profile/info', '2026-02-06 10:48:21.000', '2026-02-06 10:48:21.000');
+INSERT INTO `admin_menu` VALUES (22, 0, '首页', 0, 'menu', 1, 'HomeOutlined', '/home', '2026-04-28 00:00:00.000', '2026-04-28 00:00:00.000');
 
 -- ----------------------------
 -- Table structure for admin_operation_log
@@ -163,6 +164,8 @@ INSERT INTO `admin_permissions` VALUES (266, '命令窗口(root)', '命令窗口
 INSERT INTO `admin_permissions` VALUES (267, '获取所有角色', '用户权限', 'cloud:user:role', 'user', 1, 1, 'GET', '/api/v1/admin/roles/simple', NULL, NULL);
 INSERT INTO `admin_permissions` VALUES (268, '获取菜单树跟权限', '用户权限', 'cloud:user:tree', 'user', 2, 1, 'GET', '/api/v1/user/menu-permission', NULL, NULL);
 INSERT INTO `admin_permissions` VALUES (269, '查看文件上传进度', '文件管理', 'cloud:file:uploarprogress', 'file', 6, 1, 'GET', '/api/v1/files/upload/progress', NULL, NULL);
+INSERT INTO `admin_permissions` VALUES (271, '获取首页信息', '首页', 'cloud:home:overview', 'home', 1, 1, 'GET', '/api/v1/home/overview', NULL, NULL);
+INSERT INTO `admin_permissions` VALUES (272, '首页实时信息', '首页', 'cloud:home:ws', 'home', 2, 1, 'GET', '/api/v1/home/ws', NULL, NULL);
 
 -- ----------------------------
 -- Table structure for admin_role_menu
@@ -201,7 +204,7 @@ INSERT INTO `admin_role_menu` VALUES (1, 18, '2026-03-04 15:39:54', '2026-03-04 
 INSERT INTO `admin_role_menu` VALUES (1, 19, '2026-03-04 15:39:54', '2026-03-04 15:39:54');
 INSERT INTO `admin_role_menu` VALUES (1, 20, '2026-03-04 15:39:54', '2026-03-04 15:39:54');
 INSERT INTO `admin_role_menu` VALUES (1, 21, '2026-03-04 15:39:54', '2026-03-04 15:39:54');
-INSERT INTO `admin_role_menu` VALUES (1, 94, '2026-03-04 15:39:54', '2026-03-04 15:39:54');
+INSERT INTO `admin_role_menu` VALUES (1, 22, '2026-04-28 00:00:00', '2026-04-28 00:00:00');
 INSERT INTO `admin_role_menu` VALUES (2, 4, '2026-03-12 15:57:17', '2026-03-12 15:57:17');
 INSERT INTO `admin_role_menu` VALUES (2, 6, '2026-03-12 15:57:17', '2026-03-12 15:57:17');
 INSERT INTO `admin_role_menu` VALUES (2, 8, '2026-03-12 15:57:17', '2026-03-12 15:57:17');
@@ -287,6 +290,8 @@ INSERT INTO `admin_role_permissions` VALUES (1, 266, '2026-03-04 15:39:54', '202
 INSERT INTO `admin_role_permissions` VALUES (1, 267, '2026-03-04 15:39:54', '2026-03-04 15:39:54');
 INSERT INTO `admin_role_permissions` VALUES (1, 268, '2026-03-04 15:39:54', '2026-03-04 15:39:54');
 INSERT INTO `admin_role_permissions` VALUES (1, 269, '2026-03-04 15:39:54', '2026-03-04 15:39:54');
+INSERT INTO `admin_role_permissions` VALUES (1, 271, '2026-04-28 00:00:00', '2026-04-28 00:00:00');
+INSERT INTO `admin_role_permissions` VALUES (1, 272, '2026-04-28 00:00:00', '2026-04-28 00:00:00');
 INSERT INTO `admin_role_permissions` VALUES (2, 211, '2026-03-12 15:57:17', '2026-03-12 15:57:17');
 INSERT INTO `admin_role_permissions` VALUES (2, 212, '2026-03-12 15:57:17', '2026-03-12 15:57:17');
 INSERT INTO `admin_role_permissions` VALUES (2, 213, '2026-03-12 15:57:17', '2026-03-12 15:57:17');

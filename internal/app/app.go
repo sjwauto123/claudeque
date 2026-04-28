@@ -39,6 +39,7 @@ type App struct {
 	sessionManager *ssh.SessionManager
 	wsPool         *websocket.ConnectionPool
 	infoService    service.SystemInfoService
+	homeService    service.HomeService
 	terminalSvc    service.TerminalService
 	logManager     *middleware.LogManager
 }
@@ -253,6 +254,7 @@ func (a *App) initDependencies() {
 
 	// 重新创建 jobSvc 以包含 execSvc
 	jobSvc := service.NewJobService(jobRepo, queueSvc, gpuSvc, userRepo, execSvc, authSvc)
+	homeSvc := service.NewHomeService(gpuRepo, jobRepo, a.wsPool)
 
 	// 创建调度器
 	a.scheduler = service.NewScheduler(jobRepo, queueSvc, gpuSvc, processRepo, procCacheRepo, execSvc, authSvc)
@@ -262,6 +264,7 @@ func (a *App) initDependencies() {
 
 	//创建系统信息管理器
 	a.infoService = infoService
+	a.homeService = homeSvc
 
 	// 创建 Router
 	a.router = api.NewRouter(
@@ -274,6 +277,7 @@ func (a *App) initDependencies() {
 		apiSvc,
 		menuSvc,
 		jobSvc,
+		homeSvc,
 		queueSvc,
 		jobRepo,
 		gpuSvc,
@@ -354,6 +358,11 @@ func (a *App) gracefulShutdown() {
 	// 停止系统信息服务
 	if a.infoService != nil {
 		a.infoService.Stop()
+	}
+
+	// 停止首页概览服务
+	if a.homeService != nil {
+		a.homeService.Stop()
 	}
 
 	// 关闭日志管理器，等待剩余日志写入
