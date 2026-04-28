@@ -1754,7 +1754,7 @@ func (s *fileService) CalculateAllUsersDiskUsage() error {
 	}
 
 	// 获取所有用户列表
-	users, _, err := s.userRepo.List(0, 1, "", "", nil)
+	users, _, err := s.userRepo.List(0, 0, "", "", nil)
 	if err != nil {
 		logger.Error("获取用户列表失败", zap.Error(err))
 		return errors.NewWithErr(errors.CodeInternalError, "获取用户列表失败", err)
@@ -1816,7 +1816,7 @@ func (s *fileService) GetAllUsersDiskUsage() ([]*dto.UserDiskUsageData, error) {
 	}
 
 	// 获取所有用户列表（分页获取所有用户）
-	users, total, err := s.userRepo.List(0, 1, "", "", nil)
+	users, total, err := s.userRepo.List(0, 0, "", "", nil)
 	if err != nil {
 		logger.Error("[DEBUG] 获取用户列表失败", zap.Error(err), zap.Int64("total", total))
 		return nil, errors.NewWithErr(errors.CodeInternalError, "获取用户列表失败", err)
