@@ -17,11 +17,11 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	fileGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		// 文件管理
-		fileGroup.GET("/list", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
-		fileGroup.GET("/list/*path", middleware.WithOperation("获取文件列表"), ctrl.GetFileList)
+		fileGroup.GET("/list", ctrl.GetFileList)
+		fileGroup.GET("/list/*path", ctrl.GetFileList)
 		fileGroup.DELETE("/delete", middleware.WithOperation("删除文件"), ctrl.DeleteFile)
 		fileGroup.POST("/upload", middleware.WithOperation("上传文件"), ctrl.UploadFile)
-		fileGroup.GET("/upload/progress", middleware.WithOperation("获取上传进度"), ctrl.GetUploadProgress)
+		fileGroup.GET("/upload/progress", ctrl.GetUploadProgress)
 		fileGroup.GET("/download", middleware.WithOperation("下载文件"), ctrl.DownloadFile)
 		fileGroup.POST("/unzip", middleware.WithOperation("解压文件"), ctrl.UnzipFile)
 		fileGroup.GET("/size", middleware.WithOperation("计算文件大小"), ctrl.CalculateSize)
@@ -31,14 +31,12 @@ func (ctrl *Controller) RegisterRoutes(router *gin.RouterGroup) {
 	userDirGroup := router.Group("/directories")
 	userDirGroup.Use(middleware.Auth())
 	userDirGroup.Use(middleware.RequirePermission(ctrl.authService))
-	userDirGroup.Use(middleware.CaptureRawBody())
-	userDirGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
 		// 计算目录磁盘占比和大小
-		userDirGroup.GET("/calculate-usage", middleware.WithOperation("计算目录磁盘大小"), ctrl.GetDiskUsage)
+		userDirGroup.GET("/calculate-usage", ctrl.GetDiskUsage)
 		// 列出 /home 目录下的所有用户目录
-		userDirGroup.GET("/list-home", middleware.WithOperation("列出所有用户目录"), ctrl.ListHomeDirectories)
-		userDirGroup.GET("/list-home/*path", middleware.WithOperation("列出所有用户目录"), ctrl.ListHomeDirectories)
+		userDirGroup.GET("/list-home", ctrl.ListHomeDirectories)
+		userDirGroup.GET("/list-home/*path", ctrl.ListHomeDirectories)
 	}
 
 	// 管理员接口 - 获取所有用户磁盘使用情况

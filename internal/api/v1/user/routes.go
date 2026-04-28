@@ -14,12 +14,12 @@ func (ctrl *Controller) RegisterRoutes(r *gin.RouterGroup) {
 	userGroup.Use(middleware.CaptureRawBody())
 	userGroup.Use(middleware.GlobalLogManager.UserOperationLogs())
 	{
-		userGroup.GET("/profile", middleware.WithOperation("查询用户资料"), ctrl.GetProfile)
+		userGroup.GET("/profile", ctrl.GetProfile)
 		userGroup.PUT("/profile", middleware.WithOperation("更新个人信息"), ctrl.UpdateProfile)
 		userGroup.PUT("/password", middleware.WithOperation("修改密码"), ctrl.ChangePassword)
-		userGroup.GET("/list", middleware.WithOperation("获取用户列表"), ctrl.ListUsers)
-		userGroup.GET("/by-username", middleware.WithOperation("根据用户名查询"), ctrl.GetByUsername)
+		userGroup.GET("/list", ctrl.ListUsers)
+		userGroup.GET("/by-username", ctrl.GetByUsername)
 		userGroup.POST("/avatar", middleware.WithOperation("上传头像"), ctrl.UploadAvatar)
-		userGroup.GET("/menu-permission", middleware.WithOperation("获取权限和菜单树"), ctrl.GetUserMenuPermission)
+		userGroup.GET("/menu-permission", ctrl.GetUserMenuPermission)
 	}
 }

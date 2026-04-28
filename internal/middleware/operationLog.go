@@ -262,7 +262,10 @@ func WithOperation(actionType string) gin.HandlerFunc {
 // CaptureRawBody 捕获请求体并存入 Context
 func CaptureRawBody() gin.HandlerFunc {
 	return func(c *gin.Context) {
-
+		if c.Request.Method == "GET" {
+			c.Next()
+			return
+		}
 		// 仅处理有 Body 的请求类型
 		contentType := c.Request.Header.Get("Content-Type")
 		if !strings.Contains(contentType, "application/json") {
