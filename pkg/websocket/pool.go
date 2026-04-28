@@ -39,13 +39,15 @@ type Client struct {
 	once           sync.Once      // 确保关闭连接只执行一次
 }
 
-// ConnectionPool WebSocket连接池
+// ConnectionPool WebSocket 连接池
 type ConnectionPool struct {
 	// userID -> { client -> struct{} }
 	userClients map[int]map[*Client]struct{}
 	// 管理员客户端
 	adminClients map[*Client]struct{}
-	mu           sync.RWMutex
+	// systemInfo 类型的连接计数（优化频繁检查）
+	systemInfoCount int
+	mu              sync.RWMutex
 }
 
 // NewConnectionPool 创建连接池
@@ -69,9 +71,13 @@ func (p *ConnectionPool) Add(userID int, conn *websocket.Conn, metadata *Session
 	}
 
 	p.mu.Lock()
-	// 如果是管理员，添加到管理员客户端map
+	// 如果是管理员，添加到管理员客户端 map
 	if metadata != nil && metadata.Role == "admin" {
 		p.adminClients[client] = struct{}{}
+		// 如果是 systemInfo 类型，增加计数
+		if metadata.SessionType == "systemInfo" {
+			p.systemInfoCount++
+		}
 	} else {
 		if p.userClients[userID] == nil {
 			p.userClients[userID] = make(map[*Client]struct{})
@@ -97,7 +103,7 @@ func (c *Client) Close() {
 
 		if c.Metadata.Role == "user" {
 			userID := c.Metadata.UserID
-			//关闭该userID的一个客户端连接
+			//关闭该 userID 的一个客户端连接
 			if clients, ok := c.Pool.userClients[userID]; ok {
 				delete(clients, c)
 				if len(clients) == 0 {
@@ -105,14 +111,20 @@ func (c *Client) Close() {
 				}
 			}
 		} else if c.Metadata.Role == "admin" {
-			// 如果是管理员，从管理员客户端map中移除
+			// 如果是管理员，从管理员客户端 map 中移除
 			delete(c.Pool.adminClients, c)
+			// 如果是 systemInfo 类型，减少计数
+			if c.Metadata.SessionType == "systemInfo" {
+				if c.Pool.systemInfoCount > 0 {
+					c.Pool.systemInfoCount--
+				}
+			}
 		}
 		close(c.Done)
 		close(c.Send)
 		err := c.Conn.Close()
 		if err != nil {
-			logger.Errorf("用户id为%v的客户端关闭失败%v", c.Metadata.UserID, err)
+			logger.Errorf("用户 id 为%v的客户端关闭失败%v", c.Metadata.UserID, err)
 			return
 		}
 	})
@@ -211,30 +223,51 @@ func (c *Client) WritePump() {
 // BroadcastToAdminsByType 广播消息给指定类型的管理员用户
 func (p *ConnectionPool) BroadcastToAdminsByType(sessionType string, data []byte) {
 	p.mu.RLock()
-	defer p.mu.RUnlock()
-
+	// 先收集需要发送的客户端，避免在持有锁时执行耗时操作
+	var clientsToSend []*Client
 	for client := range p.adminClients {
 		if client.Metadata != nil && client.Metadata.SessionType == sessionType {
-			select {
-			case client.Send <- data:
-			default:
-				go client.Close()
-			}
+			clientsToSend = append(clientsToSend, client)
+		}
+	}
+	p.mu.RUnlock()
+
+	// 在锁外发送消息，避免死锁
+	for _, client := range clientsToSend {
+		select {
+		case client.Send <- data:
+		default:
+			// 如果发送通道满了，说明客户端消费慢，记录日志并跳过
+			// 不立即关闭连接，避免频繁断开
+			logger.Warnf("客户端发送通道已满，跳过消息发送，用户 ID: %d", client.Metadata.UserID)
 		}
 	}
 }
 
-// IsHavingSystemInfoConnection 判断是否有获取系统消息ws连接
+// IsHavingSystemInfoConnection 判断是否有获取系统消息 ws 连接
+// 使用计数优化，避免每次遍历所有连接
 func (p *ConnectionPool) IsHavingSystemInfoConnection() bool {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
+	return p.systemInfoCount > 0
+}
 
-	for client := range p.adminClients {
-		if client.Metadata.SessionType == "systemInfo" {
-			return true
-		}
+// GetSystemInfoConnectionCount 获取 systemInfo 类型的连接数（用于调试和监控）
+func (p *ConnectionPool) GetSystemInfoConnectionCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	return p.systemInfoCount
+}
+
+// GetTotalConnectionCount 获取总连接数（用于调试和监控）
+func (p *ConnectionPool) GetTotalConnectionCount() int {
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+	total := len(p.adminClients)
+	for _, clients := range p.userClients {
+		total += len(clients)
 	}
-	return false
+	return total
 }
 
 // CloseAll 关闭所有连接

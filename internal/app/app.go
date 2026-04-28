@@ -197,6 +197,7 @@ func (a *App) initDependencies() {
 	menuRepo := repository.NewMenuRepository(a.mysqlDB)
 	apiRepo := repository.NewAPIRepository(a.mysqlDB)
 	procCacheRepo := repository.NewProcessCacheRepository(a.redis)
+	systemInfoRepo := repository.NewSystemInfoRepository()
 
 	// 创建 SSH 会话管理器
 	var sessionManager *ssh.SessionManager
@@ -236,7 +237,7 @@ func (a *App) initDependencies() {
 	// 创建 Service
 	userLogSvc := service.NewUserOperationLogService(userLogRepo)
 	adminLogSvc := service.NewAdminOperationLogService(adminLogRepo)
-	infoService := service.NewSystemInfoService(a.wsPool, procCacheRepo)
+	infoService := service.NewSystemInfoService(a.wsPool, systemInfoRepo, redisRepo)
 	queueSvc := service.NewQueueService(queueRepo, jobRepo)
 	gpuSvc := service.NewGpuService(gpuRepo, gpuCache)
 	userSvc := service.NewUserService(userRepo, redisRepo, sshConfig)
