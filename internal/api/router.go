@@ -130,8 +130,3 @@ func (r *Router) Setup(engine *gin.Engine) {
 	}
 
 }
-
-// Close 关闭所有路由连接
-func (r *Router) Close() error {
-	return nil
-}

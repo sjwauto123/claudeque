@@ -390,13 +390,6 @@ func (a *App) gracefulShutdown() {
 	_ = database.CloseMySQL()
 	_ = database.CloseRedis()
 
-	// 关闭路由连接
-	if a.router != nil {
-		if err := a.router.Close(); err != nil {
-			logger.Error("关闭路由连接失败", zap.Error(err))
-		}
-	}
-
 	// 同步日志
 	_ = logger.Sync()
 
