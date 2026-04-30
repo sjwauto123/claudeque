@@ -14,15 +14,16 @@ type SystemProcessInfo struct {
 
 // ServerProcessInfo 服务器进程信息
 type ServerProcessInfo struct {
-	Username   string `json:"username"`
-	PID        string `json:"pid"`
-	JobName    string `json:"job_name"`
-	GPUname    string `json:"gpu_name"`
-	StartTime  string `json:"start_time"`
-	IsNormal   int    `json:"is_normal"`
-	Runtime    string `json:"runtime"`
-	Command    string `json:"command"`
-	IsRetained bool   `json:"is_retained"`
+	Username            string `json:"username"`
+	PID                 string `json:"pid"`
+	JobName             string `json:"job_name"`
+	GPUname             string `json:"gpu_name"`
+	StartTime           string `json:"start_time"`
+	IsNormal            int    `json:"is_normal"`
+	Runtime             string `json:"runtime"`
+	RunningDurationSecs int    `json:"running_duration_secs"`
+	Command             string `json:"command"`
+	IsRetained          bool   `json:"is_retained"`
 }
 
 type GPUInfoResponse struct {

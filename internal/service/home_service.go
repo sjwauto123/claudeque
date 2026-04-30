@@ -2,13 +2,11 @@ package service
 
 import (
 	"cloudque/internal/model/dto/response"
-	"cloudque/internal/model/entity"
 	"cloudque/internal/repository"
 	"cloudque/pkg/logger"
 	wsPool "cloudque/pkg/websocket"
 	"context"
 	"encoding/json"
-	"os/exec"
 	"strconv"
 	"strings"
 	"sync"
@@ -18,12 +16,10 @@ import (
 )
 
 type homeService struct {
-	gpuRepo        repository.GpuRepository
-	jobRepo        repository.JobRepository
-	systemInfoRepo repository.SystemInfoRepository
-	redisRepo      repository.RedisRepository
-	Pool           *wsPool.ConnectionPool
-	Collector      *HomeOverviewCollector
+	jobRepo       repository.JobRepository
+	systemInfoSvc SystemInfoService
+	Pool          *wsPool.ConnectionPool
+	Collector     *HomeOverviewCollector
 }
 
 type HomeOverviewCollector struct {
@@ -35,22 +31,11 @@ type HomeOverviewCollector struct {
 	Once    sync.Once
 }
 
-type homeGpuMetric struct {
-	Index       int
-	UUID        string
-	Temperature int
-	Utilization int
-	MemoryUsed  int
-	MemoryTotal int
-}
-
-func NewHomeService(gpuRepo repository.GpuRepository, jobRepo repository.JobRepository, systemInfoRepo repository.SystemInfoRepository, redisRepo repository.RedisRepository, pool *wsPool.ConnectionPool) HomeService {
+func NewHomeService(jobRepo repository.JobRepository, systemInfoSvc SystemInfoService, pool *wsPool.ConnectionPool) HomeService {
 	svc := &homeService{
-		gpuRepo:        gpuRepo,
-		jobRepo:        jobRepo,
-		systemInfoRepo: systemInfoRepo,
-		redisRepo:      redisRepo,
-		Pool:           pool,
+		jobRepo:       jobRepo,
+		systemInfoSvc: systemInfoSvc,
+		Pool:          pool,
 	}
 	svc.Collector = NewHomeOverviewCollector(pool, svc)
 	svc.Collector.Start()
@@ -131,139 +116,94 @@ func (c *HomeOverviewCollector) Stop() {
 }
 
 func (s *homeService) GetOverview(ctx context.Context) (*response.HomeOverviewResponse, error) {
-	cards, err := s.gpuRepo.GetAllCards(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	metrics, err := collectHomeGpuMetrics()
-	if err != nil {
-		logger.Warnf("首页GPU实时指标采集失败: %v", err)
-		metrics = map[int]homeGpuMetric{}
-	}
-
-	gpus := make([]response.HomeGPUOverview, 0, len(cards))
-	summary := response.HomeGpuSummary{Total: len(cards)}
-	for _, card := range cards {
-		if card.Status == entity.GpuStatusBusy {
-			summary.Busy++
-		} else {
-			summary.Idle++
-		}
-
-		gpu := response.HomeGPUOverview{
-			ID:           card.ID,
-			Index:        card.Index,
-			Name:         card.Name,
-			Type:         card.GpuType,
-			Status:       card.Status,
-			CurrentJobID: card.CurrentJobID,
-			MemoryTotal:  card.Memory,
-		}
-		if metric, ok := metrics[card.Index]; ok {
-			gpu.Temperature = metric.Temperature
-			gpu.Utilization = metric.Utilization
-			gpu.MemoryUsed = metric.MemoryUsed
-			gpu.MemoryTotal = metric.MemoryTotal
-		}
-		gpus = append(gpus, gpu)
-	}
-
-	runningJobs, err := s.jobRepo.GetHomeRunningJobs(ctx)
-	if err != nil {
-		return nil, err
-	}
-	attachGpuNames(runningJobs, cards)
+	// GPU 和进程信息都来自 system 模块已经初始化好的采集器，避免首页维护另一套 nvidia-smi 解析逻辑。
+	collectCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	gpus, gpuMap := s.collectRealtimeGpus(collectCtx)
 
 	queueSummary, err := s.jobRepo.GetHomeQueueSummary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	serverProcesses := s.collectServerProcesses(ctx)
+	serverProcesses := s.collectServerProcesses(collectCtx, gpuMap)
 
 	return &response.HomeOverviewResponse{
-		GpuSummary:      summary,
+		GpuSummary:      buildHomeGpuSummary(gpus),
 		Gpus:            gpus,
 		ServerProcesses: serverProcesses,
 		QueueSummary:    queueSummary,
 	}, nil
 }
 
-func (s *homeService) collectServerProcesses(ctx context.Context) []response.ServerProcessInfo {
-	if s.systemInfoRepo == nil || s.redisRepo == nil {
-		return []response.ServerProcessInfo{}
+func (s *homeService) systemCollector() (*ResourceCollector, bool) {
+	// 不改动 systemInfo 模块的 service 代码，仅复用已创建的 systemInfoService 内部采集器。
+	systemSvc, ok := s.systemInfoSvc.(*systemInfoService)
+	if !ok || systemSvc == nil || systemSvc.collector == nil {
+		logger.Warn("首页无法复用系统信息采集器")
+		return nil, false
+	}
+	return systemSvc.collector, true
+}
+
+func (s *homeService) collectRealtimeGpus(ctx context.Context) ([]response.GPUInfoResponse, map[string]string) {
+	rc, ok := s.systemCollector()
+	if !ok || rc.Repo == nil {
+		return []response.GPUInfoResponse{}, map[string]string{}
 	}
 
-	_, gpuMap, err := s.systemInfoRepo.GetGPUInfo(ctx)
+	gpus, gpuMap, err := rc.Repo.GetGPUInfo(ctx)
 	if err != nil {
-		logger.Warnf("首页GPU进程映射采集失败: %v", err)
+		logger.Warnf("首页GPU实时信息采集失败: %v", err)
+		return []response.GPUInfoResponse{}, map[string]string{}
+	}
+	return gpus, gpuMap
+}
+
+func (s *homeService) collectServerProcesses(ctx context.Context, gpuMap map[string]string) []response.ServerProcessInfo {
+	rc, ok := s.systemCollector()
+	if !ok {
 		return []response.ServerProcessInfo{}
 	}
 
-	_, serverProcesses := collectAndClassifyProcesses(ctx, s.systemInfoRepo, s.redisRepo, gpuMap)
+	// 进程分类继续由 system 现有逻辑负责：ProcessCache 标识系统任务，Redis 标识保留任务。
+	_, serverProcesses := rc.collectAndClassifyProcesses(ctx, gpuMap)
+	fillRunningDurationSecs(serverProcesses)
 	return serverProcesses
 }
 
-func collectHomeGpuMetrics() (map[int]homeGpuMetric, error) {
-	cmd := exec.Command("nvidia-smi", "--query-gpu=index,uuid,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
-	output, err := cmd.Output()
-	if err != nil {
-		return nil, err
-	}
-
-	metrics := make(map[int]homeGpuMetric)
-	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		parts := strings.Split(line, ",")
-		if len(parts) < 6 {
-			continue
-		}
-
-		index, err := strconv.Atoi(strings.TrimSpace(parts[0]))
-		if err != nil {
-			continue
-		}
-		temp, _ := strconv.Atoi(strings.TrimSpace(parts[2]))
-		util, _ := strconv.Atoi(strings.TrimSpace(parts[3]))
-		memUsed, _ := strconv.Atoi(strings.TrimSpace(parts[4]))
-		memTotal, _ := strconv.Atoi(strings.TrimSpace(parts[5]))
-
-		metrics[index] = homeGpuMetric{
-			Index:       index,
-			UUID:        strings.TrimSpace(parts[1]),
-			Temperature: temp,
-			Utilization: util,
-			MemoryUsed:  memUsed,
-			MemoryTotal: memTotal,
+func buildHomeGpuSummary(gpus []response.GPUInfoResponse) response.HomeGpuSummary {
+	// 首页 GPU 总览只基于 nvidia-smi 实时指标判断：利用率或显存占用大于 0 即认为忙碌。
+	summary := response.HomeGpuSummary{Total: len(gpus)}
+	for _, gpu := range gpus {
+		if parseMetricNumber(gpu.Util) > 0 || parseMetricNumber(gpu.MemUsed) > 0 {
+			summary.Busy++
+		} else {
+			summary.Idle++
 		}
 	}
-
-	return metrics, nil
+	return summary
 }
 
-func attachGpuNames(jobs []response.HomeRunningJob, cards []entity.GpuCard) {
-	cardNames := make(map[string]string, len(cards))
-	for _, card := range cards {
-		cardNames[strconv.Itoa(card.ID)] = card.Name
-	}
-
-	for i := range jobs {
-		if jobs[i].GpuIDs == "" {
+func fillRunningDurationSecs(processes []response.ServerProcessInfo) {
+	for i := range processes {
+		if processes[i].RunningDurationSecs > 0 {
 			continue
 		}
-		ids := strings.Split(jobs[i].GpuIDs, ",")
-		names := make([]string, 0, len(ids))
-		for _, id := range ids {
-			id = strings.TrimSpace(id)
-			if name, ok := cardNames[id]; ok {
-				names = append(names, name)
-			}
+		if duration, err := time.ParseDuration(processes[i].Runtime); err == nil {
+			processes[i].RunningDurationSecs = int(duration.Seconds())
 		}
-		jobs[i].GpuNames = strings.Join(names, ",")
 	}
+}
+
+func parseMetricNumber(value string) int {
+	value = strings.TrimSpace(value)
+	value = strings.TrimSuffix(value, "%")
+	value = strings.TrimSuffix(value, "MB")
+	value = strings.TrimSpace(value)
+	n, err := strconv.Atoi(value)
+	if err != nil {
+		return 0
+	}
+	return n
 }
