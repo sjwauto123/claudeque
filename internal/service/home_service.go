@@ -119,14 +119,14 @@ func (s *homeService) GetOverview(ctx context.Context) (*response.HomeOverviewRe
 	// GPU 和进程信息都来自 system 模块已经初始化好的采集器，避免首页维护另一套 nvidia-smi 解析逻辑。
 	collectCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	gpus, gpuMap := s.collectRealtimeGpus(collectCtx)
+	gpus := s.collectRealtimeGpus(collectCtx)
 
 	queueSummary, err := s.jobRepo.GetHomeQueueSummary(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	serverProcesses := s.collectServerProcesses(collectCtx, gpuMap)
+	serverProcesses := s.collectServerProcesses(collectCtx)
 
 	return &response.HomeOverviewResponse{
 		GpuSummary:      buildHomeGpuSummary(gpus),
@@ -146,28 +146,28 @@ func (s *homeService) systemCollector() (*ResourceCollector, bool) {
 	return systemSvc.collector, true
 }
 
-func (s *homeService) collectRealtimeGpus(ctx context.Context) ([]response.GPUInfoResponse, map[string]string) {
+func (s *homeService) collectRealtimeGpus(ctx context.Context) []response.GPUInfoResponse {
 	rc, ok := s.systemCollector()
 	if !ok || rc.Repo == nil {
-		return []response.GPUInfoResponse{}, map[string]string{}
+		return []response.GPUInfoResponse{}
 	}
 
-	gpus, gpuMap, err := rc.Repo.GetGPUInfo(ctx)
+	gpus, err := rc.Repo.GetGPUInfo(ctx)
 	if err != nil {
 		logger.Warnf("首页GPU实时信息采集失败: %v", err)
-		return []response.GPUInfoResponse{}, map[string]string{}
+		return []response.GPUInfoResponse{}
 	}
-	return gpus, gpuMap
+	return gpus
 }
 
-func (s *homeService) collectServerProcesses(ctx context.Context, gpuMap map[string]string) []response.ServerProcessInfo {
+func (s *homeService) collectServerProcesses(ctx context.Context) []response.ServerProcessInfo {
 	rc, ok := s.systemCollector()
 	if !ok {
 		return []response.ServerProcessInfo{}
 	}
 
 	// 进程分类继续由 system 现有逻辑负责：ProcessCache 标识系统任务，Redis 标识保留任务。
-	_, serverProcesses := rc.collectAndClassifyProcesses(ctx, gpuMap)
+	_, serverProcesses := rc.collectAndClassifyProcesses(ctx)
 	fillRunningDurationSecs(serverProcesses)
 	return serverProcesses
 }
