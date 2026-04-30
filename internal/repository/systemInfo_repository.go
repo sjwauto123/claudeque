@@ -21,13 +21,6 @@ type systemInfoRepository struct {
 	processThrottle *throttle.ErrorThrottle
 }
 
-// nvidiaSMIProcessInfo 保存从 nvidia-smi 获取的进程信息
-type nvidiaSMIProcessInfo struct {
-	PID         int
-	ProcessName string
-	GPUName     string
-}
-
 // NewSystemInfoRepository 创建系统信息仓储实例
 func NewSystemInfoRepository() SystemInfoRepository {
 	return &systemInfoRepository{
@@ -73,17 +66,16 @@ func (r *systemInfoRepository) GetMemoryInfo() (*response.CpuInfoResponse, error
 }
 
 // GetGPUInfo 获取 GPU显卡 信息
-func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUInfoResponse, map[string]string, error) {
-	gpuMap := make(map[string]string)
+func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUInfoResponse, error) {
 
-	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=index,gpu_bus_id,name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
+	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=index,name,temperature.gpu,utilization.gpu,memory.used,memory.total", "--format=csv,noheader,nounits")
 	output, err := cmd.Output()
 	if err != nil {
 		var execErr *exec.Error
 		if errors.As(err, &execErr) {
-			return []response.GPUInfoResponse{}, gpuMap, nil
+			return []response.GPUInfoResponse{}, nil
 		}
-		return nil, gpuMap, fmt.Errorf("执行 nvidia-smi 命令失败: %w", err)
+		return nil, fmt.Errorf("执行 nvidia-smi 命令失败: %w", err)
 	}
 
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
@@ -94,7 +86,7 @@ func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUIn
 			continue
 		}
 		fields := strings.Split(line, ", ")
-		if len(fields) < 7 {
+		if len(fields) < 6 {
 			continue
 		}
 
@@ -103,14 +95,11 @@ func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUIn
 			r.gpuThrottle.Log("解析 GPU 索引失败: %v", err)
 			continue
 		}
-		busId := strings.TrimSpace(fields[1])
-		name := strings.TrimSpace(fields[2])
-		temp := strings.TrimSpace(fields[3]) + "°C"
-		util := strings.TrimSpace(fields[4]) + "%"
-		memUsed := strings.TrimSpace(fields[5]) + "MB"
-		memTotal := strings.TrimSpace(fields[6]) + "MB"
-
-		gpuMap[busId] = fmt.Sprintf("%d-%s", index, name)
+		name := strings.TrimSpace(fields[1])
+		temp := strings.TrimSpace(fields[2]) + "°C"
+		util := strings.TrimSpace(fields[3]) + "%"
+		memUsed := strings.TrimSpace(fields[4]) + "MB"
+		memTotal := strings.TrimSpace(fields[5]) + "MB"
 
 		gpus = append(gpus, response.GPUInfoResponse{
 			Index:      index,
@@ -122,7 +111,7 @@ func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUIn
 		})
 	}
 
-	return gpus, gpuMap, nil
+	return gpus, nil
 }
 
 // GetGPUPIDs 获取 GPU 上所有进程的 PID 集合
@@ -193,9 +182,8 @@ func (r *systemInfoRepository) GetProcessDurations(ctx context.Context) ([]Proce
 }
 
 // GetProcessInfo 获取全部进程的详细信息
-func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[string]string) ([]ProcessInfo, error) {
-	//获取在显卡上执行的全部进程
-	processList, err := r.getProcessInfoFromNvidiaSMI(ctx, gpuMap)
+func (r *systemInfoRepository) GetProcessInfo(ctx context.Context) ([]ProcessInfo, error) {
+	processList, err := r.getProcessInfoFromNvidiaSMI(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("从 nvidia-smi 获取进程信息失败: %w", err)
 	}
@@ -206,7 +194,6 @@ func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[st
 
 	var processInfos []ProcessInfo
 	for _, processInfo := range processList {
-		//获取进程详细信息
 		info, err := r.getProcessDetails(processInfo.PID, processInfo.GPUName, processInfo.ProcessName)
 		if err != nil {
 			r.processThrottle.Log("获取进程 id 为%v 详细信息失败:%v", processInfo.PID, err)
@@ -218,14 +205,16 @@ func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[st
 }
 
 // getProcessInfoFromNvidiaSMI 直接从 nvidia-smi 获取进程部分信息
-func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context, gpuMap map[string]string) ([]nvidiaSMIProcessInfo, error) {
+func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context) ([]nvidiaSMIProcessInfo, error) {
 	var processList []nvidiaSMIProcessInfo
 
-	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-compute-apps=pid,gpu_bus_id,process_name,gpu_name", "--format=csv,noheader,nounits")
+	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-compute-apps=pid,gpu_bus_id,process_name", "--format=csv,noheader,nounits")
 	output, err := cmd.Output()
 	if err != nil {
 		return processList, fmt.Errorf("执行 nvidia-smi 命令失败: %w", err)
 	}
+
+	gpuIndexMap := r.getGPUIndexMap(ctx)
 
 	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
 	for _, line := range lines {
@@ -234,11 +223,10 @@ func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context, 
 		}
 
 		parts := strings.Split(strings.TrimSpace(line), ", ")
-		if len(parts) >= 4 {
+		if len(parts) >= 3 {
 			pidStr := parts[0]
 			busId := parts[1]
 			processName := parts[2]
-			gpuName := parts[3]
 
 			pid, err := strconv.Atoi(pidStr)
 			if err != nil {
@@ -246,9 +234,9 @@ func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context, 
 				continue
 			}
 
-			displayName := gpuMap[busId]
+			displayName := gpuIndexMap[busId]
 			if displayName == "" {
-				displayName = gpuName
+				displayName = busId
 			}
 
 			processList = append(processList, nvidiaSMIProcessInfo{
@@ -260,6 +248,31 @@ func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context, 
 	}
 
 	return processList, nil
+}
+
+// getGPUIndexMap 获取 GPU bus_id 到 index-name 的映射
+func (r *systemInfoRepository) getGPUIndexMap(ctx context.Context) map[string]string {
+	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-gpu=index,gpu_bus_id,name", "--format=csv,noheader,nounits")
+	output, err := cmd.Output()
+	if err != nil {
+		return make(map[string]string)
+	}
+
+	gpuMap := make(map[string]string)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		fields := strings.Split(line, ", ")
+		if len(fields) >= 3 {
+			index := strings.TrimSpace(fields[0])
+			busId := strings.TrimSpace(fields[1])
+			name := strings.TrimSpace(fields[2])
+			gpuMap[busId] = fmt.Sprintf("%s-%s", index, name)
+		}
+	}
+	return gpuMap
 }
 
 // getProcessDetails 获取进程的详细信息

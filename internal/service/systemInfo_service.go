@@ -476,7 +476,7 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 		info.CpuList = append(info.CpuList, *memoryInfo)
 	}
 
-	gpuInfo, gpuMap, err := rc.Repo.GetGPUInfo(ctx)
+	gpuInfo, err := rc.Repo.GetGPUInfo(ctx)
 	if err != nil {
 		rc.collectThrottle.Log("Failed to get GPU info: %v", err)
 	} else {
@@ -484,7 +484,7 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 	}
 
 	// 收集并分类进程信息
-	systemProcesses, serverProcesses := rc.collectAndClassifyProcesses(ctx, gpuMap)
+	systemProcesses, serverProcesses := rc.collectAndClassifyProcesses(ctx)
 	info.SystemProcesses = systemProcesses
 	info.ServerProcesses = serverProcesses
 
@@ -492,9 +492,9 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 }
 
 // collectAndClassifyProcesses 收集并分类进程信息
-func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context, gpuMap map[string]string) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
+func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
 	// 获取所有进程详细信息
-	processInfos, err := rc.Repo.GetProcessInfo(ctx, gpuMap)
+	processInfos, err := rc.Repo.GetProcessInfo(ctx)
 	if err != nil {
 		rc.collectThrottle.Log("获取进程信息失败：%v", err)
 		return []response.SystemProcessInfo{}, []response.ServerProcessInfo{}
