@@ -201,7 +201,8 @@ func (s *homeService) collectServerProcesses(ctx context.Context) []response.Ser
 		return []response.ServerProcessInfo{}
 	}
 
-	_, serverProcesses := collectAndClassifyProcesses(ctx, s.systemInfoRepo, s.redisRepo, gpuMap)
+	rc := &ResourceCollector{}
+	_, serverProcesses := rc.collectAndClassifyProcesses(ctx, gpuMap)
 	return serverProcesses
 }
 
