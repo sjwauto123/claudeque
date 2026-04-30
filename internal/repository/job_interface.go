@@ -32,8 +32,6 @@ type JobRepository interface {
 	GetRunningJobsWithoutPagination(ctx context.Context) ([]*entity.Job, error)
 	// GetStats 获取任务统计
 	GetStats() (*response.JobStatsResponse, error)
-	// GetHomeRunningJobs 获取首页运行中任务
-	GetHomeRunningJobs(ctx context.Context) ([]response.HomeRunningJob, error)
 	// GetHomeQueueSummary 获取首页队列统计
 	GetHomeQueueSummary(ctx context.Context) (response.HomeQueueSummary, error)
 	// UpdateSug 更改标识
