@@ -5,6 +5,7 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
+	"cloudque/pkg/throttle"
 	"cloudque/pkg/websocket"
 	"context"
 	"encoding/json"
@@ -19,42 +20,51 @@ import (
 
 // Redis 键名常量
 const (
-	RedisKeySystemTaskPIDs = "gpu_task:system_task_pids"
-	RedisKeyRetainedPIDs   = "gpu_task:retained_pids"
-	RedisKeyConfig         = "gpu_task:config"
+	RedisKeyRetainedPIDs = "gpu_task:retained_pids"
+	RedisKeyConfig       = "gpu_task:config"
+)
+
+// 默认配置值
+const (
+	DefaultAutoTerminateEnabled = false
+	DefaultMaxDurationMinutes   = 3
 )
 
 // ResourceCollector 资源收集器
 type ResourceCollector struct {
-	Pool   *websocket.ConnectionPool
-	Repo   repository.SystemInfoRepository
-	Redis  repository.RedisRepository
-	ctx    context.Context
-	cancel context.CancelFunc
-	wg     sync.WaitGroup
-	Once   sync.Once
-	mutex  sync.RWMutex
+	Pool         *websocket.ConnectionPool
+	Repo         repository.SystemInfoRepository
+	Redis        repository.RedisRepository
+	ProcessCache repository.ProcessCacheRepository
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
+	Once         sync.Once
+
+	collectThrottle  *throttle.ErrorThrottle
+	autoTermThrottle *throttle.ErrorThrottle
+	cleanupThrottle  *throttle.ErrorThrottle
 }
 
 type systemInfoService struct {
 	Pool      *websocket.ConnectionPool
-	Collector *ResourceCollector
+	collector *ResourceCollector
 	Redis     repository.RedisRepository
 }
 
 // Stop 停止系统信息服务
 func (s *systemInfoService) Stop() {
-	s.Collector.Stop()
+	s.collector.Stop()
 	logger.Info("系统信息服务已停止")
 }
 
 // NewSystemInfoService 创建系统信息服务
-func NewSystemInfoService(pool *websocket.ConnectionPool, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository) SystemInfoService {
-	collector := NewResourceCollector(pool, repo, redisRepo)
+func NewSystemInfoService(pool *websocket.ConnectionPool, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository, processCache repository.ProcessCacheRepository) SystemInfoService {
+	collector := NewResourceCollector(pool, repo, redisRepo, processCache)
 	collector.Start()
 	return &systemInfoService{
 		Pool:      pool,
-		Collector: collector,
+		collector: collector,
 		Redis:     redisRepo,
 	}
 }
@@ -76,10 +86,32 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 	logger.Infof("新的管理员websocket连接已建立，进行接收系统消息，用户ID: %d", userID)
 }
 
-// TerminateProcess 手动中断进程
-func (s *systemInfoService) TerminateProcess(pid int) error {
+// ==================== 业务方法 ====================
+
+// terminateProcess 终止进程（内部复用）
+func terminateProcess(pid int) error {
 	cmd := exec.Command("kill", "-9", strconv.Itoa(pid))
 	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// TerminateProcess 手动中断进程
+func (s *systemInfoService) TerminateProcess(pid int) error {
+	ctx := context.Background()
+
+	// 检查 PID 是否存在于 GPU 进程中
+	exists, err := s.isProcessInGPU(ctx, pid)
+	if err != nil {
+		return errors.New(errors.CodeInternalError, "检查进程状态失败")
+	}
+	if !exists {
+		return errors.New(errors.CodeBadRequest, "进程不存在或不在 GPU 上运行")
+	}
+
+	if err := terminateProcess(pid); err != nil {
+		logger.Errorf("终止进程 %d 失败：%v", pid, err)
 		return errors.New(errors.CodeInternalError, "终止进程失败")
 	}
 	logger.Infof("手动终止进程：%d", pid)
@@ -89,7 +121,17 @@ func (s *systemInfoService) TerminateProcess(pid int) error {
 // RetainProcess 保留进程（不被自动中断）
 func (s *systemInfoService) RetainProcess(pid int) error {
 	ctx := context.Background()
-	err := s.Redis.SAdd(ctx, RedisKeyRetainedPIDs, strconv.Itoa(pid))
+
+	// 检查 PID 是否存在于 GPU 进程中
+	exists, err := s.isProcessInGPU(ctx, pid)
+	if err != nil {
+		return errors.New(errors.CodeInternalError, "检查进程状态失败")
+	}
+	if !exists {
+		return errors.New(errors.CodeBadRequest, "进程不存在或不在 GPU 上运行")
+	}
+
+	err = s.Redis.SAdd(ctx, RedisKeyRetainedPIDs, strconv.Itoa(pid))
 	if err != nil {
 		return errors.New(errors.CodeInternalError, "保留进程失败")
 	}
@@ -100,12 +142,32 @@ func (s *systemInfoService) RetainProcess(pid int) error {
 // CancelRetain 取消保留
 func (s *systemInfoService) CancelRetain(pid int) error {
 	ctx := context.Background()
-	err := s.Redis.SRem(ctx, RedisKeyRetainedPIDs, strconv.Itoa(pid))
+
+	// 检查 PID 是否在保留列表中
+	pidStr := strconv.Itoa(pid)
+	exists, err := s.Redis.SIsMember(ctx, RedisKeyRetainedPIDs, pidStr)
+	if err != nil {
+		return errors.New(errors.CodeInternalError, "检查保留状态失败")
+	}
+	if !exists {
+		return errors.New(errors.CodeBadRequest, "该进程未被保留")
+	}
+
+	err = s.Redis.SRem(ctx, RedisKeyRetainedPIDs, pidStr)
 	if err != nil {
 		return errors.New(errors.CodeInternalError, "取消保留失败")
 	}
 	logger.Infof("取消保留进程：%d", pid)
 	return nil
+}
+
+// isProcessInGPU 检查 PID 是否存在于 GPU 进程中
+func (s *systemInfoService) isProcessInGPU(ctx context.Context, pid int) (bool, error) {
+	pids, err := s.collector.Repo.GetGPUPIDs(ctx)
+	if err != nil {
+		return false, err
+	}
+	return pids[strconv.Itoa(pid)], nil
 }
 
 // GetConfig 获取全局配置
@@ -115,24 +177,19 @@ func (s *systemInfoService) GetConfig() *response.ConfigResponse {
 	if err != nil {
 		logger.Errorf("获取配置失败：%v", err)
 		return &response.ConfigResponse{
-			AutoTerminateEnabled: true,
-			MaxDurationMinutes:   30,
+			AutoTerminateEnabled: DefaultAutoTerminateEnabled,
+			MaxDurationMinutes:   DefaultMaxDurationMinutes,
 		}
 	}
 
 	enabled, err := strconv.ParseBool(config["auto_terminate_enabled"])
 	if err != nil {
 		logger.Errorf("解析自动中断配置失败：%v", err)
-		enabled = true
+		enabled = DefaultAutoTerminateEnabled
 	}
 	duration, err := strconv.Atoi(config["max_duration_minutes"])
-	if err != nil {
-		logger.Errorf("解析最大时长配置失败：%v", err)
-		duration = 30
-	}
-
-	if duration == 0 {
-		duration = 30
+	if err != nil || duration == 0 {
+		duration = DefaultMaxDurationMinutes
 	}
 
 	return &response.ConfigResponse{
@@ -145,50 +202,43 @@ func (s *systemInfoService) GetConfig() *response.ConfigResponse {
 func (s *systemInfoService) UpdateConfig(enabled *bool, duration *int) error {
 	ctx := context.Background()
 
-	// 获取现有配置
-	existing, err := s.Redis.HGetAll(ctx, RedisKeyConfig)
-	if err != nil {
-		return errors.New(errors.CodeInternalError, "获取配置失败")
-	}
+	// 只更新传了的字段
+	fields := make(map[string]interface{})
 
-	// 使用现有值或默认值
-	currentEnabled := true
-	if v, e := strconv.ParseBool(existing["auto_terminate_enabled"]); e == nil {
-		currentEnabled = v
-	}
-	currentDuration := 30
-	if v, e := strconv.Atoi(existing["max_duration_minutes"]); e == nil && v > 0 {
-		currentDuration = v
-	}
-
-	// 如果传了新值则覆盖
 	if enabled != nil {
-		currentEnabled = *enabled
+		fields["auto_terminate_enabled"] = strconv.FormatBool(*enabled)
 	}
 	if duration != nil {
-		currentDuration = *duration
+		fields["max_duration_minutes"] = strconv.Itoa(*duration)
 	}
 
-	err = s.Redis.HSet(ctx, RedisKeyConfig, map[string]interface{}{
-		"auto_terminate_enabled": strconv.FormatBool(currentEnabled),
-		"max_duration_minutes":   strconv.Itoa(currentDuration),
-	})
+	if len(fields) == 0 {
+		return errors.New(errors.CodeBadRequest, "至少需要提供一个配置项")
+	}
+
+	err := s.Redis.HSet(ctx, RedisKeyConfig, fields)
 	if err != nil {
 		return errors.New(errors.CodeInternalError, "更新配置失败")
 	}
-	logger.Infof("更新配置：自动中断=%v，最大时长=%d分钟", currentEnabled, currentDuration)
+	logger.Infof("更新配置：%v", fields)
 	return nil
 }
 
+// ==================== 资源收集器 ====================
+
 // NewResourceCollector 创建资源收集器
-func NewResourceCollector(pool *websocket.ConnectionPool, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository) *ResourceCollector {
+func NewResourceCollector(pool *websocket.ConnectionPool, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository, processCache repository.ProcessCacheRepository) *ResourceCollector {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ResourceCollector{
-		Pool:   pool,
-		Repo:   repo,
-		Redis:  redisRepo,
-		ctx:    ctx,
-		cancel: cancel,
+		Pool:             pool,
+		Repo:             repo,
+		Redis:            redisRepo,
+		ProcessCache:     processCache,
+		ctx:              ctx,
+		cancel:           cancel,
+		collectThrottle:  throttle.NewErrorThrottle(time.Minute),
+		autoTermThrottle: throttle.NewErrorThrottle(time.Minute),
+		cleanupThrottle:  throttle.NewErrorThrottle(5 * time.Minute),
 	}
 }
 
@@ -225,12 +275,12 @@ func (rc *ResourceCollector) startInfoPusher() {
 			if rc.Pool.IsHavingSystemInfoConnection() {
 				info := rc.collectSystemInfo()
 				if info == nil {
-					logger.Error("系统信息收集失败")
+					rc.collectThrottle.Log("系统信息收集失败")
 					continue
 				}
 				data, err := json.Marshal(info)
 				if err != nil {
-					logger.Errorf("JSON转换失败: %v", err)
+					rc.collectThrottle.Log("JSON转换失败: %v", err)
 					continue
 				}
 				rc.Pool.BroadcastToAdminsByType("systemInfo", data)
@@ -238,6 +288,8 @@ func (rc *ResourceCollector) startInfoPusher() {
 		}
 	}
 }
+
+// ==================== 定时任务 ====================
 
 // startAutoTerminator 自动中断检查
 func (rc *ResourceCollector) startAutoTerminator() {
@@ -259,45 +311,53 @@ func (rc *ResourceCollector) startAutoTerminator() {
 func (rc *ResourceCollector) checkAndTerminate() {
 	ctx := context.Background()
 
-	// 检查是否启用自动中断
+	// 获取配置（键不存在时使用默认值）
 	config, err := rc.Redis.HGetAll(ctx, RedisKeyConfig)
 	if err != nil {
-		logger.Errorf("获取配置失败：%v", err)
+		rc.autoTermThrottle.Log("获取配置失败：%v", err)
 		return
 	}
 
-	enabled, err := strconv.ParseBool(config["auto_terminate_enabled"])
-	if err != nil {
-		logger.Errorf("解析自动中断配置失败：%v", err)
-		return
+	// 解析自动中断开关，默认启用
+	enabled := DefaultAutoTerminateEnabled
+	if val, ok := config["auto_terminate_enabled"]; ok && val != "" {
+		if parsed, err := strconv.ParseBool(val); err == nil {
+			enabled = parsed
+		} else {
+			rc.autoTermThrottle.Log("解析自动中断配置失败：%v", err)
+		}
 	}
 	if !enabled {
 		return
 	}
 
-	maxDuration, err := strconv.Atoi(config["max_duration_minutes"])
-	if err != nil {
-		logger.Errorf("解析最大时长配置失败：%v", err)
-		maxDuration = 30
+	// 解析最大时长，默认 3 分钟
+	maxDuration := DefaultMaxDurationMinutes
+	if val, ok := config["max_duration_minutes"]; ok && val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			maxDuration = parsed
+		} else {
+			rc.autoTermThrottle.Log("解析最大时长配置失败：%v", err)
+		}
 	}
 	maxDurationSeconds := maxDuration * 60
 
-	// 获取所有 GPU 进程
-	processInfos, err := rc.Repo.GetProcessInfo(ctx, make(map[string]string))
+	// 获取所有 GPU 进程的 PID 和运行时长
+	processDurations, err := rc.Repo.GetProcessDurations(ctx)
 	if err != nil {
-		logger.Errorf("获取进程信息失败：%v", err)
+		rc.autoTermThrottle.Log("获取进程运行时长失败：%v", err)
 		return
 	}
 
 	// 获取系统任务 PID（排除）
-	systemPIDs, err := rc.Redis.SMembers(ctx, RedisKeySystemTaskPIDs)
+	_, systemPIDs, err := rc.ProcessCache.GetAllPid(ctx)
 	if err != nil {
-		logger.Errorf("获取系统任务 PID 失败：%v", err)
-		systemPIDs = []string{}
+		rc.autoTermThrottle.Log("获取系统任务 PID 失败：%v", err)
+		systemPIDs = []int{}
 	}
 	systemPIDSet := make(map[string]bool)
 	for _, pid := range systemPIDs {
-		systemPIDSet[pid] = true
+		systemPIDSet[strconv.Itoa(pid)] = true
 	}
 
 	// 获取保留的 PID（排除）
@@ -312,33 +372,26 @@ func (rc *ResourceCollector) checkAndTerminate() {
 	}
 
 	// 检查服务器任务
-	for _, proc := range processInfos {
+	for _, proc := range processDurations {
 		// 排除系统任务和保留任务
 		if systemPIDSet[proc.PID] || retainedPIDSet[proc.PID] {
 			continue
 		}
 
-		// 计算运行时长
-		runningDuration := calculateRunningDuration(proc.StartTime)
-
 		// 超时则 kill
-		if runningDuration > maxDurationSeconds {
+		if proc.RunningDurationSecs > maxDurationSeconds {
 			pid, err := strconv.Atoi(proc.PID)
 			if err != nil {
-				logger.Errorf("解析 PID 失败：%s", proc.PID)
+				rc.autoTermThrottle.Log("解析 PID 失败：%s", proc.PID)
 				continue
 			}
-			rc.terminateProcess(pid)
-			logger.Infof("自动终止超时进程：%s，运行时长：%d秒", proc.PID, runningDuration)
+			err = terminateProcess(pid)
+			if err != nil {
+				rc.autoTermThrottle.Log("终止进程%v失败：%s", pid, err)
+				continue
+			}
+			logger.Infof("自动终止超时进程：%s，运行时长：%d秒", proc.PID, proc.RunningDurationSecs)
 		}
-	}
-}
-
-// terminateProcess 终止进程
-func (rc *ResourceCollector) terminateProcess(pid int) {
-	cmd := exec.Command("kill", "-9", strconv.Itoa(pid))
-	if err := cmd.Run(); err != nil {
-		logger.Errorf("终止进程 %d 失败：%v", pid, err)
 	}
 }
 
@@ -363,20 +416,20 @@ func (rc *ResourceCollector) cleanupRetainedTasks() {
 	ctx := context.Background()
 	retainedPIDs, err := rc.Redis.SMembers(ctx, RedisKeyRetainedPIDs)
 	if err != nil {
-		logger.Errorf("获取保留 PID 失败：%v", err)
+		rc.cleanupThrottle.Log("获取保留 PID 失败：%v", err)
 		return
 	}
 
 	for _, pidStr := range retainedPIDs {
 		pid, err := strconv.Atoi(pidStr)
 		if err != nil {
-			logger.Errorf("解析 PID 失败：%s", pidStr)
+			rc.cleanupThrottle.Log("解析 PID 失败：%s", pidStr)
 			continue
 		}
 		if !isProcessRunning(pid) {
 			err := rc.Redis.SRem(ctx, RedisKeyRetainedPIDs, pidStr)
 			if err != nil {
-				logger.Errorf("移除保留 PID 失败：%s，错误：%v", pidStr, err)
+				rc.cleanupThrottle.Log("移除保留 PID 失败：%s，错误：%v", pidStr, err)
 				continue
 			}
 			logger.Infof("清理已完成的保留任务：%s", pidStr)
@@ -393,43 +446,45 @@ func (rc *ResourceCollector) Stop() {
 	logger.Info("资源收集器已完全停止")
 }
 
+// ==================== 数据收集 ====================
+
 // collectSystemInfo 收集系统信息
 func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
-	ctx, cancel := context.WithTimeout(rc.ctx, 30*time.Second)
+	ctx, cancel := context.WithTimeout(rc.ctx, 2*time.Second)
 	defer cancel()
 
 	var info response.SystemInfosResponse
 
-	diskHome, err := rc.Repo.GetDiskInfo(ctx, "/home")
+	diskHome, err := rc.Repo.GetDiskInfo("/home")
 	if err != nil {
-		logger.Errorf("Failed to get /home info: %v", err)
+		rc.collectThrottle.Log("Failed to get /home info: %v", err)
 	} else if diskHome != nil {
 		info.CpuList = append(info.CpuList, *diskHome)
 	}
 
-	diskMain, err := rc.Repo.GetDiskInfo(ctx, "/")
+	diskMain, err := rc.Repo.GetDiskInfo("/")
 	if err != nil {
-		logger.Errorf("Failed to get / info: %v", err)
+		rc.collectThrottle.Log("Failed to get / info: %v", err)
 	} else if diskMain != nil {
 		info.CpuList = append(info.CpuList, *diskMain)
 	}
 
-	memoryInfo, err := rc.Repo.GetMemoryInfo(ctx)
+	memoryInfo, err := rc.Repo.GetMemoryInfo()
 	if err != nil {
-		logger.Errorf("Failed to get memory info: %v", err)
+		rc.collectThrottle.Log("Failed to get memory info: %v", err)
 	} else if memoryInfo != nil {
 		info.CpuList = append(info.CpuList, *memoryInfo)
 	}
 
-	gpuInfo, gpuMap, err := rc.Repo.GetGPUInfo(ctx)
+	gpuInfo, err := rc.Repo.GetGPUInfo(ctx)
 	if err != nil {
-		logger.Errorf("Failed to get GPU info: %v", err)
+		rc.collectThrottle.Log("Failed to get GPU info: %v", err)
 	} else {
 		info.GpuList = append(info.GpuList, gpuInfo...)
 	}
 
 	// 收集并分类进程信息
-	systemProcesses, serverProcesses := collectAndClassifyProcesses(ctx, rc.Repo, rc.Redis, gpuMap)
+	systemProcesses, serverProcesses := rc.collectAndClassifyProcesses(ctx)
 	info.SystemProcesses = systemProcesses
 	info.ServerProcesses = serverProcesses
 
@@ -437,29 +492,28 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 }
 
 // collectAndClassifyProcesses 收集并分类进程信息
-func collectAndClassifyProcesses(ctx context.Context, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository, gpuMap map[string]string) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
-	// 获取所有 GPU 进程
-	processInfos, err := repo.GetProcessInfo(ctx, gpuMap)
+func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
+	// 获取所有进程详细信息
+	processInfos, err := rc.Repo.GetProcessInfo(ctx)
 	if err != nil {
-		logger.Errorf("获取进程信息失败：%v", err)
+		rc.collectThrottle.Log("获取进程信息失败：%v", err)
 		return []response.SystemProcessInfo{}, []response.ServerProcessInfo{}
 	}
 
-	// 获取系统任务 PID 集合
-	systemPIDs, err := redisRepo.SMembers(ctx, RedisKeySystemTaskPIDs)
+	_, systemPIDs, err := rc.ProcessCache.GetAllPid(ctx)
 	if err != nil {
-		logger.Errorf("获取系统任务 PID 失败：%v", err)
-		systemPIDs = []string{}
+		rc.collectThrottle.Log("获取系统任务 PID 失败：%v", err)
+		systemPIDs = []int{}
 	}
 	systemPIDSet := make(map[string]bool)
 	for _, pid := range systemPIDs {
-		systemPIDSet[pid] = true
+		systemPIDSet[strconv.Itoa(pid)] = true
 	}
 
 	// 获取保留的 PID 集合
-	retainedPIDs, err := redisRepo.SMembers(ctx, RedisKeyRetainedPIDs)
+	retainedPIDs, err := rc.Redis.SMembers(ctx, RedisKeyRetainedPIDs)
 	if err != nil {
-		logger.Errorf("获取保留 PID 失败：%v", err)
+		rc.collectThrottle.Log("获取保留 PID 失败：%v", err)
 		retainedPIDs = []string{}
 	}
 	retainedPIDSet := make(map[string]bool)
@@ -480,29 +534,31 @@ func collectAndClassifyProcesses(ctx context.Context, repo repository.SystemInfo
 				GPUname:   proc.GPUname,
 				StartTime: proc.StartTime,
 				IsNormal:  proc.IsNormal,
+				Runtime:   proc.Runtime,
 				Command:   proc.Command,
 			})
 		} else {
 			// 服务器任务
 			isRetained := retainedPIDSet[proc.PID]
-			runningDuration := calculateRunningDuration(proc.StartTime)
 
 			serverProcesses = append(serverProcesses, response.ServerProcessInfo{
-				Username:        proc.Username,
-				PID:             proc.PID,
-				JobName:         proc.JobName,
-				GPUname:         proc.GPUname,
-				StartTime:       proc.StartTime,
-				IsNormal:        proc.IsNormal,
-				Command:         proc.Command,
-				IsRetained:      isRetained,
-				RunningDuration: runningDuration,
+				Username:   proc.Username,
+				PID:        proc.PID,
+				JobName:    proc.JobName,
+				GPUname:    proc.GPUname,
+				StartTime:  proc.StartTime,
+				IsNormal:   proc.IsNormal,
+				Runtime:    proc.Runtime,
+				Command:    proc.Command,
+				IsRetained: isRetained,
 			})
 		}
 	}
 
 	return systemProcesses, serverProcesses
 }
+
+// ==================== 辅助函数 ====================
 
 // isProcessRunning 检查进程是否运行
 func isProcessRunning(pid int) bool {
@@ -512,17 +568,7 @@ func isProcessRunning(pid int) bool {
 	}
 	running, err := p.IsRunning()
 	if err != nil {
-		logger.Errorf("检查进程 %d 运行状态失败：%v", pid, err)
 		return false
 	}
 	return running
-}
-
-// calculateRunningDuration 计算运行时长（秒）
-func calculateRunningDuration(startTimeStr string) int {
-	startTime, err := time.Parse("2006-01-02 15:04:05", startTimeStr)
-	if err != nil {
-		return 0
-	}
-	return int(time.Since(startTime).Seconds())
 }
