@@ -305,15 +305,14 @@ func (r *systemInfoRepository) getProcessDetails(pid int, gpuName string, proces
 	}
 
 	return ProcessInfo{
-		Username:            username,
-		PID:                 strconv.Itoa(pid),
-		JobName:             processName,
-		GPUname:             gpuName,
-		StartTime:           startTime,
-		IsNormal:            isNormal,
-		Runtime:             runtime,
-		RunningDurationSecs: int(duration.Seconds()),
-		Command:             cmdline,
+		Username:  username,
+		PID:       strconv.Itoa(pid),
+		JobName:   processName,
+		GPUname:   gpuName,
+		StartTime: startTime,
+		IsNormal:  isNormal,
+		Runtime:   runtime,
+		Command:   cmdline,
 	}, nil
 }
 

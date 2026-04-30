@@ -7,15 +7,14 @@ import (
 
 // ProcessInfo 进程信息（仓储层内部使用）
 type ProcessInfo struct {
-	Username            string
-	PID                 string
-	JobName             string
-	GPUname             string
-	StartTime           string
-	IsNormal            int
-	Runtime             string
-	RunningDurationSecs int
-	Command             string
+	Username  string
+	PID       string
+	JobName   string
+	GPUname   string
+	StartTime string
+	IsNormal  int
+	Runtime   string
+	Command   string
 }
 
 // nvidiaSMIProcessInfo 保存从 nvidia-smi 获取的进程信息
