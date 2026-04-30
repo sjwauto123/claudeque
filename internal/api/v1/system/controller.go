@@ -83,8 +83,6 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 	// 处理WebSocket连接
 	ctrl.syInfoSvc.HandleSyMessage(conn, userID)
 
-	defer conn.Close().Error()
-
 }
 
 // TerminateProcess 手动中断进程
