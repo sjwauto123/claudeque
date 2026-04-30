@@ -1,6 +1,6 @@
 package response
 
-// SystemProcessInfo 系统进程信息（Service 层使用）
+// SystemProcessInfo 系统进程信息
 type SystemProcessInfo struct {
 	Username  string `json:"username"`
 	PID       string `json:"pid"`
@@ -8,20 +8,21 @@ type SystemProcessInfo struct {
 	GPUname   string `json:"gpu_name"`
 	StartTime string `json:"start_time"`
 	IsNormal  int    `json:"is_normal"`
+	Runtime   string `json:"runtime"`
 	Command   string `json:"command"`
 }
 
-// ServerProcessInfo 服务器进程信息（Service 层使用）
+// ServerProcessInfo 服务器进程信息
 type ServerProcessInfo struct {
-	Username        string `json:"username"`
-	PID             string `json:"pid"`
-	JobName         string `json:"job_name"`
-	GPUname         string `json:"gpu_name"`
-	StartTime       string `json:"start_time"`
-	IsNormal        int    `json:"is_normal"`
-	Command         string `json:"command"`
-	IsRetained      bool   `json:"is_retained"`
-	RunningDuration int    `json:"running_duration"`
+	Username   string `json:"username"`
+	PID        string `json:"pid"`
+	JobName    string `json:"job_name"`
+	GPUname    string `json:"gpu_name"`
+	StartTime  string `json:"start_time"`
+	IsNormal   int    `json:"is_normal"`
+	Runtime    string `json:"runtime"`
+	Command    string `json:"command"`
+	IsRetained bool   `json:"is_retained"`
 }
 
 type GPUInfoResponse struct {

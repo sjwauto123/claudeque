@@ -17,14 +17,16 @@ type Controller struct {
 	authService             service.AuthService
 	userService             service.UserService
 	userOperationLogService service.UserOperationLogService
+	terminalService         service.TerminalService
 }
 
 // NewController 创建认证控制器
-func NewController(authService service.AuthService, userService service.UserService, userOperationLogService service.UserOperationLogService) *Controller {
+func NewController(authService service.AuthService, userService service.UserService, userOperationLogService service.UserOperationLogService, terminalService service.TerminalService) *Controller {
 	return &Controller{
 		authService:             authService,
 		userService:             userService,
 		userOperationLogService: userOperationLogService,
+		terminalService:         terminalService,
 	}
 }
 
@@ -112,6 +114,10 @@ func (ctrl *Controller) Logout(c *gin.Context) {
 	if userID == 0 {
 		response.Unauthorized(c, "未登录或Token无效")
 		return
+	}
+
+	if ctrl.terminalService != nil {
+		ctrl.terminalService.CloseUserTerminals(userID)
 	}
 
 	if err := ctrl.authService.Logout(userID); err != nil {

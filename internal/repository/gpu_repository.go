@@ -134,6 +134,14 @@ func (r *gpuRepository) GetGpus(ctx context.Context) ([]response.GpuSpec, int, e
 	return gpus, int(total), nil
 }
 
+func (r *gpuRepository) GetAllCards(ctx context.Context) ([]entity.GpuCard, error) {
+	var cards []entity.GpuCard
+	if err := r.db.WithContext(ctx).Order("`index` ASC").Find(&cards).Error; err != nil {
+		return nil, err
+	}
+	return cards, nil
+}
+
 func (r *gpuCacheRepository) SetBusy(ctx context.Context, gpuID int, jobID int) error {
 	key := fmt.Sprintf("%s%d", gpuStatusKeyPrefix, gpuID)
 	pipe := r.redis.Pipeline()

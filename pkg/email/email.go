@@ -18,7 +18,6 @@ func SendEmail(to string, subject string, body string) error {
 	m.SetBody("text/html", body)
 
 	d := gomail.NewDialer(cfg.Host, cfg.Port, cfg.Username, cfg.Password)
-	//return d.DialAndSend(m)
 	err := d.DialAndSend(m)
 	logger.Error("发送验证码错误:", zap.Error(err))
 	return err

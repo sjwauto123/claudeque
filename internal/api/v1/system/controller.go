@@ -14,16 +14,14 @@ import (
 )
 
 type Controller struct {
-	syInfoSvc               service.SystemInfoService
-	authService             service.AuthService
-	userOperationLogService service.UserOperationLogService
+	syInfoSvc   service.SystemInfoService
+	authService service.AuthService
 }
 
-func NewController(svc service.SystemInfoService, authSvc service.AuthService, userOperationLogService service.UserOperationLogService) *Controller {
+func NewController(svc service.SystemInfoService, authSvc service.AuthService) *Controller {
 	return &Controller{
-		syInfoSvc:               svc,
-		authService:             authSvc,
-		userOperationLogService: userOperationLogService,
+		syInfoSvc:   svc,
+		authService: authSvc,
 	}
 }
 
@@ -78,7 +76,6 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 
-	defer conn.Close()
 	if err != nil {
 		logger.Info("Failed to upgrade to WebSocket:")
 		return

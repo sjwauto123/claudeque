@@ -2,7 +2,6 @@ package system
 
 import (
 	"cloudque/internal/middleware"
-
 	"github.com/gin-gonic/gin"
 )
 

@@ -10,4 +10,8 @@ type TerminalService interface {
 	HandleTerminalConnection(userID int, isRoot bool, cols, rows int, conn *gwebsocket.Conn) error
 	// ResizeTerminal 调整终端大小
 	ResizeTerminal(userID int, isRoot bool, cols, rows int) error
+	// CloseUserTerminals 关闭指定用户的所有终端 PTY 和输出缓存
+	CloseUserTerminals(userID int)
+	// CloseAllTerminals 关闭所有终端 PTY 和输出缓存
+	CloseAllTerminals()
 }

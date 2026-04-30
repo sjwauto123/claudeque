@@ -315,3 +315,37 @@ func (r *jobRepository) GetStats() (*response.JobStatsResponse, error) {
 
 	return &result, nil
 }
+
+func (r *jobRepository) GetHomeRunningJobs(ctx context.Context) ([]response.HomeRunningJob, error) {
+	var jobs []response.HomeRunningJob
+	err := r.db.WithContext(ctx).Table("jobs j").
+		Select(`j.id AS job_id,j.name AS job_name,j.user_id,j.gpu_ids,j.status,j.started_at,u.username AS user_name`).
+		Joins("LEFT JOIN admin_users u ON u.id = j.user_id").
+		Where("j.status = ?", entity.JobStatusRunning).
+		Order("j.started_at DESC").
+		Scan(&jobs).Error
+	if err != nil {
+		return nil, err
+	}
+	return jobs, nil
+}
+
+func (r *jobRepository) GetHomeQueueSummary(ctx context.Context) (response.HomeQueueSummary, error) {
+	var summary response.HomeQueueSummary
+	var running, queued, waitingGpu int64
+
+	if err := r.db.WithContext(ctx).Model(&entity.Job{}).Where("status = ?", entity.JobStatusRunning).Count(&running).Error; err != nil {
+		return summary, err
+	}
+	if err := r.db.WithContext(ctx).Model(&entity.Job{}).Where("status = ?", entity.JobStatusQueued).Count(&queued).Error; err != nil {
+		return summary, err
+	}
+	if err := r.db.WithContext(ctx).Model(&entity.Job{}).Where("status = ?", entity.JobStatusWaitingGpu).Count(&waitingGpu).Error; err != nil {
+		return summary, err
+	}
+
+	summary.Running = int(running)
+	summary.Queued = int(queued)
+	summary.WaitingGpu = int(waitingGpu)
+	return summary, nil
+}
