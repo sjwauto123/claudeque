@@ -429,7 +429,7 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 	}
 
 	// 收集并分类进程信息
-	systemProcesses, serverProcesses := rc.collectAndClassifyProcesses(ctx, gpuMap)
+	systemProcesses, serverProcesses := collectAndClassifyProcesses(ctx, rc.Repo, rc.Redis, gpuMap)
 	info.SystemProcesses = systemProcesses
 	info.ServerProcesses = serverProcesses
 
@@ -437,16 +437,16 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 }
 
 // collectAndClassifyProcesses 收集并分类进程信息
-func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context, gpuMap map[string]string) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
+func collectAndClassifyProcesses(ctx context.Context, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository, gpuMap map[string]string) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
 	// 获取所有 GPU 进程
-	processInfos, err := rc.Repo.GetProcessInfo(ctx, gpuMap)
+	processInfos, err := repo.GetProcessInfo(ctx, gpuMap)
 	if err != nil {
 		logger.Errorf("获取进程信息失败：%v", err)
 		return []response.SystemProcessInfo{}, []response.ServerProcessInfo{}
 	}
 
 	// 获取系统任务 PID 集合
-	systemPIDs, err := rc.Redis.SMembers(ctx, RedisKeySystemTaskPIDs)
+	systemPIDs, err := redisRepo.SMembers(ctx, RedisKeySystemTaskPIDs)
 	if err != nil {
 		logger.Errorf("获取系统任务 PID 失败：%v", err)
 		systemPIDs = []string{}
@@ -457,7 +457,7 @@ func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context, gp
 	}
 
 	// 获取保留的 PID 集合
-	retainedPIDs, err := rc.Redis.SMembers(ctx, RedisKeyRetainedPIDs)
+	retainedPIDs, err := redisRepo.SMembers(ctx, RedisKeyRetainedPIDs)
 	if err != nil {
 		logger.Errorf("获取保留 PID 失败：%v", err)
 		retainedPIDs = []string{}

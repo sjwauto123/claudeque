@@ -165,7 +165,7 @@ INSERT INTO `admin_permissions` VALUES (267, '获取所有角色', '用户权限
 INSERT INTO `admin_permissions` VALUES (268, '获取菜单树跟权限', '用户权限', 'cloud:user:tree', 'user', 2, 1, 'GET', '/api/v1/user/menu-permission', NULL, NULL);
 INSERT INTO `admin_permissions` VALUES (269, '查看文件上传进度', '文件管理', 'cloud:file:uploarprogress', 'file', 6, 1, 'GET', '/api/v1/files/upload/progress', NULL, NULL);
 INSERT INTO `admin_permissions` VALUES (271, '获取首页信息', '首页', 'cloud:home:overview', 'home', 1, 1, 'GET', '/api/v1/home/overview', NULL, NULL);
-INSERT INTO `admin_permissions` VALUES (272, '首页实时信息', '首页', 'cloud:home:ws', 'home', 2, 1, 'GET', '/api/v1/home/ws', NULL, NULL);
+INSERT INTO `admin_permissions` VALUES (272, '首页实时显卡信息', '首页', 'cloud:home:ws', 'home', 2, 1, 'GET', '/api/v1/home/ws', NULL, NULL);
 
 -- ----------------------------
 -- Table structure for admin_role_menu

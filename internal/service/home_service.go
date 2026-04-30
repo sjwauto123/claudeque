@@ -18,10 +18,12 @@ import (
 )
 
 type homeService struct {
-	gpuRepo   repository.GpuRepository
-	jobRepo   repository.JobRepository
-	Pool      *wsPool.ConnectionPool
-	Collector *HomeOverviewCollector
+	gpuRepo        repository.GpuRepository
+	jobRepo        repository.JobRepository
+	systemInfoRepo repository.SystemInfoRepository
+	redisRepo      repository.RedisRepository
+	Pool           *wsPool.ConnectionPool
+	Collector      *HomeOverviewCollector
 }
 
 type HomeOverviewCollector struct {
@@ -42,11 +44,13 @@ type homeGpuMetric struct {
 	MemoryTotal int
 }
 
-func NewHomeService(gpuRepo repository.GpuRepository, jobRepo repository.JobRepository, pool *wsPool.ConnectionPool) HomeService {
+func NewHomeService(gpuRepo repository.GpuRepository, jobRepo repository.JobRepository, systemInfoRepo repository.SystemInfoRepository, redisRepo repository.RedisRepository, pool *wsPool.ConnectionPool) HomeService {
 	svc := &homeService{
-		gpuRepo: gpuRepo,
-		jobRepo: jobRepo,
-		Pool:    pool,
+		gpuRepo:        gpuRepo,
+		jobRepo:        jobRepo,
+		systemInfoRepo: systemInfoRepo,
+		redisRepo:      redisRepo,
+		Pool:           pool,
 	}
 	svc.Collector = NewHomeOverviewCollector(pool, svc)
 	svc.Collector.Start()
@@ -176,12 +180,29 @@ func (s *homeService) GetOverview(ctx context.Context) (*response.HomeOverviewRe
 		return nil, err
 	}
 
+	serverProcesses := s.collectServerProcesses(ctx)
+
 	return &response.HomeOverviewResponse{
-		GpuSummary:   summary,
-		Gpus:         gpus,
-		RunningJobs:  runningJobs,
-		QueueSummary: queueSummary,
+		GpuSummary:      summary,
+		Gpus:            gpus,
+		ServerProcesses: serverProcesses,
+		QueueSummary:    queueSummary,
 	}, nil
+}
+
+func (s *homeService) collectServerProcesses(ctx context.Context) []response.ServerProcessInfo {
+	if s.systemInfoRepo == nil || s.redisRepo == nil {
+		return []response.ServerProcessInfo{}
+	}
+
+	_, gpuMap, err := s.systemInfoRepo.GetGPUInfo(ctx)
+	if err != nil {
+		logger.Warnf("首页GPU进程映射采集失败: %v", err)
+		return []response.ServerProcessInfo{}
+	}
+
+	_, serverProcesses := collectAndClassifyProcesses(ctx, s.systemInfoRepo, s.redisRepo, gpuMap)
+	return serverProcesses
 }
 
 func collectHomeGpuMetrics() (map[int]homeGpuMetric, error) {

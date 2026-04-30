@@ -3,10 +3,11 @@ package response
 import "time"
 
 type HomeOverviewResponse struct {
-	GpuSummary   HomeGpuSummary    `json:"gpu_summary"`
-	Gpus         []HomeGPUOverview `json:"gpus"`
-	RunningJobs  []HomeRunningJob  `json:"running_jobs"`
-	QueueSummary HomeQueueSummary  `json:"queue_summary"`
+	GpuSummary      HomeGpuSummary      `json:"gpu_summary"`
+	Gpus            []HomeGPUOverview   `json:"gpus"`
+	RunningJobs     []HomeRunningJob    `json:"-"`
+	ServerProcesses []ServerProcessInfo `json:"server_processes"`
+	QueueSummary    HomeQueueSummary    `json:"queue_summary"`
 }
 
 type HomeGpuSummary struct {
