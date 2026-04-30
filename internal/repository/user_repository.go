@@ -67,7 +67,8 @@ func (r *userRepository) Update(user *entity.User) error {
 
 	return r.db.Model(user).Select(
 		"username", "password", "avatar", "email",
-		"status", "priority", "multi_training", "cross_server", "updated_at",
+		"status", "priority", "multi_training", "cross_server",
+		"real_name", "phone", "updated_at",
 	).Updates(user).Error
 }
 
