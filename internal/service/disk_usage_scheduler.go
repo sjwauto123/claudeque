@@ -19,6 +19,7 @@ type DiskUsageScheduler struct {
 	wg        sync.WaitGroup
 	isRunning bool
 	mu        sync.RWMutex
+	taskMu    sync.Mutex // 任务执行互斥锁
 }
 
 // NewDiskUsageScheduler 创建磁盘使用情况调度器
@@ -54,8 +55,12 @@ func (d *DiskUsageScheduler) Start() {
 func (d *DiskUsageScheduler) run() {
 	defer d.wg.Done()
 
-	// 启动时立即执行一次
-	d.executeTask()
+	// 启动时立即执行一次（异步执行）
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.executeTask()
+	}()
 
 	// 计算下次执行时间（每天凌晨 3 点）
 	scheduleNext := func() time.Duration {
@@ -70,7 +75,7 @@ func (d *DiskUsageScheduler) run() {
 
 	// 计算初始延迟
 	initialDelay := scheduleNext()
-	logger.Infof("磁盘使用情况调度器首次执行完成，下次将在 %v 后执行", initialDelay)
+	logger.Infof("磁盘使用情况调度器已启动，首次执行异步进行中，下次将在 %v 后执行", initialDelay)
 
 	timer := time.NewTimer(initialDelay)
 	defer timer.Stop()
@@ -90,8 +95,15 @@ func (d *DiskUsageScheduler) run() {
 	}
 }
 
-// executeTask 执行计算任务
+// executeTask 执行计算任务（带互斥保护）
 func (d *DiskUsageScheduler) executeTask() {
+	// 尝试获取锁，如果获取失败说明已有任务在执行，直接返回
+	if !d.taskMu.TryLock() {
+		logger.Info("磁盘使用情况计算任务正在执行中，跳过本次执行")
+		return
+	}
+	defer d.taskMu.Unlock()
+
 	logger.Info("开始执行磁盘使用情况计算任务")
 
 	if d.fileSvc == nil {

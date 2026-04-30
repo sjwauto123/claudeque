@@ -119,7 +119,74 @@ func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUIn
 	return gpus, gpuMap, nil
 }
 
-// GetProcessInfo 获取进程信息
+// GetGPUPIDs 获取 GPU 上所有进程的 PID 集合
+func (r *systemInfoRepository) GetGPUPIDs(ctx context.Context) (map[string]bool, error) {
+	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits")
+	output, err := cmd.Output()
+	if err != nil {
+		var execErr *exec.Error
+		if errors.As(err, &execErr) {
+			return make(map[string]bool), nil
+		}
+		return nil, fmt.Errorf("执行 nvidia-smi 命令失败: %w", err)
+	}
+
+	pids := make(map[string]bool)
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		pid := strings.TrimSpace(line)
+		if pid != "" {
+			pids[pid] = true
+		}
+	}
+	return pids, nil
+}
+
+// GetProcessDurations 获取 GPU 上所有进程的 PID 和运行时长
+func (r *systemInfoRepository) GetProcessDurations(ctx context.Context) ([]ProcessDuration, error) {
+	cmd := exec.CommandContext(ctx, "nvidia-smi", "--query-compute-apps=pid", "--format=csv,noheader,nounits")
+	output, err := cmd.Output()
+	if err != nil {
+		var execErr *exec.Error
+		if errors.As(err, &execErr) {
+			return []ProcessDuration{}, nil
+		}
+		return nil, fmt.Errorf("执行 nvidia-smi 命令失败: %w", err)
+	}
+
+	var durations []ProcessDuration
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		pidStr := strings.TrimSpace(line)
+		if pidStr == "" {
+			continue
+		}
+
+		pid, err := strconv.Atoi(pidStr)
+		if err != nil {
+			continue
+		}
+
+		p, err := process.NewProcess(int32(pid))
+		if err != nil {
+			continue
+		}
+
+		createTime, err := p.CreateTime()
+		if err != nil {
+			continue
+		}
+
+		duration := time.Since(time.Unix(createTime/1000, 0))
+		durations = append(durations, ProcessDuration{
+			PID:                 pidStr,
+			RunningDurationSecs: int(duration.Seconds()),
+		})
+	}
+	return durations, nil
+}
+
+// GetProcessInfo 获取全部进程的详细信息
 func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[string]string) ([]ProcessInfo, error) {
 	//获取在显卡上执行的全部进程
 	processList, err := r.getProcessInfoFromNvidiaSMI(ctx, gpuMap)

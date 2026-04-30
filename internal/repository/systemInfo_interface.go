@@ -18,6 +18,12 @@ type ProcessInfo struct {
 	Command             string
 }
 
+// ProcessDuration 进程运行时长（轻量级，用于自动中断检查）
+type ProcessDuration struct {
+	PID                 string
+	RunningDurationSecs int
+}
+
 // SystemInfoRepository 系统信息仓储接口
 type SystemInfoRepository interface {
 	// GetDiskInfo 获取磁盘信息
@@ -28,4 +34,8 @@ type SystemInfoRepository interface {
 	GetGPUInfo(ctx context.Context) ([]response.GPUInfoResponse, map[string]string, error)
 	// GetProcessInfo 获取进程信息
 	GetProcessInfo(ctx context.Context, gpuMap map[string]string) ([]ProcessInfo, error)
+	// GetGPUPIDs 获取 GPU 上所有进程的 PID 集合
+	GetGPUPIDs(ctx context.Context) (map[string]bool, error)
+	// GetProcessDurations 获取 GPU 上所有进程的 PID 和运行时长（轻量级，用于自动中断检查）
+	GetProcessDurations(ctx context.Context) ([]ProcessDuration, error)
 }

@@ -25,7 +25,7 @@ const (
 
 // 默认配置值
 const (
-	DefaultAutoTerminateEnabled = true
+	DefaultAutoTerminateEnabled = false
 	DefaultMaxDurationMinutes   = 3
 )
 
@@ -43,13 +43,13 @@ type ResourceCollector struct {
 
 type systemInfoService struct {
 	Pool      *websocket.ConnectionPool
-	Collector *ResourceCollector
+	collector *ResourceCollector
 	Redis     repository.RedisRepository
 }
 
 // Stop 停止系统信息服务
 func (s *systemInfoService) Stop() {
-	s.Collector.Stop()
+	s.collector.Stop()
 	logger.Info("系统信息服务已停止")
 }
 
@@ -59,7 +59,7 @@ func NewSystemInfoService(pool *websocket.ConnectionPool, repo repository.System
 	collector.Start()
 	return &systemInfoService{
 		Pool:      pool,
-		Collector: collector,
+		collector: collector,
 		Redis:     redisRepo,
 	}
 }
@@ -81,6 +81,8 @@ func (s *systemInfoService) HandleSyMessage(conn *ws.Conn, userID int) {
 	logger.Infof("新的管理员websocket连接已建立，进行接收系统消息，用户ID: %d", userID)
 }
 
+// ==================== 业务方法 ====================
+
 // terminateProcess 终止进程（内部复用）
 func terminateProcess(pid int) error {
 	cmd := exec.Command("kill", "-9", strconv.Itoa(pid))
@@ -92,6 +94,17 @@ func terminateProcess(pid int) error {
 
 // TerminateProcess 手动中断进程
 func (s *systemInfoService) TerminateProcess(pid int) error {
+	ctx := context.Background()
+
+	// 检查 PID 是否存在于 GPU 进程中
+	exists, err := s.isProcessInGPU(ctx, pid)
+	if err != nil {
+		return errors.New(errors.CodeInternalError, "检查进程状态失败")
+	}
+	if !exists {
+		return errors.New(errors.CodeBadRequest, "进程不存在或不在 GPU 上运行")
+	}
+
 	if err := terminateProcess(pid); err != nil {
 		logger.Errorf("终止进程 %d 失败：%v", pid, err)
 		return errors.New(errors.CodeInternalError, "终止进程失败")
@@ -103,7 +116,17 @@ func (s *systemInfoService) TerminateProcess(pid int) error {
 // RetainProcess 保留进程（不被自动中断）
 func (s *systemInfoService) RetainProcess(pid int) error {
 	ctx := context.Background()
-	err := s.Redis.SAdd(ctx, RedisKeyRetainedPIDs, strconv.Itoa(pid))
+
+	// 检查 PID 是否存在于 GPU 进程中
+	exists, err := s.isProcessInGPU(ctx, pid)
+	if err != nil {
+		return errors.New(errors.CodeInternalError, "检查进程状态失败")
+	}
+	if !exists {
+		return errors.New(errors.CodeBadRequest, "进程不存在或不在 GPU 上运行")
+	}
+
+	err = s.Redis.SAdd(ctx, RedisKeyRetainedPIDs, strconv.Itoa(pid))
 	if err != nil {
 		return errors.New(errors.CodeInternalError, "保留进程失败")
 	}
@@ -114,12 +137,32 @@ func (s *systemInfoService) RetainProcess(pid int) error {
 // CancelRetain 取消保留
 func (s *systemInfoService) CancelRetain(pid int) error {
 	ctx := context.Background()
-	err := s.Redis.SRem(ctx, RedisKeyRetainedPIDs, strconv.Itoa(pid))
+
+	// 检查 PID 是否在保留列表中
+	pidStr := strconv.Itoa(pid)
+	exists, err := s.Redis.SIsMember(ctx, RedisKeyRetainedPIDs, pidStr)
+	if err != nil {
+		return errors.New(errors.CodeInternalError, "检查保留状态失败")
+	}
+	if !exists {
+		return errors.New(errors.CodeBadRequest, "该进程未被保留")
+	}
+
+	err = s.Redis.SRem(ctx, RedisKeyRetainedPIDs, pidStr)
 	if err != nil {
 		return errors.New(errors.CodeInternalError, "取消保留失败")
 	}
 	logger.Infof("取消保留进程：%d", pid)
 	return nil
+}
+
+// isProcessInGPU 检查 PID 是否存在于 GPU 进程中
+func (s *systemInfoService) isProcessInGPU(ctx context.Context, pid int) (bool, error) {
+	pids, err := s.collector.Repo.GetGPUPIDs(ctx)
+	if err != nil {
+		return false, err
+	}
+	return pids[strconv.Itoa(pid)], nil
 }
 
 // GetConfig 获取全局配置
@@ -140,12 +183,7 @@ func (s *systemInfoService) GetConfig() *response.ConfigResponse {
 		enabled = DefaultAutoTerminateEnabled
 	}
 	duration, err := strconv.Atoi(config["max_duration_minutes"])
-	if err != nil {
-		logger.Errorf("解析最大时长配置失败：%v", err)
-		duration = DefaultMaxDurationMinutes
-	}
-
-	if duration == 0 {
+	if err != nil || duration == 0 {
 		duration = DefaultMaxDurationMinutes
 	}
 
@@ -159,40 +197,29 @@ func (s *systemInfoService) GetConfig() *response.ConfigResponse {
 func (s *systemInfoService) UpdateConfig(enabled *bool, duration *int) error {
 	ctx := context.Background()
 
-	// 获取现有配置
-	existing, err := s.Redis.HGetAll(ctx, RedisKeyConfig)
-	if err != nil {
-		return errors.New(errors.CodeInternalError, "获取配置失败")
-	}
+	// 只更新传了的字段
+	fields := make(map[string]interface{})
 
-	// 使用现有值或默认值
-	currentEnabled := DefaultAutoTerminateEnabled
-	if v, e := strconv.ParseBool(existing["auto_terminate_enabled"]); e == nil {
-		currentEnabled = v
-	}
-	currentDuration := DefaultMaxDurationMinutes
-	if v, e := strconv.Atoi(existing["max_duration_minutes"]); e == nil && v > 0 {
-		currentDuration = v
-	}
-
-	// 如果传了新值则覆盖
 	if enabled != nil {
-		currentEnabled = *enabled
+		fields["auto_terminate_enabled"] = strconv.FormatBool(*enabled)
 	}
 	if duration != nil {
-		currentDuration = *duration
+		fields["max_duration_minutes"] = strconv.Itoa(*duration)
 	}
 
-	err = s.Redis.HSet(ctx, RedisKeyConfig, map[string]interface{}{
-		"auto_terminate_enabled": strconv.FormatBool(currentEnabled),
-		"max_duration_minutes":   strconv.Itoa(currentDuration),
-	})
+	if len(fields) == 0 {
+		return errors.New(errors.CodeBadRequest, "至少需要提供一个配置项")
+	}
+
+	err := s.Redis.HSet(ctx, RedisKeyConfig, fields)
 	if err != nil {
 		return errors.New(errors.CodeInternalError, "更新配置失败")
 	}
-	logger.Infof("更新配置：自动中断=%v，最大时长=%d分钟", currentEnabled, currentDuration)
+	logger.Infof("更新配置：%v", fields)
 	return nil
 }
+
+// ==================== 资源收集器 ====================
 
 // NewResourceCollector 创建资源收集器
 func NewResourceCollector(pool *websocket.ConnectionPool, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository, processCache repository.ProcessCacheRepository) *ResourceCollector {
@@ -254,6 +281,8 @@ func (rc *ResourceCollector) startInfoPusher() {
 	}
 }
 
+// ==================== 定时任务 ====================
+
 // startAutoTerminator 自动中断检查
 func (rc *ResourceCollector) startAutoTerminator() {
 	defer rc.wg.Done()
@@ -274,33 +303,41 @@ func (rc *ResourceCollector) startAutoTerminator() {
 func (rc *ResourceCollector) checkAndTerminate() {
 	ctx := context.Background()
 
-	// 检查是否启用自动中断
+	// 获取配置（键不存在时使用默认值）
 	config, err := rc.Redis.HGetAll(ctx, RedisKeyConfig)
 	if err != nil {
 		logger.Errorf("获取配置失败：%v", err)
 		return
 	}
 
-	enabled, err := strconv.ParseBool(config["auto_terminate_enabled"])
-	if err != nil {
-		logger.Errorf("解析自动中断配置失败：%v", err)
-		return
+	// 解析自动中断开关，默认启用
+	enabled := DefaultAutoTerminateEnabled
+	if val, ok := config["auto_terminate_enabled"]; ok && val != "" {
+		if parsed, err := strconv.ParseBool(val); err == nil {
+			enabled = parsed
+		} else {
+			logger.Errorf("解析自动中断配置失败：%v", err)
+		}
 	}
 	if !enabled {
 		return
 	}
 
-	maxDuration, err := strconv.Atoi(config["max_duration_minutes"])
-	if err != nil {
-		logger.Errorf("解析最大时长配置失败：%v", err)
-		maxDuration = DefaultMaxDurationMinutes
+	// 解析最大时长，默认 3 分钟
+	maxDuration := DefaultMaxDurationMinutes
+	if val, ok := config["max_duration_minutes"]; ok && val != "" {
+		if parsed, err := strconv.Atoi(val); err == nil {
+			maxDuration = parsed
+		} else {
+			logger.Errorf("解析最大时长配置失败：%v", err)
+		}
 	}
 	maxDurationSeconds := maxDuration * 60
 
-	// 获取所有 GPU 进程
-	processInfos, err := rc.Repo.GetProcessInfo(ctx, make(map[string]string))
+	// 获取所有 GPU 进程的 PID 和运行时长
+	processDurations, err := rc.Repo.GetProcessDurations(ctx)
 	if err != nil {
-		logger.Errorf("获取进程信息失败：%v", err)
+		logger.Errorf("获取进程运行时长失败：%v", err)
 		return
 	}
 
@@ -327,7 +364,7 @@ func (rc *ResourceCollector) checkAndTerminate() {
 	}
 
 	// 检查服务器任务
-	for _, proc := range processInfos {
+	for _, proc := range processDurations {
 		// 排除系统任务和保留任务
 		if systemPIDSet[proc.PID] || retainedPIDSet[proc.PID] {
 			continue
@@ -343,7 +380,7 @@ func (rc *ResourceCollector) checkAndTerminate() {
 			err = terminateProcess(pid)
 			if err != nil {
 				logger.Errorf("终止进程%v失败：%s", pid, err)
-				return
+				continue
 			}
 			logger.Infof("自动终止超时进程：%s，运行时长：%d秒", proc.PID, proc.RunningDurationSecs)
 		}
@@ -401,6 +438,8 @@ func (rc *ResourceCollector) Stop() {
 	logger.Info("资源收集器已完全停止")
 }
 
+// ==================== 数据收集 ====================
+
 // collectSystemInfo 收集系统信息
 func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 	ctx, cancel := context.WithTimeout(rc.ctx, 2*time.Second)
@@ -446,7 +485,7 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 
 // collectAndClassifyProcesses 收集并分类进程信息
 func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context, gpuMap map[string]string) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
-	// 获取所有 GPU 进程
+	// 获取所有进程详细信息
 	processInfos, err := rc.Repo.GetProcessInfo(ctx, gpuMap)
 	if err != nil {
 		logger.Errorf("获取进程信息失败：%v", err)
@@ -511,6 +550,8 @@ func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context, gp
 
 	return systemProcesses, serverProcesses
 }
+
+// ==================== 辅助函数 ====================
 
 // isProcessRunning 检查进程是否运行
 func isProcessRunning(pid int) bool {

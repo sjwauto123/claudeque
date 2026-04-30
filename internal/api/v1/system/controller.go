@@ -76,7 +76,6 @@ func (ctrl *Controller) HandleWebSocket(c *gin.Context) {
 	// 升级为WebSocket连接
 	conn, err := upgrader.Upgrade(c.Writer, c.Request, nil)
 
-	defer conn.Close()
 	if err != nil {
 		logger.Info("Failed to upgrade to WebSocket:")
 		return
