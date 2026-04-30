@@ -5,6 +5,7 @@ import (
 	"cloudque/internal/repository"
 	"cloudque/pkg/errors"
 	"cloudque/pkg/logger"
+	"cloudque/pkg/throttle"
 	"cloudque/pkg/websocket"
 	"context"
 	"encoding/json"
@@ -39,6 +40,10 @@ type ResourceCollector struct {
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
 	Once         sync.Once
+
+	collectThrottle  *throttle.ErrorThrottle
+	autoTermThrottle *throttle.ErrorThrottle
+	cleanupThrottle  *throttle.ErrorThrottle
 }
 
 type systemInfoService struct {
@@ -225,12 +230,15 @@ func (s *systemInfoService) UpdateConfig(enabled *bool, duration *int) error {
 func NewResourceCollector(pool *websocket.ConnectionPool, repo repository.SystemInfoRepository, redisRepo repository.RedisRepository, processCache repository.ProcessCacheRepository) *ResourceCollector {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &ResourceCollector{
-		Pool:         pool,
-		Repo:         repo,
-		Redis:        redisRepo,
-		ProcessCache: processCache,
-		ctx:          ctx,
-		cancel:       cancel,
+		Pool:             pool,
+		Repo:             repo,
+		Redis:            redisRepo,
+		ProcessCache:     processCache,
+		ctx:              ctx,
+		cancel:           cancel,
+		collectThrottle:  throttle.NewErrorThrottle(time.Minute),
+		autoTermThrottle: throttle.NewErrorThrottle(time.Minute),
+		cleanupThrottle:  throttle.NewErrorThrottle(5 * time.Minute),
 	}
 }
 
@@ -267,12 +275,12 @@ func (rc *ResourceCollector) startInfoPusher() {
 			if rc.Pool.IsHavingSystemInfoConnection() {
 				info := rc.collectSystemInfo()
 				if info == nil {
-					logger.Error("系统信息收集失败")
+					rc.collectThrottle.Log("系统信息收集失败")
 					continue
 				}
 				data, err := json.Marshal(info)
 				if err != nil {
-					logger.Errorf("JSON转换失败: %v", err)
+					rc.collectThrottle.Log("JSON转换失败: %v", err)
 					continue
 				}
 				rc.Pool.BroadcastToAdminsByType("systemInfo", data)
@@ -306,7 +314,7 @@ func (rc *ResourceCollector) checkAndTerminate() {
 	// 获取配置（键不存在时使用默认值）
 	config, err := rc.Redis.HGetAll(ctx, RedisKeyConfig)
 	if err != nil {
-		logger.Errorf("获取配置失败：%v", err)
+		rc.autoTermThrottle.Log("获取配置失败：%v", err)
 		return
 	}
 
@@ -316,7 +324,7 @@ func (rc *ResourceCollector) checkAndTerminate() {
 		if parsed, err := strconv.ParseBool(val); err == nil {
 			enabled = parsed
 		} else {
-			logger.Errorf("解析自动中断配置失败：%v", err)
+			rc.autoTermThrottle.Log("解析自动中断配置失败：%v", err)
 		}
 	}
 	if !enabled {
@@ -329,7 +337,7 @@ func (rc *ResourceCollector) checkAndTerminate() {
 		if parsed, err := strconv.Atoi(val); err == nil {
 			maxDuration = parsed
 		} else {
-			logger.Errorf("解析最大时长配置失败：%v", err)
+			rc.autoTermThrottle.Log("解析最大时长配置失败：%v", err)
 		}
 	}
 	maxDurationSeconds := maxDuration * 60
@@ -337,14 +345,14 @@ func (rc *ResourceCollector) checkAndTerminate() {
 	// 获取所有 GPU 进程的 PID 和运行时长
 	processDurations, err := rc.Repo.GetProcessDurations(ctx)
 	if err != nil {
-		logger.Errorf("获取进程运行时长失败：%v", err)
+		rc.autoTermThrottle.Log("获取进程运行时长失败：%v", err)
 		return
 	}
 
 	// 获取系统任务 PID（排除）
 	_, systemPIDs, err := rc.ProcessCache.GetAllPid(ctx)
 	if err != nil {
-		logger.Errorf("获取系统任务 PID 失败：%v", err)
+		rc.autoTermThrottle.Log("获取系统任务 PID 失败：%v", err)
 		systemPIDs = []int{}
 	}
 	systemPIDSet := make(map[string]bool)
@@ -374,12 +382,12 @@ func (rc *ResourceCollector) checkAndTerminate() {
 		if proc.RunningDurationSecs > maxDurationSeconds {
 			pid, err := strconv.Atoi(proc.PID)
 			if err != nil {
-				logger.Errorf("解析 PID 失败：%s", proc.PID)
+				rc.autoTermThrottle.Log("解析 PID 失败：%s", proc.PID)
 				continue
 			}
 			err = terminateProcess(pid)
 			if err != nil {
-				logger.Errorf("终止进程%v失败：%s", pid, err)
+				rc.autoTermThrottle.Log("终止进程%v失败：%s", pid, err)
 				continue
 			}
 			logger.Infof("自动终止超时进程：%s，运行时长：%d秒", proc.PID, proc.RunningDurationSecs)
@@ -408,20 +416,20 @@ func (rc *ResourceCollector) cleanupRetainedTasks() {
 	ctx := context.Background()
 	retainedPIDs, err := rc.Redis.SMembers(ctx, RedisKeyRetainedPIDs)
 	if err != nil {
-		logger.Errorf("获取保留 PID 失败：%v", err)
+		rc.cleanupThrottle.Log("获取保留 PID 失败：%v", err)
 		return
 	}
 
 	for _, pidStr := range retainedPIDs {
 		pid, err := strconv.Atoi(pidStr)
 		if err != nil {
-			logger.Errorf("解析 PID 失败：%s", pidStr)
+			rc.cleanupThrottle.Log("解析 PID 失败：%s", pidStr)
 			continue
 		}
 		if !isProcessRunning(pid) {
 			err := rc.Redis.SRem(ctx, RedisKeyRetainedPIDs, pidStr)
 			if err != nil {
-				logger.Errorf("移除保留 PID 失败：%s，错误：%v", pidStr, err)
+				rc.cleanupThrottle.Log("移除保留 PID 失败：%s，错误：%v", pidStr, err)
 				continue
 			}
 			logger.Infof("清理已完成的保留任务：%s", pidStr)
@@ -449,28 +457,28 @@ func (rc *ResourceCollector) collectSystemInfo() *response.SystemInfosResponse {
 
 	diskHome, err := rc.Repo.GetDiskInfo("/home")
 	if err != nil {
-		logger.Errorf("Failed to get /home info: %v", err)
+		rc.collectThrottle.Log("Failed to get /home info: %v", err)
 	} else if diskHome != nil {
 		info.CpuList = append(info.CpuList, *diskHome)
 	}
 
 	diskMain, err := rc.Repo.GetDiskInfo("/")
 	if err != nil {
-		logger.Errorf("Failed to get / info: %v", err)
+		rc.collectThrottle.Log("Failed to get / info: %v", err)
 	} else if diskMain != nil {
 		info.CpuList = append(info.CpuList, *diskMain)
 	}
 
 	memoryInfo, err := rc.Repo.GetMemoryInfo()
 	if err != nil {
-		logger.Errorf("Failed to get memory info: %v", err)
+		rc.collectThrottle.Log("Failed to get memory info: %v", err)
 	} else if memoryInfo != nil {
 		info.CpuList = append(info.CpuList, *memoryInfo)
 	}
 
 	gpuInfo, gpuMap, err := rc.Repo.GetGPUInfo(ctx)
 	if err != nil {
-		logger.Errorf("Failed to get GPU info: %v", err)
+		rc.collectThrottle.Log("Failed to get GPU info: %v", err)
 	} else {
 		info.GpuList = append(info.GpuList, gpuInfo...)
 	}
@@ -488,14 +496,13 @@ func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context, gp
 	// 获取所有进程详细信息
 	processInfos, err := rc.Repo.GetProcessInfo(ctx, gpuMap)
 	if err != nil {
-		logger.Errorf("获取进程信息失败：%v", err)
+		rc.collectThrottle.Log("获取进程信息失败：%v", err)
 		return []response.SystemProcessInfo{}, []response.ServerProcessInfo{}
 	}
 
-	// 获取系统任务 PID 集合
 	_, systemPIDs, err := rc.ProcessCache.GetAllPid(ctx)
 	if err != nil {
-		logger.Errorf("获取系统任务 PID 失败：%v", err)
+		rc.collectThrottle.Log("获取系统任务 PID 失败：%v", err)
 		systemPIDs = []int{}
 	}
 	systemPIDSet := make(map[string]bool)
@@ -506,7 +513,7 @@ func (rc *ResourceCollector) collectAndClassifyProcesses(ctx context.Context, gp
 	// 获取保留的 PID 集合
 	retainedPIDs, err := rc.Redis.SMembers(ctx, RedisKeyRetainedPIDs)
 	if err != nil {
-		logger.Errorf("获取保留 PID 失败：%v", err)
+		rc.collectThrottle.Log("获取保留 PID 失败：%v", err)
 		retainedPIDs = []string{}
 	}
 	retainedPIDSet := make(map[string]bool)
@@ -561,7 +568,6 @@ func isProcessRunning(pid int) bool {
 	}
 	running, err := p.IsRunning()
 	if err != nil {
-		logger.Errorf("检查进程 %d 运行状态失败：%v", pid, err)
 		return false
 	}
 	return running

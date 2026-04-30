@@ -2,7 +2,7 @@ package repository
 
 import (
 	"cloudque/internal/model/dto/response"
-	"cloudque/pkg/logger"
+	"cloudque/pkg/throttle"
 	"context"
 	"errors"
 	"fmt"
@@ -16,7 +16,10 @@ import (
 	"github.com/shirou/gopsutil/v3/process"
 )
 
-type systemInfoRepository struct{}
+type systemInfoRepository struct {
+	gpuThrottle     *throttle.ErrorThrottle
+	processThrottle *throttle.ErrorThrottle
+}
 
 // nvidiaSMIProcessInfo 保存从 nvidia-smi 获取的进程信息
 type nvidiaSMIProcessInfo struct {
@@ -27,7 +30,10 @@ type nvidiaSMIProcessInfo struct {
 
 // NewSystemInfoRepository 创建系统信息仓储实例
 func NewSystemInfoRepository() SystemInfoRepository {
-	return &systemInfoRepository{}
+	return &systemInfoRepository{
+		gpuThrottle:     throttle.NewErrorThrottle(time.Minute),
+		processThrottle: throttle.NewErrorThrottle(time.Minute),
+	}
 }
 
 // GetDiskInfo 获取磁盘信息
@@ -94,7 +100,7 @@ func (r *systemInfoRepository) GetGPUInfo(ctx context.Context) ([]response.GPUIn
 
 		index, err := strconv.Atoi(strings.TrimSpace(fields[0]))
 		if err != nil {
-			logger.Infof("解析 GPU 索引失败: %v", err)
+			r.gpuThrottle.Log("解析 GPU 索引失败: %v", err)
 			continue
 		}
 		busId := strings.TrimSpace(fields[1])
@@ -203,7 +209,7 @@ func (r *systemInfoRepository) GetProcessInfo(ctx context.Context, gpuMap map[st
 		//获取进程详细信息
 		info, err := r.getProcessDetails(processInfo.PID, processInfo.GPUName, processInfo.ProcessName)
 		if err != nil {
-			logger.Infof("获取进程 id 为%v 详细信息失败:%v", processInfo.PID, err)
+			r.processThrottle.Log("获取进程 id 为%v 详细信息失败:%v", processInfo.PID, err)
 			continue
 		}
 		processInfos = append(processInfos, info)
@@ -236,7 +242,7 @@ func (r *systemInfoRepository) getProcessInfoFromNvidiaSMI(ctx context.Context, 
 
 			pid, err := strconv.Atoi(pidStr)
 			if err != nil {
-				logger.Infof("解析 PID 失败: %v", err)
+				r.gpuThrottle.Log("解析 PID 失败: %v", err)
 				continue
 			}
 
@@ -265,15 +271,15 @@ func (r *systemInfoRepository) getProcessDetails(pid int, gpuName string, proces
 
 	username, err := p.Username()
 	if err != nil {
-		logger.Infof("无法获取进程用户名: %v", err)
+		r.processThrottle.Log("无法获取进程用户名: %v", err)
 	}
 	createTime, err := p.CreateTime()
 	if err != nil {
-		logger.Infof("无法获取进程创建时间: %v", err)
+		r.processThrottle.Log("无法获取进程创建时间: %v", err)
 	}
 	cmdline, err := p.Cmdline()
 	if err != nil {
-		logger.Infof("无法获取进程命令行: %v", err)
+		r.processThrottle.Log("无法获取进程命令行: %v", err)
 	}
 
 	startTime := time.Unix(createTime/1000, 0).Format("2006-01-02 15:04:05")
