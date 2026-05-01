@@ -175,6 +175,20 @@ func (sw *sshSessionWrapper) removeClient(client *websocket.Client) {
 	sw.LastActive = time.Now()
 }
 
+func (sw *sshSessionWrapper) closeAllClients() {
+	sw.mu.Lock()
+	if sw.closed {
+		sw.mu.Unlock()
+		return
+	}
+	clients := sw.clientListLocked()
+	sw.clients = make(map[*websocket.Client]struct{})
+	sw.mu.Unlock()
+	for _, client := range clients {
+		client.Close()
+	}
+}
+
 func (sw *sshSessionWrapper) clientListLocked() []*websocket.Client {
 	clients := make([]*websocket.Client, 0, len(sw.clients))
 	for client := range sw.clients {
@@ -290,9 +304,11 @@ func (s *terminalService) getOrCreateTerminalSession(userID int, isRoot bool, co
 		closed := sw.closed
 		sw.mu.Unlock()
 		if !closed {
+			logger.Infof("getOrCreateTerminalSession: 复用已有终端会话 userID=%d, isRoot=%t, sessionID=%s", userID, isRoot, sw.ID)
 			return sw, nil
 		}
 		delete(s.sessions, key)
+		logger.Infof("getOrCreateTerminalSession: 旧会话已关闭，删除 userID=%d, isRoot=%t", userID, isRoot)
 	}
 
 	sshClient, err := s.getSSHClient(userID, isRoot)
@@ -319,6 +335,7 @@ func (s *terminalService) getOrCreateTerminalSession(userID int, isRoot bool, co
 	sw.Session = session
 	sw.stdinWriter = session.Stdin
 	s.sessions[key] = sw
+	logger.Infof("getOrCreateTerminalSession: 创建新终端会话 userID=%d, isRoot=%t, sessionID=%s", userID, isRoot, sw.ID)
 
 	go func() {
 		_ = session.Session.Wait()
@@ -333,6 +350,8 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 	if err := s.authService.EnsureSSHSessionByType(userID, isRoot); err != nil {
 		return pkgerrors.NewWithErr(pkgerrors.CodeInternalError, "无法建立SSH会话", err)
 	}
+
+	s.closeTerminalSession(userID, isRoot, true)
 
 	var sw *sshSessionWrapper
 	var pendingInput []byte
@@ -368,8 +387,8 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 			case "ping":
 				return nil
 			case "close":
-				s.closeTerminalSession(userID, isRoot, true)
-				return nil
+				s.closeTerminalSession(userID, isRoot, false)
+				return fmt.Errorf("terminal closed by user")
 			case "input":
 				data = []byte(msg.Data)
 			default:
@@ -418,15 +437,13 @@ func (s *terminalService) HandleTerminalConnection(userID int, isRoot bool, cols
 	}
 	initMu.Unlock()
 
-	cachedOutput := sw.addClient(wsClient)
-	if len(cachedOutput) > 0 {
-		safeSendTerminalMessage(wsClient, terminalOutputMessage(cachedOutput))
-	}
+	sw.addClient(wsClient)
+	safeSendTerminalMessage(wsClient, terminalOutputMessage([]byte("\x1b[2J\x1b[H")))
 
 	go func() {
 		<-wsClient.Done
 		sw.removeClient(wsClient)
-		logger.Infof("终端 WebSocket 已断开，保留 SSH PTY: userID=%d, isRoot=%t", userID, isRoot)
+		logger.Infof("终端 WebSocket 已断开: userID=%d, isRoot=%t", userID, isRoot)
 	}()
 
 	return nil
@@ -451,6 +468,9 @@ func (s *terminalService) closeTerminalSession(userID int, isRoot bool, closeCli
 	sw, exists := s.sessions[key]
 	if exists {
 		delete(s.sessions, key)
+		logger.Infof("closeTerminalSession: 删除旧终端会话 userID=%d, isRoot=%t, sessionID=%s", userID, isRoot, sw.ID)
+	} else {
+		logger.Infof("closeTerminalSession: 无旧终端会话 userID=%d, isRoot=%t", userID, isRoot)
 	}
 	s.mu.Unlock()
 	if exists {

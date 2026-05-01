@@ -149,6 +149,7 @@ func (s *fileService) executeSSHCommand(userID int, cmd string, isRoot bool) (st
 
 // resolvePath 解析路径并应用权限隔离
 func (s *fileService) resolvePath(userID int, p string, isRootMode bool) (string, error) {
+	p = strings.TrimSpace(p)
 	session, err := s.getOrReconnectSession(userID, isRootMode)
 	if err != nil {
 		logger.Errorf("获取SSH会话失败: userID=%d, isRootMode=%t, err=%v", userID, isRootMode, err)
@@ -245,14 +246,15 @@ func (s *fileService) GetFileList(userID int, req *request.FileListRequest, isRo
 	)
 
 	// 恢复上次访问的路径
-	if req.Path == "" {
+	if req.Path == " " {
 		ctx := context.Background()
 		lastPathKey := fmt.Sprintf("file:last_path:%d", userID)
 		if lastPath, err := s.redisRepo.Get(ctx, lastPathKey); err == nil && lastPath != "" {
 			req.Path = lastPath
+		} else {
+			req.Path = ""
 		}
 	} else {
-		// 保存当前访问的路径
 		ctx := context.Background()
 		lastPathKey := fmt.Sprintf("file:last_path:%d", userID)
 		_ = s.redisRepo.Set(ctx, lastPathKey, req.Path, 7*24*time.Hour)
