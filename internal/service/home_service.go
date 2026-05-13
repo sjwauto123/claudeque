@@ -7,8 +7,6 @@ import (
 	wsPool "cloudque/pkg/websocket"
 	"context"
 	"encoding/json"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -129,7 +127,7 @@ func (s *homeService) GetOverview(ctx context.Context) (*response.HomeOverviewRe
 	serverProcesses := s.collectServerProcesses(collectCtx)
 
 	return &response.HomeOverviewResponse{
-		GpuSummary:      buildHomeGpuSummary(gpus),
+		GpuSummary:      buildHomeGpuSummary(gpus, serverProcesses),
 		Gpus:            gpus,
 		ServerProcesses: serverProcesses,
 		QueueSummary:    queueSummary,
@@ -172,16 +170,21 @@ func (s *homeService) collectServerProcesses(ctx context.Context) []response.Ser
 	return serverProcesses
 }
 
-func buildHomeGpuSummary(gpus []response.GPUInfoResponse) response.HomeGpuSummary {
-	// 首页 GPU 总览只基于 nvidia-smi 实时指标判断：利用率或显存占用大于 0 即认为忙碌。
+func buildHomeGpuSummary(gpus []response.GPUInfoResponse, processes []response.ServerProcessInfo) response.HomeGpuSummary {
+	// 首页 GPU 总览按实际任务进程占用判断忙碌状态，不再使用显存占用判断，避免显存默认占用导致误判。
 	summary := response.HomeGpuSummary{Total: len(gpus)}
-	for _, gpu := range gpus {
-		if parseMetricNumber(gpu.Util) > 0 || parseMetricNumber(gpu.MemUsed) > 0 {
-			summary.Busy++
-		} else {
-			summary.Idle++
+	busyGpuNames := make(map[string]struct{})
+	for _, proc := range processes {
+		if proc.GPUname != "" {
+			busyGpuNames[proc.GPUname] = struct{}{}
 		}
 	}
+
+	summary.Busy = len(busyGpuNames)
+	if summary.Busy > summary.Total {
+		summary.Busy = summary.Total
+	}
+	summary.Idle = summary.Total - summary.Busy
 	return summary
 }
 
@@ -194,16 +197,4 @@ func fillRunningDurationSecs(processes []response.ServerProcessInfo) {
 			processes[i].RunningDurationSecs = int(duration.Seconds())
 		}
 	}
-}
-
-func parseMetricNumber(value string) int {
-	value = strings.TrimSpace(value)
-	value = strings.TrimSuffix(value, "%")
-	value = strings.TrimSuffix(value, "MB")
-	value = strings.TrimSpace(value)
-	n, err := strconv.Atoi(value)
-	if err != nil {
-		return 0
-	}
-	return n
 }
