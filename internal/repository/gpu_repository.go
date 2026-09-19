@@ -183,14 +183,16 @@ func (r *gpuCacheRepository) CheckAvailable(ctx context.Context, cardIDs []int) 
 	for _, cmd := range cmds {
 		res, err := cmd.Result()
 		if err != nil {
-			// 如果缓存不存在，保守起见认为不可用，或者可以返回特定错误让上层查数据库
-			return false, nil
+			// 查询缓存本身出错（连接断开等），把错误上抛，
+			// 让上层回退到数据库查询，而不是一律当成「不可用」
+			return false, err
 		}
-		// 如果缓存为空，说明没初始化
+		// 缓存未命中：key 不存在，说明这张卡的状态是「未知」，而不是「不可用」。
+		// 必须返回一个非 nil 的错误，上层才会回退到数据库查真实状态。
 		if len(res) == 0 {
-			return false, nil
+			return false, redis.Nil
 		}
-		// 检查状态
+		// 缓存中确实有记录，且状态不是空闲 —— 这才叫「确定不可用」
 		statusStr, ok := res["status"]
 		if !ok || statusStr != strconv.Itoa(entity.GpuStatusIdle) {
 			return false, nil

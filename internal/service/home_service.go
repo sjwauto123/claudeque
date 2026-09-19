@@ -124,12 +124,19 @@ func (s *homeService) GetOverview(ctx context.Context) (*response.HomeOverviewRe
 		return nil, err
 	}
 
-	serverProcesses := s.collectServerProcesses(collectCtx)
+	systemProcesses, serverProcesses := s.collectProcesses(collectCtx)
+
+	// 首页「运行中任务」需要展示服务器上全部正在运行的 GPU 任务：既包括手工启动的服务器任务，
+	// 也包括通过 CloudQue 提交的系统任务。这里把「系统任务」并入同一个列表返回给前端展示，
+	// 同时保留 SystemProcesses 字段，便于后续前端按「系统任务 / 服务器任务」分组展示
+	//（与系统管理页 ws /v1/system 的口径保持一致）。
+	allProcesses := mergeHomeProcesses(systemProcesses, serverProcesses)
 
 	return &response.HomeOverviewResponse{
-		GpuSummary:      buildHomeGpuSummary(gpus, serverProcesses),
+		GpuSummary:      buildHomeGpuSummary(gpus, allProcesses),
 		Gpus:            gpus,
-		ServerProcesses: serverProcesses,
+		ServerProcesses: allProcesses,
+		SystemProcesses: systemProcesses,
 		QueueSummary:    queueSummary,
 	}, nil
 }
@@ -158,16 +165,37 @@ func (s *homeService) collectRealtimeGpus(ctx context.Context) []response.GPUInf
 	return gpus
 }
 
-func (s *homeService) collectServerProcesses(ctx context.Context) []response.ServerProcessInfo {
+func (s *homeService) collectProcesses(ctx context.Context) ([]response.SystemProcessInfo, []response.ServerProcessInfo) {
 	rc, ok := s.systemCollector()
 	if !ok {
-		return []response.ServerProcessInfo{}
+		return []response.SystemProcessInfo{}, []response.ServerProcessInfo{}
 	}
 
 	// 进程分类继续由 system 现有逻辑负责：ProcessCache 标识系统任务，Redis 标识保留任务。
-	_, serverProcesses := rc.collectAndClassifyProcesses(ctx)
+	systemProcesses, serverProcesses := rc.collectAndClassifyProcesses(ctx)
 	fillRunningDurationSecs(serverProcesses)
-	return serverProcesses
+	return systemProcesses, serverProcesses
+}
+
+// mergeHomeProcesses 把「系统任务」并入「服务器任务」列表，供首页「运行中任务」统一展示。
+// 两个 DTO 的 username / pid / job_name / gpu_name / start_time / is_normal / runtime / command
+// 字段完全一致，is_retained 首页未使用，因此合并不会丢失展示信息。
+func mergeHomeProcesses(systemProcesses []response.SystemProcessInfo, serverProcesses []response.ServerProcessInfo) []response.ServerProcessInfo {
+	merged := make([]response.ServerProcessInfo, 0, len(systemProcesses)+len(serverProcesses))
+	for _, p := range systemProcesses {
+		merged = append(merged, response.ServerProcessInfo{
+			Username:  p.Username,
+			PID:       p.PID,
+			JobName:   p.JobName,
+			GPUname:   p.GPUname,
+			StartTime: p.StartTime,
+			IsNormal:  p.IsNormal,
+			Runtime:   p.Runtime,
+			Command:   p.Command,
+		})
+	}
+	merged = append(merged, serverProcesses...)
+	return merged
 }
 
 func buildHomeGpuSummary(gpus []response.GPUInfoResponse, processes []response.ServerProcessInfo) response.HomeGpuSummary {
